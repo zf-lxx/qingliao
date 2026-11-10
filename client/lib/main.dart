@@ -15,6 +15,7 @@ import 'core/push.dart';
 import 'widgets/connection_title.dart';
 import 'widgets/reply_quote.dart';
 import 'widgets/image_viewer.dart';
+import 'ui/motion/tg_motion.dart';
 
 const bg = Color(0xff0e1621),
     panel = Color(0xff17212b),
@@ -90,6 +91,15 @@ class _QingliaoAppState extends State<QingliaoApp> with WidgetsBindingObserver {
     ),
     theme: ThemeData.dark(useMaterial3: true).copyWith(
       scaffoldBackgroundColor: bg,
+      pageTransitionsTheme: const PageTransitionsTheme(
+        builders: {
+          TargetPlatform.android: TgBackdropTransitions(),
+          TargetPlatform.linux: TgBackdropTransitions(),
+          TargetPlatform.windows: TgBackdropTransitions(),
+          TargetPlatform.iOS: TgBackdropTransitions(),
+          TargetPlatform.macOS: TgBackdropTransitions(),
+        },
+      ),
       colorScheme: const ColorScheme.dark(
         primary: blue,
         secondary: blue,
@@ -150,7 +160,7 @@ Future<void> openLink(BuildContext context, String raw) async {
       u.userInfo.isNotEmpty) {
     return;
   }
-  final ok = await showDialog<bool>(
+  final ok = await showTgDialog<bool>(
     context: context,
     builder: (c) => AlertDialog(
       title: const Text('打开外部链接？'),
@@ -170,21 +180,7 @@ Future<void> openLink(BuildContext context, String raw) async {
   if (ok == true) await launchUrl(u, mode: LaunchMode.externalApplication);
 }
 
-PageRoute<T> chatRoute<T>(Widget page) => PageRouteBuilder<T>(
-  transitionDuration: const Duration(milliseconds: 250),
-  reverseTransitionDuration: const Duration(milliseconds: 250),
-  pageBuilder: (_, _, _) => page,
-  transitionsBuilder: (context, a, _, child) =>
-      MediaQuery.disableAnimationsOf(context)
-      ? child
-      : SlideTransition(
-          position: Tween(
-            begin: const Offset(1, 0),
-            end: Offset.zero,
-          ).animate(CurvedAnimation(parent: a, curve: slideCurve)),
-          child: child,
-        ),
-);
+PageRoute<T> chatRoute<T>(Widget page) => TgPageRoute<T>(page: page);
 
 class LoginPage extends StatefulWidget {
   final ChatEngine engine;
@@ -455,7 +451,7 @@ class _DialogsPageState extends State<DialogsPage> {
   }
 
   Future<void> menu(Json d) async {
-    await showModalBottomSheet(
+    await showTgSheet(
       context: context,
       builder: (c) => SafeArea(
         child: Column(
@@ -506,7 +502,7 @@ class _DialogsPageState extends State<DialogsPage> {
 
   Future<void> makeFolder() async {
     final name = TextEditingController();
-    final ok = await showDialog<bool>(
+    final ok = await showTgDialog<bool>(
       context: context,
       builder: (c) => AlertDialog(
         title: const Text('新建未读文件夹'),
@@ -959,8 +955,6 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
       older = false,
       draftDirty = false;
   String? loadError;
-  double backDx = 0;
-  bool edge = false;
   int _lastLength = 0;
   @override
   void initState() {
@@ -1165,7 +1159,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     if (m['deleted'] == true) return;
     await guard(context, () => e.loadReactions(m['id']));
     if (!mounted) return;
-    await showModalBottomSheet(
+    await showTgSheet(
       context: context,
       builder: (c) => SafeArea(
         child: Column(
@@ -1244,7 +1238,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                 title: const Text('为所有人撤回'),
                 onTap: () async {
                   Navigator.pop(c);
-                  final yes = await showDialog<bool>(
+                  final yes = await showTgDialog<bool>(
                     context: context,
                     builder: (d) => AlertDialog(
                       title: const Text('撤回这条消息？'),
@@ -1289,420 +1283,375 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     final history = e.history(widget.cid), pinned = e.pins[widget.cid] ?? [];
     final typing = e.typingUntil[widget.cid]?.isAfter(DateTime.now()) == true;
     final removed = !loading && !e.dialogs.containsKey(widget.cid);
-    return GestureDetector(
-      onHorizontalDragStart: (d) {
-        edge = d.localPosition.dx < 28;
-      },
-      onHorizontalDragUpdate: (d) {
-        if (edge) {
-          setState(
-            () => backDx = (backDx + d.delta.dx).clamp(
-              0,
-              MediaQuery.sizeOf(context).width,
+    return Scaffold(
+      appBar: AppBar(
+        titleSpacing: 0,
+        title: Row(
+          children: [
+            Avatar(widget.title, radius: 19),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    widget.title,
+                    style: const TextStyle(
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  ConnectionTitle(
+                    engine: e,
+                    title: typing
+                        ? '正在输入…'
+                        : e.online
+                        ? '已连接 · 云端聊天'
+                        : '云端聊天',
+                    style: const TextStyle(fontSize: 12, color: muted),
+                  ),
+                ],
+              ),
             ),
-          );
-        }
-      },
-      onHorizontalDragEnd: (d) {
-        if (edge &&
-            (backDx > MediaQuery.sizeOf(context).width * .28 ||
-                d.velocity.pixelsPerSecond.dx > 650)) {
-          Navigator.maybePop(context);
-        }
-        setState(() {
-          backDx = 0;
-          edge = false;
-        });
-      },
-      child: Transform.translate(
-        offset: Offset(backDx, 0),
-        child: Scaffold(
-          appBar: AppBar(
-            titleSpacing: 0,
-            title: Row(
-              children: [
-                Avatar(widget.title, radius: 19),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+          ],
+        ),
+        actions: [
+          IconButton(
+            tooltip: '聊天信息',
+            onPressed: () => showInfo(),
+            icon: const Icon(Icons.info_outline),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        top: false,
+        child: Column(
+          children: [
+            if (pinned.isNotEmpty)
+              InkWell(
+                onTap: () => showTgSheet(
+                  context: context,
+                  builder: (c) => SafeArea(
+                    child: ListView(
+                      shrinkWrap: true,
+                      children: [
+                        for (final p in pinned)
+                          ListTile(
+                            leading: const Icon(
+                              Icons.push_pin_outlined,
+                              color: blue,
+                            ),
+                            title: Text(
+                              p['text']?.isNotEmpty == true
+                                  ? p['text']
+                                  : '[图片]',
+                            ),
+                            trailing: IconButton(
+                              tooltip: '取消置顶',
+                              icon: const Icon(Icons.close),
+                              onPressed: () {
+                                Navigator.pop(c);
+                                guard(context, () => e.pin(p, remove: true));
+                              },
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                child: Container(
+                  color: panel,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 18,
+                    vertical: 9,
+                  ),
+                  child: Row(
                     children: [
-                      Text(
-                        widget.title,
-                        style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w600,
+                      const Icon(Icons.push_pin, size: 18, color: blue),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          '置顶 ${pinned.length} · ${pinned.last['text']}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: blue, fontSize: 13),
                         ),
-                      ),
-                      ConnectionTitle(
-                        engine: e,
-                        title: typing
-                            ? '正在输入…'
-                            : e.online
-                            ? '已连接 · 云端聊天'
-                            : '云端聊天',
-                        style: const TextStyle(fontSize: 12, color: muted),
                       ),
                     ],
                   ),
                 ),
-              ],
-            ),
-            actions: [
-              IconButton(
-                tooltip: '聊天信息',
-                onPressed: () => showInfo(),
-                icon: const Icon(Icons.info_outline),
               ),
-            ],
-          ),
-          body: SafeArea(
-            top: false,
-            child: Column(
-              children: [
-                if (pinned.isNotEmpty)
-                  InkWell(
-                    onTap: () => showModalBottomSheet(
-                      context: context,
-                      builder: (c) => SafeArea(
-                        child: ListView(
-                          shrinkWrap: true,
-                          children: [
-                            for (final p in pinned)
-                              ListTile(
-                                leading: const Icon(
-                                  Icons.push_pin_outlined,
-                                  color: blue,
-                                ),
-                                title: Text(
-                                  p['text']?.isNotEmpty == true
-                                      ? p['text']
-                                      : '[图片]',
-                                ),
-                                trailing: IconButton(
-                                  tooltip: '取消置顶',
-                                  icon: const Icon(Icons.close),
-                                  onPressed: () {
-                                    Navigator.pop(c);
-                                    guard(
-                                      context,
-                                      () => e.pin(p, remove: true),
-                                    );
-                                  },
-                                ),
+            if (loadError != null)
+              TextButton(onPressed: load, child: Text(loadError!)),
+            if (removed)
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Text('你已离开此会话，无法继续读取或发送消息'),
+              ),
+            Expanded(
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: loading
+                        ? const Center(child: CircularProgressIndicator())
+                        : NotificationListener<ScrollNotification>(
+                            onNotification: (_) {
+                              markRead();
+                              return false;
+                            },
+                            child: ListView.builder(
+                              key: const Key('messages'),
+                              controller: scroll,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 16,
                               ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    child: Container(
-                      color: panel,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 18,
-                        vertical: 9,
-                      ),
-                      child: Row(
+                              itemCount: history.length + 1,
+                              itemBuilder: (context, index) {
+                                if (index == 0) {
+                                  return Center(
+                                    child: TextButton(
+                                      onPressed: history.isEmpty || older
+                                          ? null
+                                          : () async {
+                                              setState(() => older = true);
+                                              final previous = scroll
+                                                  .position
+                                                  .maxScrollExtent;
+                                              await guard(
+                                                context,
+                                                () => e.loadHistory(
+                                                  widget.cid,
+                                                  before: number(
+                                                    history
+                                                        .first['conversation_seq'],
+                                                  ),
+                                                ),
+                                              );
+                                              WidgetsBinding.instance
+                                                  .addPostFrameCallback((_) {
+                                                    if (scroll.hasClients) {
+                                                      scroll.jumpTo(
+                                                        scroll
+                                                                .position
+                                                                .maxScrollExtent -
+                                                            previous +
+                                                            scroll.offset,
+                                                      );
+                                                    }
+                                                  });
+                                              if (mounted) {
+                                                setState(() => older = false);
+                                              }
+                                            },
+                                      child: Text(
+                                        older ? '正在加载…' : '加载更早消息',
+                                        style: const TextStyle(
+                                          color: muted,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ),
+                                  );
+                                }
+                                final m = history[index - 1];
+                                final newDay =
+                                    index == 1 ||
+                                    messageDay(history[index - 2]) !=
+                                        messageDay(m);
+                                return Column(
+                                  key: _messageKeys.putIfAbsent(
+                                    m['id'],
+                                    () => GlobalKey(),
+                                  ),
+                                  children: [
+                                    if (newDay) MessageDatePill(message: m),
+                                    if (m['id'] == _unreadId)
+                                      Container(
+                                        key: const Key('unread-divider'),
+                                        width: double.infinity,
+                                        margin: const EdgeInsets.symmetric(
+                                          vertical: 9,
+                                        ),
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 6,
+                                        ),
+                                        color: const Color(0xff1a2c3a),
+                                        child: const Text(
+                                          '未读消息',
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                            color: blue,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ),
+                                    AnimatedContainer(
+                                      duration: const Duration(
+                                        milliseconds: 200,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: _highlighted == m['id']
+                                            ? blue.withValues(alpha: .18)
+                                            : Colors.transparent,
+                                        borderRadius: BorderRadius.circular(14),
+                                      ),
+                                      child: Bubble(
+                                        engine: e,
+                                        onQuoteTap: jumpToReply,
+                                        message: m,
+                                        onLongPress: () => actions(m),
+                                        onReply: () {
+                                          setState(() {
+                                            reply = m;
+                                            editing = null;
+                                          });
+                                          textChanged(input.text);
+                                        },
+                                      ),
+                                    ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ),
+                  ),
+                  if (_scrolledUp)
+                    Positioned(
+                      right: 12,
+                      bottom: 12,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.push_pin, size: 18, color: blue),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(
-                              '置顶 ${pinned.length} · ${pinned.last['text']}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(color: blue, fontSize: 13),
+                          if (history.any(
+                            (m) =>
+                                isMention(m) &&
+                                number(m['conversation_seq']) > _entryReadSeq &&
+                                !_visitedMentions.contains(m['id']),
+                          )) ...[
+                            FloatingActionButton.small(
+                              heroTag: 'mentions',
+                              tooltip: '跳到未读提及',
+                              onPressed: () {
+                                final target = history.firstWhere(
+                                  (m) =>
+                                      isMention(m) &&
+                                      number(m['conversation_seq']) >
+                                          _entryReadSeq &&
+                                      !_visitedMentions.contains(m['id']),
+                                );
+                                _visitedMentions.add(target['id']);
+                                unawaited(jumpToReply(target['id']));
+                              },
+                              child: const Text(
+                                '@',
+                                style: TextStyle(fontSize: 23),
+                              ),
+                            ),
+                            const SizedBox(height: 9),
+                          ],
+                          Badge(
+                            isLabelVisible:
+                                number(e.dialogs[widget.cid]?['unread_count']) >
+                                0,
+                            label: Text(
+                              '${number(e.dialogs[widget.cid]?['unread_count'])}',
+                            ),
+                            child: FloatingActionButton.small(
+                              heroTag: 'bottom',
+                              tooltip: '回到最新消息',
+                              onPressed: bottom,
+                              child: const Icon(Icons.keyboard_arrow_down),
                             ),
                           ),
                         ],
                       ),
                     ),
-                  ),
-                if (loadError != null)
-                  TextButton(onPressed: load, child: Text(loadError!)),
-                if (removed)
-                  const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Text('你已离开此会话，无法继续读取或发送消息'),
-                  ),
-                Expanded(
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: loading
-                            ? const Center(child: CircularProgressIndicator())
-                            : NotificationListener<ScrollNotification>(
-                                onNotification: (_) {
-                                  markRead();
-                                  return false;
-                                },
-                                child: ListView.builder(
-                                  key: const Key('messages'),
-                                  controller: scroll,
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 16,
-                                  ),
-                                  itemCount: history.length + 1,
-                                  itemBuilder: (context, index) {
-                                    if (index == 0) {
-                                      return Center(
-                                        child: TextButton(
-                                          onPressed: history.isEmpty || older
-                                              ? null
-                                              : () async {
-                                                  setState(() => older = true);
-                                                  final previous = scroll
-                                                      .position
-                                                      .maxScrollExtent;
-                                                  await guard(
-                                                    context,
-                                                    () => e.loadHistory(
-                                                      widget.cid,
-                                                      before: number(
-                                                        history
-                                                            .first['conversation_seq'],
-                                                      ),
-                                                    ),
-                                                  );
-                                                  WidgetsBinding.instance
-                                                      .addPostFrameCallback((
-                                                        _,
-                                                      ) {
-                                                        if (scroll.hasClients) {
-                                                          scroll.jumpTo(
-                                                            scroll
-                                                                    .position
-                                                                    .maxScrollExtent -
-                                                                previous +
-                                                                scroll.offset,
-                                                          );
-                                                        }
-                                                      });
-                                                  if (mounted) {
-                                                    setState(
-                                                      () => older = false,
-                                                    );
-                                                  }
-                                                },
-                                          child: Text(
-                                            older ? '正在加载…' : '加载更早消息',
-                                            style: const TextStyle(
-                                              color: muted,
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                        ),
-                                      );
-                                    }
-                                    final m = history[index - 1];
-                                    final newDay =
-                                        index == 1 ||
-                                        messageDay(history[index - 2]) !=
-                                            messageDay(m);
-                                    return Column(
-                                      key: _messageKeys.putIfAbsent(
-                                        m['id'],
-                                        () => GlobalKey(),
-                                      ),
-                                      children: [
-                                        if (newDay) MessageDatePill(message: m),
-                                        if (m['id'] == _unreadId)
-                                          Container(
-                                            key: const Key('unread-divider'),
-                                            width: double.infinity,
-                                            margin: const EdgeInsets.symmetric(
-                                              vertical: 9,
-                                            ),
-                                            padding: const EdgeInsets.symmetric(
-                                              vertical: 6,
-                                            ),
-                                            color: const Color(0xff1a2c3a),
-                                            child: const Text(
-                                              '未读消息',
-                                              textAlign: TextAlign.center,
-                                              style: TextStyle(
-                                                color: blue,
-                                                fontSize: 12,
-                                              ),
-                                            ),
-                                          ),
-                                        AnimatedContainer(
-                                          duration: const Duration(
-                                            milliseconds: 200,
-                                          ),
-                                          decoration: BoxDecoration(
-                                            color: _highlighted == m['id']
-                                                ? blue.withValues(alpha: .18)
-                                                : Colors.transparent,
-                                            borderRadius: BorderRadius.circular(
-                                              14,
-                                            ),
-                                          ),
-                                          child: Bubble(
-                                            engine: e,
-                                            onQuoteTap: jumpToReply,
-                                            message: m,
-                                            onLongPress: () => actions(m),
-                                            onReply: () {
-                                              setState(() {
-                                                reply = m;
-                                                editing = null;
-                                              });
-                                              textChanged(input.text);
-                                            },
-                                          ),
-                                        ),
-                                      ],
-                                    );
-                                  },
-                                ),
-                              ),
-                      ),
-                      if (_scrolledUp)
-                        Positioned(
-                          right: 12,
-                          bottom: 12,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (history.any(
-                                (m) =>
-                                    isMention(m) &&
-                                    number(m['conversation_seq']) >
-                                        _entryReadSeq &&
-                                    !_visitedMentions.contains(m['id']),
-                              )) ...[
-                                FloatingActionButton.small(
-                                  heroTag: 'mentions',
-                                  tooltip: '跳到未读提及',
-                                  onPressed: () {
-                                    final target = history.firstWhere(
-                                      (m) =>
-                                          isMention(m) &&
-                                          number(m['conversation_seq']) >
-                                              _entryReadSeq &&
-                                          !_visitedMentions.contains(m['id']),
-                                    );
-                                    _visitedMentions.add(target['id']);
-                                    unawaited(jumpToReply(target['id']));
-                                  },
-                                  child: const Text(
-                                    '@',
-                                    style: TextStyle(fontSize: 23),
-                                  ),
-                                ),
-                                const SizedBox(height: 9),
-                              ],
-                              Badge(
-                                isLabelVisible:
-                                    number(
-                                      e.dialogs[widget.cid]?['unread_count'],
-                                    ) >
-                                    0,
-                                label: Text(
-                                  '${number(e.dialogs[widget.cid]?['unread_count'])}',
-                                ),
-                                child: FloatingActionButton.small(
-                                  heroTag: 'bottom',
-                                  tooltip: '回到最新消息',
-                                  onPressed: bottom,
-                                  child: const Icon(Icons.keyboard_arrow_down),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                if (reply != null || editing != null)
-                  Container(
-                    color: panel,
-                    padding: const EdgeInsets.only(left: 16),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.reply, color: blue),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            '${editing != null ? '编辑消息' : '回复'} · ${replyPreview(editing ?? reply)}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: blue),
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: () {
-                            setState(() {
-                              if (editing != null) input.clear();
-                              editing = null;
-                              reply = null;
-                            });
-                            textChanged(input.text);
-                          },
-                          icon: const Icon(Icons.close),
-                        ),
-                      ],
-                    ),
-                  ),
-                Material(
-                  color: panel,
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(3, 5, 7, 5),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        IconButton(
-                          tooltip: '发送图片',
-                          onPressed: sending || removed || !e.online
-                              ? null
-                              : image,
-                          icon: const Icon(Icons.attach_file, color: muted),
-                        ),
-                        Expanded(
-                          child: TextField(
-                            key: const Key('composer'),
-                            controller: input,
-                            minLines: 1,
-                            maxLines: 5,
-                            maxLength: 4000,
-                            enabled: !removed,
-                            onChanged: textChanged,
-                            decoration: const InputDecoration(
-                              hintText: '消息',
-                              counterText: '',
-                              contentPadding: EdgeInsets.symmetric(
-                                vertical: 13,
-                                horizontal: 5,
-                              ),
-                              filled: false,
-                              border: InputBorder.none,
-                            ),
-                            onSubmitted: (_) => send(),
-                          ),
-                        ),
-                        const SizedBox(width: 5),
-                        IconButton.filled(
-                          key: const Key('send'),
-                          tooltip: '发送',
-                          onPressed: sending || removed ? null : send,
-                          icon: sending
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.send_rounded),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
+            if (reply != null || editing != null)
+              Container(
+                color: panel,
+                padding: const EdgeInsets.only(left: 16),
+                child: Row(
+                  children: [
+                    const Icon(Icons.reply, color: blue),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        '${editing != null ? '编辑消息' : '回复'} · ${replyPreview(editing ?? reply)}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: blue),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () {
+                        setState(() {
+                          if (editing != null) input.clear();
+                          editing = null;
+                          reply = null;
+                        });
+                        textChanged(input.text);
+                      },
+                      icon: const Icon(Icons.close),
+                    ),
+                  ],
+                ),
+              ),
+            Material(
+              color: panel,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(3, 5, 7, 5),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    IconButton(
+                      tooltip: '发送图片',
+                      onPressed: sending || removed || !e.online ? null : image,
+                      icon: const Icon(Icons.attach_file, color: muted),
+                    ),
+                    Expanded(
+                      child: TextField(
+                        key: const Key('composer'),
+                        controller: input,
+                        minLines: 1,
+                        maxLines: 5,
+                        maxLength: 4000,
+                        enabled: !removed,
+                        onChanged: textChanged,
+                        decoration: const InputDecoration(
+                          hintText: '消息',
+                          counterText: '',
+                          contentPadding: EdgeInsets.symmetric(
+                            vertical: 13,
+                            horizontal: 5,
+                          ),
+                          filled: false,
+                          border: InputBorder.none,
+                        ),
+                        onSubmitted: (_) => send(),
+                      ),
+                    ),
+                    const SizedBox(width: 5),
+                    IconButton.filled(
+                      key: const Key('send'),
+                      tooltip: '发送',
+                      onPressed: sending || removed ? null : send,
+                      icon: sending
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.send_rounded),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -1721,7 +1670,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
         list.add({...m, ...await e.user(m['user_id'])});
       }
       if (!mounted) return;
-      await showModalBottomSheet(
+      await showTgSheet(
         context: context,
         builder: (c) => SafeArea(
           child: ListView(
@@ -2529,7 +2478,7 @@ class _ProfilePageState extends State<ProfilePage> {
           const SizedBox(height: 20),
           OutlinedButton(
             onPressed: () async {
-              final ok = await showDialog<bool>(
+              final ok = await showTgDialog<bool>(
                 context: context,
                 builder: (c) => AlertDialog(
                   title: const Text('退出当前账号？'),
