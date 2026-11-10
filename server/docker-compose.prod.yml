@@ -1,0 +1,57 @@
+name: qingliao
+services:
+  chat:
+    image: ${CHAT_IMAGE}
+    container_name: qingliao
+    restart: unless-stopped
+    environment:
+      CHAT_ADDR: 0.0.0.0:8088
+      CHAT_DATA: /data
+      CHAT_ORIGIN: https://${CHAT_DOMAIN}
+      CHAT_ADMIN_HANDLE: admin
+      CHAT_MEDIA_QUOTA: "536870912"
+      CHAT_MAX_FILE: "20971520"
+      READ_RECEIPTS_ENABLED: "true"
+      GOMEMLIMIT: 48MiB
+      GOMAXPROCS: "2"
+    volumes:
+      - chat-data:/data
+    networks: [traefik]
+    expose: ["8088"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 96m
+    mem_reservation: 32m
+    cpus: 0.75
+    pids_limit: 100
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik
+      - traefik.http.routers.qingliao.rule=Host(`${CHAT_DOMAIN}`)
+      - traefik.http.routers.qingliao.entrypoints=https
+      - traefik.http.routers.qingliao.tls=true
+      - traefik.http.routers.qingliao.tls.certresolver=le
+      - traefik.http.routers.qingliao.service=qingliao
+      - traefik.http.services.qingliao.loadbalancer.server.port=8088
+      - traefik.http.routers.qingliao-http.rule=Host(`${CHAT_DOMAIN}`)
+      - traefik.http.routers.qingliao-http.entrypoints=http
+      - traefik.http.routers.qingliao-http.middlewares=qingliao-https
+      - traefik.http.routers.qingliao-http.service=qingliao
+      - traefik.http.middlewares.qingliao-https.redirectscheme.scheme=https
+      - traefik.http.middlewares.qingliao-https.redirectscheme.port=443
+      - traefik.http.routers.qingliao.middlewares=qingliao-security
+      - traefik.http.middlewares.qingliao-security.headers.contentTypeNosniff=true
+      - traefik.http.middlewares.qingliao-security.headers.stsSeconds=31536000
+      - traefik.http.middlewares.qingliao-security.headers.referrerPolicy=no-referrer
+volumes:
+  chat-data:
+networks:
+  traefik:
+    external: true
