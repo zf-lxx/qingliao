@@ -37,7 +37,8 @@ void main() {
       final engine = ChatEngine(store!, MemoryVault());
       const key = Key('shot-boundary');
       Future<void> shot(String name) async {
-        await tester.pumpAndSettle();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 350));
         final boundary = tester.renderObject<RenderRepaintBoundary>(
           find.byKey(key),
         );
@@ -88,14 +89,17 @@ void main() {
       );
       await shot('02-dialogs-desktop');
       await tester.tap(find.text('阿澈').first);
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
       await shot('03-chat-desktop');
       expect(find.byKey(const Key('composer')), findsOneWidget);
       expect(find.text('编辑后的正文', findRichText: true), findsWidgets);
       await tester.pageBack();
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
       await tester.tap(find.byTooltip('个人资料'));
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
       await shot('04-profile-desktop');
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());

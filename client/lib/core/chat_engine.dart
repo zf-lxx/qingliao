@@ -16,7 +16,12 @@ int number(dynamic v) => v is num ? v.toInt() : 0;
 const _uuid = Uuid();
 
 class ChatEngine extends ChangeNotifier {
-  ChatEngine(this.store, this.vault);
+  ChatEngine(
+    this.store,
+    this.vault, {
+    this.handshakeTimeout = const Duration(seconds: 12),
+  });
+  final Duration handshakeTimeout;
   final LocalStore store;
   final SessionVault vault;
   ChatApi? api;
@@ -31,6 +36,11 @@ class ChatEngine extends ChangeNotifier {
   final Map<String, List<Json>> pins = {}, reactions = {};
   int cursor = 0, badge = 0;
   bool online = false, connecting = false, closed = false, suspended = false;
+  bool syncing = false;
+  String connectionStage = 'idle';
+  String lastConnectionFailure = '';
+  int _syncTarget = 0;
+  DateTime _lastFrameAt = DateTime.now();
   bool get signedIn => session != null;
   bool get receipts => privacy['effective'] == true;
   String get uid => session?['user_id'] ?? '';
@@ -38,7 +48,7 @@ class ChatEngine extends ChangeNotifier {
   String error = '';
   IOWebSocketChannel? _socket;
   StreamSubscription? _subscription;
-  Timer? _reconnect, _heartbeat;
+  Timer? _reconnect, _heartbeat, _handshake;
   int _attempt = 0, _generation = 0;
   final Map<String, Timer> _inFlight = {};
   final Map<String, DateTime> _typedAt = {};
@@ -166,6 +176,8 @@ class ChatEngine extends ChangeNotifier {
     if (closed || suspended || !signedIn || connecting || online) return;
     connecting = true;
     error = '';
+    connectionStage = 'loading';
+    _reconnect?.cancel();
     notifyListeners();
     final generation = ++_generation;
     try {
@@ -174,19 +186,30 @@ class ChatEngine extends ChangeNotifier {
       readPositions.clear();
       await refreshDialogs();
       if (generation != _generation || closed || suspended) return;
+      connectionStage = 'websocket';
       final channel = api!.socket();
       _socket = channel;
-      await channel.ready;
+      await channel.ready.timeout(handshakeTimeout);
       if (generation != _generation) {
         await channel.sink.close();
         return;
       }
+      connectionStage = 'hello';
+      _lastFrameAt = DateTime.now();
+      // TCP/HTTP upgrade is not the application handshake. A half-open socket
+      // must not leave the client waiting forever for hello / resume result.
+      _handshake?.cancel();
+      _handshake = Timer(handshakeTimeout, () {
+        _fail(TimeoutException('handshake:$connectionStage'), generation);
+      });
+      notifyListeners();
       // Serialize frames so durable cursor always precedes ACK.
       _subscription = channel.stream.listen(
         (raw) {
           _events = _events
               .then((_) async {
                 if (generation != _generation) return;
+                _lastFrameAt = DateTime.now();
                 await _frame(obj(jsonDecode(raw as String)));
               })
               .catchError((Object e) {
@@ -199,8 +222,10 @@ class ChatEngine extends ChangeNotifier {
     } catch (e) {
       _fail(e, generation);
     } finally {
-      connecting = false;
-      notifyListeners();
+      if (generation == _generation) {
+        connecting = false;
+        notifyListeners();
+      }
     }
   }
 
@@ -211,6 +236,7 @@ class ChatEngine extends ChangeNotifier {
   Future<void> _frame(Json f) async {
     switch (f['op']) {
       case 'hello':
+        connectionStage = 'resume';
         _send({
           'op': 'sync.resume',
           'req_id': 'resume',
@@ -218,11 +244,22 @@ class ChatEngine extends ChangeNotifier {
         });
       case 'result':
         if (f['req_id'] == 'resume') {
+          _handshake?.cancel();
+          _syncTarget = number(obj(f['data'])['high_watermark']);
+          syncing = cursor < _syncTarget;
+          connectionStage = syncing ? 'sync' : 'connected';
+          lastConnectionFailure = '';
           online = true;
           _attempt = 0;
           connecting = false;
           _heartbeat?.cancel();
+          final generation = _generation;
           _heartbeat = Timer.periodic(const Duration(seconds: 20), (_) {
+            if (DateTime.now().difference(_lastFrameAt) >
+                const Duration(seconds: 45)) {
+              _fail(TimeoutException('heartbeat'), generation);
+              return;
+            }
             _send({'op': 'ping', 'req_id': 'ping'});
             retryPending();
             notifyListeners();
@@ -349,6 +386,10 @@ class ChatEngine extends ChangeNotifier {
         }
       }
       cursor = number(e['event_seq']);
+      if (cursor >= _syncTarget) {
+        syncing = false;
+        if (online) connectionStage = 'connected';
+      }
       await persist();
     } catch (_) {
       restore(obj(jsonDecode(before)));
@@ -406,6 +447,50 @@ class ChatEngine extends ChangeNotifier {
     }
     await persist();
     notifyListeners();
+  }
+
+  final Map<String, Future<Json?>> _replyLookups = {};
+  Json? cachedMessage(String id) =>
+      messages.values.where((m) => m['id'] == id).firstOrNull;
+  Future<Json?> resolveReply(String cid, String id, {int? before}) async {
+    final cached = cachedMessage(id);
+    if (cached != null) return cached;
+    final key = '$cid|$id';
+    if (_replyLookups[key] case final pending?) return pending;
+    final lookup = _fetchReply(cid, id, before);
+    _replyLookups[key] = lookup;
+    try {
+      return await lookup;
+    } finally {
+      _replyLookups.remove(key);
+    }
+  }
+
+  Future<Json?> _fetchReply(String cid, String id, int? before) async {
+    // Existing production API has history pagination, not GET /messages/:id.
+    // Walk backwards within the server's membership visibility boundary.
+    var next = before;
+    while (!closed && signedIn) {
+      final data = obj(
+        await api!.call(
+          'GET',
+          '/conversations/$cid/messages?limit=100${next == null ? '' : '&before=$next'}',
+        ),
+      );
+      final page = objects(data['messages']);
+      if (page.isEmpty) return null;
+      for (final m in page) {
+        _upsert(m);
+      }
+      await persist();
+      notifyListeners();
+      final found = cachedMessage(id);
+      if (found != null) return found;
+      final oldest = page.map((m) => number(m['conversation_seq'])).reduce(min);
+      if (oldest <= 1 || (next != null && oldest >= next)) return null;
+      next = oldest;
+    }
+    return null;
   }
 
   Future<void> loadMembers(String cid) async {
@@ -619,8 +704,13 @@ class ChatEngine extends ChangeNotifier {
 
   void _fail(Object? e, int generation) {
     if (generation != _generation || closed || suspended) return;
+    ++_generation; // Fence late frames/errors from the failed transport.
+    lastConnectionFailure = '$connectionStage:${e.runtimeType}';
+    connectionStage = 'backoff';
     online = false;
+    syncing = false;
     connecting = false;
+    _handshake?.cancel();
     _heartbeat?.cancel();
     _subscription?.cancel();
     _socket?.sink.close();
@@ -648,6 +738,7 @@ class ChatEngine extends ChangeNotifier {
     suspended = pause;
     ++_generation;
     _reconnect?.cancel();
+    _handshake?.cancel();
     _heartbeat?.cancel();
     await _subscription?.cancel();
     await _socket?.sink.close();
@@ -658,13 +749,24 @@ class ChatEngine extends ChangeNotifier {
     _inFlight.clear();
     await _events;
     online = false;
+    syncing = false;
     connecting = false;
+    connectionStage = 'idle';
     notifyListeners();
   }
 
+  bool _resuming = false;
   Future<void> resume() async {
-    suspended = false;
-    await connect();
+    if (_resuming || closed || !signedIn) return;
+    _resuming = true;
+    try {
+      // Android may retain a dead socket across Wi-Fi/mobile switches or sleep.
+      await disconnect(pause: false);
+      _attempt = 0;
+      await connect();
+    } finally {
+      _resuming = false;
+    }
   }
 
   Future<void> logout({bool localOnly = false}) async {

@@ -12,6 +12,9 @@ import 'core/api.dart';
 import 'core/chat_engine.dart';
 import 'core/storage.dart';
 import 'core/push.dart';
+import 'widgets/connection_title.dart';
+import 'widgets/reply_quote.dart';
+import 'widgets/image_viewer.dart';
 
 const bg = Color(0xff0e1621),
     panel = Color(0xff17212b),
@@ -45,14 +48,22 @@ class QingliaoApp extends StatefulWidget {
 }
 
 class _QingliaoAppState extends State<QingliaoApp> with WidgetsBindingObserver {
+  StreamSubscription<dynamic>? _network;
+  static const _networkEvents = EventChannel('xyz.qingliao.app/network');
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
+      _network = _networkEvents.receiveBroadcastStream().listen((_) {
+        if (widget.engine.signedIn) unawaited(widget.engine.resume());
+      }, onError: (Object _) {});
+    }
   }
 
   @override
   void dispose() {
+    _network?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -550,9 +561,19 @@ class _DialogsPageState extends State<DialogsPage> {
         });
       return Scaffold(
         appBar: AppBar(
+          centerTitle: false,
           title: Row(
             children: [
-              Text(archived ? '归档聊天' : '轻聊'),
+              Flexible(
+                child: ConnectionTitle(
+                  engine: e,
+                  title: archived ? '归档聊天' : '轻聊',
+                  style: const TextStyle(
+                    fontSize: 25,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
               if (e.badge > 0) ...[
                 const SizedBox(width: 9),
                 Badge(label: Text('${e.badge}')),
@@ -583,7 +604,6 @@ class _DialogsPageState extends State<DialogsPage> {
         ),
         body: Column(
           children: [
-            ConnectionBanner(engine: e),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
               child: TextField(
@@ -786,45 +806,6 @@ class _DialogsPageState extends State<DialogsPage> {
   );
 }
 
-class ConnectionBanner extends StatelessWidget {
-  final ChatEngine engine;
-  const ConnectionBanner({super.key, required this.engine});
-  @override
-  Widget build(BuildContext context) => engine.online
-      ? const SizedBox.shrink()
-      : Material(
-          color: const Color(0xff24394c),
-          child: InkWell(
-            onTap: () => engine.resume(),
-            child: Padding(
-              padding: const EdgeInsets.all(8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.sync, size: 15, color: blue),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      engine.error.isNotEmpty
-                          ? engine.error
-                          : engine.suspended
-                          ? '连接已暂停 · 点击重连'
-                          : '正在连接…',
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  const Text(
-                    '点击重试',
-                    style: TextStyle(color: blue, fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
-}
-
 class ChatPage extends StatefulWidget {
   final ChatEngine engine;
   final String cid, title;
@@ -842,7 +823,135 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   ChatEngine get e => widget.engine;
   final input = TextEditingController(), scroll = ScrollController();
   Json? reply, editing;
-  Timer? draftTimer;
+  Timer? draftTimer, _highlightTimer;
+  final Map<String, GlobalKey> _messageKeys = {};
+  String? _highlighted, _unreadId;
+  int _entryReadSeq = 0;
+  bool _hadUnread = false,
+      _initialPositioned = false,
+      _scrolledUp = false,
+      _positioning = false;
+  final Set<String> _visitedMentions = {};
+  bool isMention(Json m) {
+    if (m['sender_id'] == e.uid) return false;
+    if (objects(m['entities']).any(
+      (x) =>
+          x['user_id'] == e.uid &&
+          ['mention', 'text_mention'].contains(x['type']),
+    )) {
+      return true;
+    }
+    final handle = e.me['handle']?.toString() ?? '';
+    return handle.isNotEmpty &&
+        RegExp('(^|[^A-Za-z0-9_])@${RegExp.escape(handle)}(?![A-Za-z0-9_])')
+            .hasMatch(m['text']?.toString() ?? '');
+  }
+
+  Future<void> positionOnEntry() async {
+    if (!mounted || _initialPositioned) return;
+    _initialPositioned = true;
+    _positioning = true;
+    try {
+      if (_hadUnread) {
+        while (mounted) {
+          final items = e
+              .history(widget.cid)
+              .where((m) => number(m['conversation_seq']) > 0)
+              .toList();
+          if (items.isEmpty ||
+              number(items.first['conversation_seq']) <= _entryReadSeq + 1) {
+            break;
+          }
+          final before = number(items.first['conversation_seq']);
+          await e.loadHistory(widget.cid, before: before);
+          if (e
+                  .history(widget.cid)
+                  .where((m) => number(m['conversation_seq']) > 0)
+                  .length ==
+              items.length) {
+            break;
+          }
+        }
+        final first = e
+            .history(widget.cid)
+            .where(
+              (m) =>
+                  number(m['conversation_seq']) > _entryReadSeq &&
+                  m['sender_id'] != e.uid,
+            )
+            .firstOrNull;
+        if (first != null && mounted) {
+          setState(() => _unreadId = first['id']);
+          await jumpToReply(first['id'], highlight: false);
+          return;
+        }
+      }
+      bottom(false);
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _initialPositioned = false;
+          loadError = '未读消息暂未加载，可点击重试';
+        });
+      }
+    } finally {
+      _positioning = false;
+    }
+  }
+
+  Future<void> jumpToReply(String id, {bool highlight = true}) async {
+    try {
+      final target = await e.resolveReply(widget.cid, id);
+      if (!mounted || target == null) return;
+      setState(() {});
+      await WidgetsBinding.instance.endOfFrame;
+      final history = e.history(widget.cid);
+      final index = history.indexWhere((m) => m['id'] == id);
+      if (index < 0 || !scroll.hasClients) return;
+      var context = _messageKeys[id]?.currentContext;
+      if (context == null) {
+        scroll.jumpTo(scroll.position.maxScrollExtent * index / history.length);
+        await WidgetsBinding.instance.endOfFrame;
+      }
+      // Variable-height lazy bubbles: locate the item, then align precisely.
+      for (var i = 0; i < 80 && mounted; i++) {
+        context = _messageKeys[id]?.currentContext;
+        if (context != null) break;
+        final built = <int>[];
+        for (var j = 0; j < history.length; j++) {
+          if (_messageKeys[history[j]['id']]?.currentContext != null) {
+            built.add(j);
+          }
+        }
+        final direction = built.isNotEmpty && index < built.first ? -1 : 1;
+        final offset =
+            (scroll.offset + direction * scroll.position.viewportDimension * .7)
+                .clamp(0.0, scroll.position.maxScrollExtent);
+        if (offset == scroll.offset) break;
+        scroll.jumpTo(offset);
+        await WidgetsBinding.instance.endOfFrame;
+      }
+      context = _messageKeys[id]?.currentContext;
+      if (context == null || !context.mounted) return;
+      await Scrollable.ensureVisible(
+        context,
+        alignment: .4,
+        duration: const Duration(milliseconds: 200),
+      );
+      if (!mounted || !highlight) return;
+      _highlightTimer?.cancel();
+      setState(() => _highlighted = id);
+      _highlightTimer = Timer(const Duration(milliseconds: 1500), () {
+        if (mounted) setState(() => _highlighted = null);
+      });
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('原消息暂时无法加载，请稍后重试')));
+      }
+    }
+  }
+
   bool sending = false,
       loading = true,
       reading = false,
@@ -856,6 +965,12 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    _entryReadSeq = number(e.dialogs[widget.cid]?['last_read_seq']);
+    _hadUnread = number(e.dialogs[widget.cid]?['unread_count']) > 0;
+    scroll.addListener(() {
+      final up = scroll.hasClients && scroll.position.extentAfter > 160;
+      if (mounted && up != _scrolledUp) setState(() => _scrolledUp = up);
+    });
     WidgetsBinding.instance.addObserver(this);
     input.text = obj(e.dialogs[widget.cid]?['draft'])['text'] ?? '';
     e.addListener(changed);
@@ -868,7 +983,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
         loading = false;
         loadError = null;
       });
-      bottom(false);
+      unawaited(positionOnEntry());
       return;
     }
     try {
@@ -885,7 +1000,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
           loading = false;
           loadError = null;
         });
-        bottom(false);
+        unawaited(positionOnEntry());
       }
     } catch (_) {
       if (mounted) {
@@ -912,7 +1027,14 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     final count = e.history(widget.cid).length;
     final nearBottom = !scroll.hasClients || scroll.position.extentAfter < 130;
     setState(() {});
-    if (count != _lastLength && nearBottom && !older) bottom();
+    if (count != _lastLength &&
+        nearBottom &&
+        !older &&
+        !loading &&
+        !_positioning &&
+        _initialPositioned) {
+      bottom();
+    }
     _lastLength = count;
     if (!loading && nearBottom) markRead();
   }
@@ -936,6 +1058,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   Future<void> markRead() async {
     if (!mounted ||
         loading ||
+        _positioning ||
         reading ||
         !active ||
         ModalRoute.of(context)?.isCurrent != true ||
@@ -1156,6 +1279,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     draftTimer?.cancel();
     if (draftDirty) unawaited(flushDraft());
     input.dispose();
+    _highlightTimer?.cancel();
     scroll.dispose();
     super.dispose();
   }
@@ -1210,12 +1334,13 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
-                      Text(
-                        typing
+                      ConnectionTitle(
+                        engine: e,
+                        title: typing
                             ? '正在输入…'
                             : e.online
                             ? '已连接 · 云端聊天'
-                            : '离线 · 消息将排队',
+                            : '云端聊天',
                         style: const TextStyle(fontSize: 12, color: muted),
                       ),
                     ],
@@ -1235,7 +1360,6 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
             top: false,
             child: Column(
               children: [
-                ConnectionBanner(engine: e),
                 if (pinned.isNotEmpty)
                   InkWell(
                     onTap: () => showModalBottomSheet(
@@ -1301,84 +1425,195 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                     child: Text('你已离开此会话，无法继续读取或发送消息'),
                   ),
                 Expanded(
-                  child: loading
-                      ? const Center(child: CircularProgressIndicator())
-                      : NotificationListener<ScrollNotification>(
-                          onNotification: (_) {
-                            markRead();
-                            return false;
-                          },
-                          child: ListView.builder(
-                            key: const Key('messages'),
-                            controller: scroll,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 16,
-                            ),
-                            itemCount: history.length + 1,
-                            itemBuilder: (context, index) {
-                              if (index == 0) {
-                                return Center(
-                                  child: TextButton(
-                                    onPressed: history.isEmpty || older
-                                        ? null
-                                        : () async {
-                                            setState(() => older = true);
-                                            final previous =
-                                                scroll.position.maxScrollExtent;
-                                            await guard(
-                                              context,
-                                              () => e.loadHistory(
-                                                widget.cid,
-                                                before: number(
-                                                  history
-                                                      .first['conversation_seq'],
-                                                ),
-                                              ),
-                                            );
-                                            WidgetsBinding.instance
-                                                .addPostFrameCallback((_) {
-                                                  if (scroll.hasClients) {
-                                                    scroll.jumpTo(
-                                                      scroll
-                                                              .position
-                                                              .maxScrollExtent -
-                                                          previous +
-                                                          scroll.offset,
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: loading
+                            ? const Center(child: CircularProgressIndicator())
+                            : NotificationListener<ScrollNotification>(
+                                onNotification: (_) {
+                                  markRead();
+                                  return false;
+                                },
+                                child: ListView.builder(
+                                  key: const Key('messages'),
+                                  controller: scroll,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 16,
+                                  ),
+                                  itemCount: history.length + 1,
+                                  itemBuilder: (context, index) {
+                                    if (index == 0) {
+                                      return Center(
+                                        child: TextButton(
+                                          onPressed: history.isEmpty || older
+                                              ? null
+                                              : () async {
+                                                  setState(() => older = true);
+                                                  final previous = scroll
+                                                      .position
+                                                      .maxScrollExtent;
+                                                  await guard(
+                                                    context,
+                                                    () => e.loadHistory(
+                                                      widget.cid,
+                                                      before: number(
+                                                        history
+                                                            .first['conversation_seq'],
+                                                      ),
+                                                    ),
+                                                  );
+                                                  WidgetsBinding.instance
+                                                      .addPostFrameCallback((
+                                                        _,
+                                                      ) {
+                                                        if (scroll.hasClients) {
+                                                          scroll.jumpTo(
+                                                            scroll
+                                                                    .position
+                                                                    .maxScrollExtent -
+                                                                previous +
+                                                                scroll.offset,
+                                                          );
+                                                        }
+                                                      });
+                                                  if (mounted) {
+                                                    setState(
+                                                      () => older = false,
                                                     );
                                                   }
-                                                });
-                                            if (mounted) {
-                                              setState(() => older = false);
-                                            }
-                                          },
-                                    child: Text(
-                                      older ? '正在加载…' : '加载更早消息',
-                                      style: const TextStyle(
-                                        color: muted,
-                                        fontSize: 12,
+                                                },
+                                          child: Text(
+                                            older ? '正在加载…' : '加载更早消息',
+                                            style: const TextStyle(
+                                              color: muted,
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                        ),
+                                      );
+                                    }
+                                    final m = history[index - 1];
+                                    final newDay =
+                                        index == 1 ||
+                                        messageDay(history[index - 2]) !=
+                                            messageDay(m);
+                                    return Column(
+                                      key: _messageKeys.putIfAbsent(
+                                        m['id'],
+                                        () => GlobalKey(),
                                       ),
-                                    ),
+                                      children: [
+                                        if (newDay) MessageDatePill(message: m),
+                                        if (m['id'] == _unreadId)
+                                          Container(
+                                            key: const Key('unread-divider'),
+                                            width: double.infinity,
+                                            margin: const EdgeInsets.symmetric(
+                                              vertical: 9,
+                                            ),
+                                            padding: const EdgeInsets.symmetric(
+                                              vertical: 6,
+                                            ),
+                                            color: const Color(0xff1a2c3a),
+                                            child: const Text(
+                                              '未读消息',
+                                              textAlign: TextAlign.center,
+                                              style: TextStyle(
+                                                color: blue,
+                                                fontSize: 12,
+                                              ),
+                                            ),
+                                          ),
+                                        AnimatedContainer(
+                                          duration: const Duration(
+                                            milliseconds: 200,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: _highlighted == m['id']
+                                                ? blue.withValues(alpha: .18)
+                                                : Colors.transparent,
+                                            borderRadius: BorderRadius.circular(
+                                              14,
+                                            ),
+                                          ),
+                                          child: Bubble(
+                                            engine: e,
+                                            onQuoteTap: jumpToReply,
+                                            message: m,
+                                            onLongPress: () => actions(m),
+                                            onReply: () {
+                                              setState(() {
+                                                reply = m;
+                                                editing = null;
+                                              });
+                                              textChanged(input.text);
+                                            },
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  },
+                                ),
+                              ),
+                      ),
+                      if (_scrolledUp)
+                        Positioned(
+                          right: 12,
+                          bottom: 12,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (history.any(
+                                (m) =>
+                                    isMention(m) &&
+                                    number(m['conversation_seq']) >
+                                        _entryReadSeq &&
+                                    !_visitedMentions.contains(m['id']),
+                              )) ...[
+                                FloatingActionButton.small(
+                                  heroTag: 'mentions',
+                                  tooltip: '跳到未读提及',
+                                  onPressed: () {
+                                    final target = history.firstWhere(
+                                      (m) =>
+                                          isMention(m) &&
+                                          number(m['conversation_seq']) >
+                                              _entryReadSeq &&
+                                          !_visitedMentions.contains(m['id']),
+                                    );
+                                    _visitedMentions.add(target['id']);
+                                    unawaited(jumpToReply(target['id']));
+                                  },
+                                  child: const Text(
+                                    '@',
+                                    style: TextStyle(fontSize: 23),
                                   ),
-                                );
-                              }
-                              final m = history[index - 1];
-                              return Bubble(
-                                key: ValueKey(m['client_msg_id'] ?? m['id']),
-                                engine: e,
-                                message: m,
-                                onLongPress: () => actions(m),
-                                onReply: () {
-                                  setState(() {
-                                    reply = m;
-                                    editing = null;
-                                  });
-                                  textChanged(input.text);
-                                },
-                              );
-                            },
+                                ),
+                                const SizedBox(height: 9),
+                              ],
+                              Badge(
+                                isLabelVisible:
+                                    number(
+                                      e.dialogs[widget.cid]?['unread_count'],
+                                    ) >
+                                    0,
+                                label: Text(
+                                  '${number(e.dialogs[widget.cid]?['unread_count'])}',
+                                ),
+                                child: FloatingActionButton.small(
+                                  heroTag: 'bottom',
+                                  tooltip: '回到最新消息',
+                                  onPressed: bottom,
+                                  child: const Icon(Icons.keyboard_arrow_down),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
+                    ],
+                  ),
                 ),
                 if (reply != null || editing != null)
                   Container(
@@ -1390,7 +1625,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                         const SizedBox(width: 12),
                         Expanded(
                           child: Text(
-                            '${editing != null ? '编辑消息' : '回复'} · ${(editing ?? reply)!['text']}',
+                            '${editing != null ? '编辑消息' : '回复'} · ${replyPreview(editing ?? reply)}',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(color: blue),
@@ -1540,16 +1775,49 @@ Uint8List _imageInWorker(Uint8List source) {
   return Uint8List.fromList(img.encodeJpg(decoded, quality: 82));
 }
 
+String messageDay(Json message) {
+  final date = DateTime.tryParse(message['created_at']?.toString() ?? '')
+      ?.toUtc()
+      .add(const Duration(hours: 8));
+  return date == null ? '' : '${date.year}-${date.month}-${date.day}';
+}
+
+class MessageDatePill extends StatelessWidget {
+  final Json message;
+  const MessageDatePill({super.key, required this.message});
+  @override
+  Widget build(BuildContext context) {
+    final day = messageDay(message).split('-');
+    if (day.length != 3) return const SizedBox.shrink();
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        decoration: BoxDecoration(
+          color: const Color(0xcc243443),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          '${day[1]}月${day[2]}日',
+          style: const TextStyle(fontSize: 12, color: Colors.white70),
+        ),
+      ),
+    );
+  }
+}
+
 class Bubble extends StatefulWidget {
   final ChatEngine engine;
   final Json message;
   final VoidCallback onLongPress, onReply;
+  final ValueChanged<String>? onQuoteTap;
   const Bubble({
     super.key,
     required this.engine,
     required this.message,
     required this.onLongPress,
     required this.onReply,
+    this.onQuoteTap,
   });
   @override
   State<Bubble> createState() => _BubbleState();
@@ -1576,9 +1844,12 @@ class _BubbleState extends State<Bubble> {
         mine = m['sender_id'] == e.uid,
         deleted = m['deleted'] == true;
     final pending = m['status'] == 'pending', failed = m['status'] == 'failed';
-    final parent = e.messages.values
-        .where((p) => p['id'] == m['reply_to'])
-        .firstOrNull;
+    final rawReply = m['reply_to'];
+    final replyId = rawReply is String ? rawReply.trim() : '';
+    final hasReply = replyId.isNotEmpty && replyId != '0' && replyId != 'null';
+    final parent = hasReply
+        ? e.messages.values.where((p) => p['id'] == replyId).firstOrNull
+        : null;
     final reactions = e.reactions[m['id']] ?? [];
     final date = DateTime.tryParse(m['created_at'] ?? '');
     final china = date?.toUtc().add(const Duration(hours: 8));
@@ -1655,60 +1926,40 @@ class _BubbleState extends State<Bubble> {
                         ),
                       ),
                     ),
-                  if (!deleted && m['reply_to']?.toString().isNotEmpty == true)
-                    Container(
-                      padding: const EdgeInsets.fromLTRB(8, 4, 8, 4),
-                      margin: const EdgeInsets.only(bottom: 6),
-                      decoration: const BoxDecoration(
-                        border: Border(left: BorderSide(color: blue, width: 2)),
-                      ),
-                      child: Text(
-                        parent?['deleted'] == true
-                            ? '原消息已撤回'
-                            : parent?['text'] ?? '回复的消息暂未加载',
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: blue, fontSize: 12),
-                      ),
+                  if (!deleted && hasReply)
+                    ReplyQuote(
+                      engine: e,
+                      conversationId: m['conversation_id'],
+                      messageId: replyId,
+                      parent: parent,
+                      before: number(m['conversation_seq']),
+                      onTap: () => widget.onQuoteTap?.call(replyId),
                     ),
                   if (!deleted && image != null)
                     FutureBuilder<Uint8List>(
                       future: image,
                       builder: (_, s) => s.hasData
                           ? GestureDetector(
-                              onTap: () => showDialog(
-                                context: context,
-                                builder: (_) => Dialog.fullscreen(
-                                  backgroundColor: Colors.black,
-                                  child: Stack(
-                                    children: [
-                                      Center(
-                                        child: InteractiveViewer(
-                                          child: Image.memory(s.data!),
-                                        ),
-                                      ),
-                                      Positioned(
-                                        top: 22,
-                                        right: 12,
-                                        child: SafeArea(
-                                          child: IconButton(
-                                            tooltip: '关闭图片',
-                                            onPressed: () =>
-                                                Navigator.pop(context),
-                                            icon: const Icon(Icons.close),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
+                              onTap: () => openImageViewer(
+                                context,
+                                bytes: s.data!,
+                                tag: 'media-${m['id']}',
+                                sender:
+                                    e.users[m['sender_id']]?['display_name'] ??
+                                    (mine ? '你' : '成员'),
+                                time: '$stamp · 中国标准时间 UTC+8',
                               ),
                               child: ClipRRect(
                                 borderRadius: BorderRadius.circular(10),
-                                child: Image.memory(
-                                  s.data!,
-                                  width: 240,
-                                  fit: BoxFit.contain,
+                                child: Hero(
+                                  tag: 'media-${m['id']}',
+                                  createRectTween: (begin, end) =>
+                                      ImageRectTween(begin: begin, end: end),
+                                  child: Image.memory(
+                                    s.data!,
+                                    width: 240,
+                                    fit: BoxFit.contain,
+                                  ),
                                 ),
                               ),
                             )
@@ -2244,6 +2495,13 @@ class _ProfilePageState extends State<ProfilePage> {
             }),
           ),
           const Divider(),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('连接诊断'),
+            subtitle: Text(
+              '${e.connectionStage}${e.lastConnectionFailure.isEmpty ? '' : '\n最近失败：${e.lastConnectionFailure}'}',
+            ),
+          ),
           const ListTile(
             contentPadding: EdgeInsets.zero,
             title: Text('推送通道：未启用'),

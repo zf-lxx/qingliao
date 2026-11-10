@@ -59,7 +59,7 @@ class ChatApi {
     if (body != null) req.body = jsonEncode(body);
     final response = await http.Response.fromStream(
       await client.send(req).timeout(const Duration(seconds: 15)),
-    );
+    ).timeout(const Duration(seconds: 15));
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ApiFailure(response.statusCode, 'request_failed');
     }
@@ -68,8 +68,11 @@ class ChatApi {
         : jsonDecode(utf8.decode(response.bodyBytes));
   }
 
+  Uri get socketUri =>
+      uri('/ws')
+          .replace(scheme: Uri.parse(base).scheme == 'https' ? 'wss' : 'ws');
   IOWebSocketChannel socket() => IOWebSocketChannel.connect(
-    Uri.parse('${base.replaceFirst('http', 'ws')}/v1/ws'),
+    socketUri,
     headers: headers,
     connectTimeout: const Duration(seconds: 12),
     pingInterval: const Duration(seconds: 25),
