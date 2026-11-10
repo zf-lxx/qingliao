@@ -8,3 +8,16 @@ server/data/
 **/.dart_tool/
 **/build/
 *.iml
+
+# Android/client generated outputs and signing material
+client/build/
+client/.dart_tool/
+client/android/.gradle/
+client/android/local.properties
+client/android/key.properties
+*.keystore
+*.jks
+*.apk
+*.aab
+client/artifacts/
+client/test-fixtures/
