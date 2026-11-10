@@ -41,7 +41,7 @@ docker compose logs --tail 50 chat
 ```
 Compose 限内存128m、Go软内存64MiB、CPU0.75、非 root、只读根文件系统、cap_drop ALL。数据/附件在 named volume chat-data；没有 Redis/PostgreSQL/媒体转码。scratch 镜像只含静态程序、公开 CA、空数据目录。构建镜像/compose 启动尚未在本 box 验证（无 Docker 可执行程序），不要把二进制大小当已测镜像大小。
 
-Traefik 用 `compose.traefik.example.yml` 作为**待核对**覆盖文件：填写现有网络、resolver、域名及 CHAT_ORIGIN，再合并；本次没有访问香港服务器、没有改现有 Traefik、没有部署或推 GitHub。端口默认只映射本地127.0.0.1；公开必须 HTTPS/WSS。
+Traefik 用 `compose.traefik.example.yml` 作为**待核对**覆盖文件：填写现有网络、resolver、域名及 CHAT_ORIGIN，再合并；后端尚未部署到香港，未改现有 Traefik；仓库同步独立于部署，代码上游可见不代表服务已上线。端口默认只映射本地127.0.0.1；公开必须 HTTPS/WSS。
 
 文件 secret 示例针对 Linux Compose bind mount；生产推荐管理者显式配置 secret 权限/uid（65532）。启动前检查容器确实可读 bootstrap，之后移除 bootstrap。Xiaomi API key 配置留空，不要把真实 `.env` 提交。
 
