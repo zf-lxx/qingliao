@@ -1,0 +1,10 @@
+data/
+secrets/
+.env
+bin/
+artifacts/
+*.db
+*.db-wal
+*.db-shm
+
+*.log

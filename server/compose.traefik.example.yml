@@ -1,0 +1,17 @@
+# Merge explicitly after checking real Traefik network/resolver names.
+# docker compose -f docker-compose.yml -f compose.traefik.example.yml up -d --build
+services:
+  chat:
+    networks: [default, proxy]
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=${TRAEFIK_NETWORK:?set existing network name}
+      - traefik.http.routers.quietchat.rule=Host(`${CHAT_DOMAIN:?set domain}`)
+      - traefik.http.routers.quietchat.entrypoints=websecure
+      - traefik.http.routers.quietchat.tls=true
+      - traefik.http.routers.quietchat.tls.certresolver=${TRAEFIK_RESOLVER:?set existing resolver}
+      - traefik.http.services.quietchat.loadbalancer.server.port=8088
+networks:
+  proxy:
+    external: true
+    name: ${TRAEFIK_NETWORK:?set existing network name}

@@ -1,0 +1,10 @@
+server/bin/
+server/artifacts/
+server/*.log
+server/data/
+*.db
+*.db-*
+.env
+**/.dart_tool/
+**/build/
+*.iml

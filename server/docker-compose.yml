@@ -1,0 +1,42 @@
+services:
+  chat:
+    build: .
+    image: quietchat:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8088:8088"
+    environment:
+      CHAT_ADDR: "0.0.0.0:8088"
+      CHAT_DATA: /data
+      CHAT_ORIGIN: "${CHAT_ORIGIN:-}"
+      CHAT_ADMIN_HANDLE: "${CHAT_ADMIN_HANDLE:-admin}"
+      CHAT_ADMIN_PASSWORD_FILE: /run/secrets/bootstrap_password
+      CHAT_MEDIA_QUOTA: "${CHAT_MEDIA_QUOTA:-536870912}"
+      CHAT_MAX_FILE: "${CHAT_MAX_FILE:-20971520}"
+      READ_RECEIPTS_ENABLED: "${READ_RECEIPTS_ENABLED:-true}"
+      GOMEMLIMIT: 64MiB
+      GOMAXPROCS: "2"
+      XIAOMI_APP_SECRET: "${XIAOMI_APP_SECRET:-}"
+      XIAOMI_PACKAGE: "${XIAOMI_PACKAGE:-}"
+    secrets:
+      - bootstrap_password
+    volumes:
+      - chat-data:/data
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 128m
+    mem_reservation: 32m
+    cpus: 0.75
+    pids_limit: 256
+    stop_grace_period: 15s
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: "2"
+secrets:
+  bootstrap_password:
+    file: ./secrets/bootstrap_password
+volumes:
+  chat-data:
