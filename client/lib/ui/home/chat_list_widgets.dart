@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../motion/tg_motion.dart';
+import '../theme/tg_tokens.dart';
 
 class TgUnreadBadge extends StatelessWidget {
   final int count;
@@ -63,8 +64,18 @@ class TgFolderTabs extends StatelessWidget {
       final t = TextPainter(
         text: TextSpan(text: tab.label, style: style),
         textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
       )..layout();
-      return t.width + 28 + (tab.count > 0 ? 30.0 : 0);
+      final badge = TextPainter(
+        text: TextSpan(
+          text: tab.count > 999 ? '999+' : '${tab.count}',
+          style: style.copyWith(fontSize: 12, fontWeight: FontWeight.w700),
+        ),
+        textDirection: Directionality.of(context),
+        textScaler: MediaQuery.textScalerOf(context),
+      )..layout();
+      final badgeWidth = badge.width + 12 < 22 ? 22.0 : badge.width + 12;
+      return t.width + 28 + (tab.count > 0 ? badgeWidth + 6 : 0);
     }).toList();
     final index = tabs.indexWhere((t) => t.id == selected);
     final target = index < 0 ? 0 : index;
@@ -344,69 +355,66 @@ class TgBottomNav extends StatelessWidget {
   Widget build(BuildContext context) => SafeArea(
     top: false,
     minimum: const EdgeInsets.fromLTRB(18, 4, 18, 10),
-    child: Container(
-      height: 66,
-      padding: const EdgeInsets.all(5),
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHigh,
-        borderRadius: BorderRadius.circular(36),
-        border: Border.all(
-          color: Theme.of(context).dividerColor.withValues(alpha: .08),
-        ),
-      ),
-      child: Row(
-        children: [
-          for (var i = 0; i < 4; i++)
-            Expanded(
-              child: PressableScale(
-                onTap: () => onChanged(i),
-                radius: 30,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 220),
-                  curve: tgEaseOutQuint,
-                  decoration: BoxDecoration(
-                    color: selected == i
-                        ? Theme.of(context).colorScheme.primary
-                              .withValues(alpha: .13)
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(30),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Badge(
-                        isLabelVisible: i == 0 && badge > 0,
-                        label: Text('$badge'),
-                        child: Icon(
-                          [
-                            Icons.chat_bubble_rounded,
-                            Icons.contacts_rounded,
-                            Icons.settings_rounded,
-                            Icons.person_rounded,
-                          ][i],
-                          size: 23,
-                          color: selected == i
-                              ? Theme.of(context).colorScheme.primary
-                              : Theme.of(context).colorScheme.onSurfaceVariant,
+    child: TgGlass(
+      child: Container(
+        height: 66,
+        padding: const EdgeInsets.all(5),
+        child: Row(
+          children: [
+            for (var i = 0; i < 4; i++)
+              Expanded(
+                child: PressableScale(
+                  onTap: () => onChanged(i),
+                  radius: 30,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 220),
+                    curve: tgEaseOutQuint,
+                    decoration: BoxDecoration(
+                      color: selected == i
+                          ? Theme.of(context).colorScheme.primary
+                                .withValues(alpha: .13)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(30),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Badge(
+                          isLabelVisible: i == 0 && badge > 0,
+                          label: Text('$badge'),
+                          child: Icon(
+                            [
+                              Icons.chat_bubble_rounded,
+                              Icons.contacts_rounded,
+                              Icons.settings_rounded,
+                              Icons.person_rounded,
+                            ][i],
+                            size: 23,
+                            color: selected == i
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        ['聊天', '联系人', '设置', '个人资料'][i],
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w600,
-                          color: selected == i
-                              ? Theme.of(context).colorScheme.primary
-                              : null,
+                        const SizedBox(height: 2),
+                        Text(
+                          ['聊天', '联系人', '设置', '个人资料'][i],
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: selected == i
+                                ? Theme.of(context).colorScheme.primary
+                                : null,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     ),
   );

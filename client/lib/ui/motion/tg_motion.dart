@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
@@ -149,12 +150,19 @@ class TgIconButton extends StatelessWidget {
 /// background parallax. The latter is a Qingliao choice, not an upstream value.
 class TgPageRoute<T> extends PageRoute<T> {
   final Widget page;
+  final Duration duration;
+  final Curve curve;
   bool _dragging = false;
-  TgPageRoute({required this.page, super.settings});
+  TgPageRoute({
+    required this.page,
+    super.settings,
+    this.duration = TgDuration.page,
+    this.curve = tgEaseOutQuint,
+  });
   @override
-  Duration get transitionDuration => TgDuration.page;
+  Duration get transitionDuration => duration;
   @override
-  Duration get reverseTransitionDuration => TgDuration.page;
+  Duration get reverseTransitionDuration => duration;
   @override
   bool get opaque => true;
   @override
@@ -186,8 +194,10 @@ class TgPageRoute<T> extends PageRoute<T> {
         final width = MediaQuery.sizeOf(context).width;
         final primary = _dragging
             ? animation.value
-            : tgEaseOutQuint.transform(animation.value);
-        final secondary = tgEaseOutQuint.transform(secondaryAnimation.value);
+            : curve.transform(animation.value);
+        final secondary = navigator?.userGestureInProgress == true
+            ? secondaryAnimation.value
+            : tgEaseOutQuint.transform(secondaryAnimation.value);
         return Transform.translate(
           offset: Offset(width * (1 - primary) - width * .25 * secondary, 0),
           child: Stack(
@@ -328,45 +338,93 @@ Future<T?> showTgSheet<T>({
   builder: builder,
 );
 
+class _TgPopupRoute<T> extends RawDialogRoute<T> {
+  _TgPopupRoute({
+    required super.pageBuilder,
+    required super.transitionBuilder,
+    required super.transitionDuration,
+  }) : super(
+         barrierDismissible: true,
+         barrierLabel: '关闭菜单',
+         barrierColor: Colors.black38,
+       );
+  @override
+  Duration get reverseTransitionDuration => TgDuration.popupDismiss;
+}
+
+Future<T?> showTgMessageMenu<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+}) => showTgPopup(
+  context: context,
+  builder: builder,
+  centered: true,
+  blur: true,
+  itemCount: 7,
+);
 Future<T?> showTgPopup<T>({
   required BuildContext context,
   required WidgetBuilder builder,
   Offset? anchor,
   int itemCount = 5,
-}) => showGeneralDialog<T>(
-  context: context,
-  barrierDismissible: true,
-  barrierLabel: '关闭菜单',
-  barrierColor: Colors.black.withValues(alpha: .28),
-  transitionDuration: Duration(milliseconds: 150 + 16 * itemCount),
-  pageBuilder: (context, _, _) => SafeArea(
-    child: Align(
-      alignment: Alignment.topRight,
-      child: Padding(
-        padding: EdgeInsets.only(top: anchor?.dy ?? 60, right: 12, left: 40),
-        child: Material(
-          color: Theme.of(context).colorScheme.surface,
-          elevation: 4,
-          clipBehavior: Clip.antiAlias,
-          borderRadius: BorderRadius.circular(20),
-          child: SizedBox(width: 268, child: builder(context)),
+  bool centered = false,
+  bool blur = false,
+}) => Navigator.of(context, rootNavigator: true).push(
+  _TgPopupRoute<T>(
+    transitionDuration: Duration(milliseconds: 150 + 16 * itemCount),
+    pageBuilder: (context, _, _) => Stack(
+      children: [
+        if (blur)
+          Positioned.fill(
+            child: IgnorePointer(
+              child: BackdropFilter(
+                filter: ui.ImageFilter.blur(sigmaX: 6, sigmaY: 6),
+                child: const ColoredBox(color: Colors.transparent),
+              ),
+            ),
+          ),
+        SafeArea(
+          child: Align(
+            alignment: centered ? Alignment.center : Alignment.topRight,
+            child: Padding(
+              padding: EdgeInsets.only(
+                top: centered ? 0 : anchor?.dy ?? 66,
+                right: 12,
+                left: centered ? 12 : 40,
+                bottom: 12,
+              ),
+              child: Material(
+                color: Theme.of(context).colorScheme.surface,
+                elevation: 4,
+                clipBehavior: Clip.antiAlias,
+                borderRadius: BorderRadius.circular(20),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.sizeOf(context).height - 140,
+                    maxWidth: centered ? 340 : 268,
+                  ),
+                  child: SingleChildScrollView(child: builder(context)),
+                ),
+              ),
+            ),
+          ),
         ),
-      ),
+      ],
     ),
+    transitionBuilder: (context, animation, _, child) {
+      final p = MediaQuery.disableAnimationsOf(context)
+          ? 1.0
+          : tgDefaultCurve.transform(animation.value);
+      return Opacity(
+        opacity: p,
+        child: Transform.scale(
+          alignment: centered ? Alignment.center : Alignment.topRight,
+          scale: .88 + .12 * p,
+          child: child,
+        ),
+      );
+    },
   ),
-  transitionBuilder: (context, animation, _, child) {
-    final t = MediaQuery.disableAnimationsOf(context)
-        ? 1.0
-        : tgDefaultCurve.transform(animation.value);
-    return FadeTransition(
-      opacity: animation,
-      child: Transform.scale(
-        alignment: Alignment.topRight,
-        scale: .88 + .12 * t,
-        child: child,
-      ),
-    );
-  },
 );
 
 class TgBackdropTransitions extends PageTransitionsBuilder {
@@ -384,7 +442,9 @@ class TgBackdropTransitions extends PageTransitionsBuilder {
       animation: secondaryAnimation,
       child: child,
       builder: (context, child) {
-        final p = tgEaseOutQuint.transform(secondaryAnimation.value);
+        final p = Navigator.of(context).userGestureInProgress
+            ? secondaryAnimation.value
+            : tgEaseOutQuint.transform(secondaryAnimation.value);
         return Transform.translate(
           offset: Offset(-MediaQuery.sizeOf(context).width * .25 * p, 0),
           child: Stack(

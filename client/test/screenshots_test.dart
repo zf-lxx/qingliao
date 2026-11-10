@@ -94,7 +94,7 @@ void main() {
       await shot('03-chat-desktop');
       expect(find.byKey(const Key('composer')), findsOneWidget);
       expect(find.text('编辑后的正文', findRichText: true), findsWidgets);
-      await tester.pageBack();
+      await tester.tap(find.byTooltip('返回'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 350));
       await tester.tap(find.byTooltip('个人资料'));

@@ -133,3 +133,54 @@
 | 键盘对齐面板 | `ActionBar/AdjustPanLayoutHelper` 250ms/消息默认贝塞尔；BottomSheet keyboardContentAnimator复用同组参数 | 统一 `TgKeyboardMotion`；取平台IME inset进度，键盘/emoji互换、输入栏/列表高度和浮钮位置同步，避免双重平移 |
 
 统一手势验收：tap-down有反馈，滑出或手势取消必须恢复；返回/弹层/图片拖拽全部可被反向打断；减少动画时去位移/回弹而保留反馈和状态；120Hz真机录帧后才给“顺滑”的结论。
+
+## 0.2 新增范围与阶段状态（以 0.2-status.md / VERIFICATION-0.2.0.md 为准）
+
+0.2.0 是首个可安装的重设计阶段包，不等于以下清单全部完成。禁止把预留入口、缓存统计或本机过滤说成服务端完整能力。
+
+### 共用块状设计系统
+- `lib/ui/theme/tg_tokens.dart`：background/card/raised 三个表面层级，主色蓝；卡片20dp、小圆角11dp、块间距12dp、页面16dp。胶囊全圆角，浮层模糊sigma12、表面alpha .86。
+- 这些是轻聊本版统一token，并非声称TG所有页面的精确尺寸。现有登录/设置/资料/弹层继承统一Theme；聊天头、输入栏、底部导航、媒体吸顶条使用TgGlass。下一步替换剩余独立硬编码常量并补浅色主题。
+- 视觉块可整体动画：头部进入选择模式200ms交叉淡入+竖移；控件按下80ms、释放350ms Overshoot1.5；无网络等待后才开始导航动画的做法应避免（资料页立即打开，异步拉取内容）。
+
+### 媒体消息（0.2 未完事项，不是0.3）
+- [ ] 语音：按住mic录音，上滑锁定，左滑取消；锁定后按钮停止/发送；波形边录边更新，Opus或AAC，拖拽播放进度；申请录音权限，不把拒绝当静音成功。
+- [ ] 视频：系统相册、原生平台codec压缩、封面/宽高/时长元数据、行内播放与全屏；不引入整套ffmpeg。
+- [ ] 文件：系统选择器、上传/下载进度、鉴权下载到私有临时目录、系统文件打开；取消与失败重试，配额限制。
+- [ ] 多图：同次发送album_id、2–10张网格、图片查看器左右切换；未上传完成不提前生成假消息。
+- [ ] 服务端媒体kind/metadata校验、quota/授权回归、无权用户不可猜ID下载。总APK目标<50MB，自定义大字体与素材不打包。
+
+录音动效只读参数摘录（DrKLO/Telegram master，2026-11-11 CST读取；未把Java代码或资源复制到仓库）：
+
+| 交互 | 精确参数/属性 | 来源 |
+|---|---|---|
+| 进入录音 | 图标/输入附件150ms；recordCircle与controls缩放到1为300ms，整个组DecelerateInterpolator（默认factor1） | `Components/ChatActivityEnterView.java:9095–9134` |
+| 上滑锁定 | lockAnimatedTranslation延迟100ms再350ms；snapAnimationProgress到1为250ms/EASE_OUT_QUINT；slideToCancelProgress到1为200ms；伴随触觉 | 同文件 `startLockTransition:4717–4739`；未显式设置插值的子动画按Android默认处理，不假称全部Quint |
+| 左滑取消 | slideToCancelProgress到1为200ms/EASE_BOTH；lockAnimatedTranslation200ms；输入文本恢复200ms，起始延迟按分支300或700ms | 同文件 `9680–9695`；删除动画不同分支不可混为一个通用时长 |
+| 录音结束回输入 | exitTransition220ms（有message transition）或360ms（无）；recordTimer150ms；输入alpha恢复200ms，延迟150/450ms | 同文件 `9774–9785` |
+| mic/camera/send切换 | **220ms / EASE_OUT_QUINT**，不是录音iconChanges的150ms | 同文件runningAnimation主分支，见上表；本版已用该值做camera↔send，mic录音尚未开放 |
+
+### 聊天资料页 / 共享媒体（ProfileActivity / SharedMediaLayout）
+- [x] 点击聊天头即时打开独立资料页；头像共享元素到110dp圆头像，居中姓名/状态；消息、静音、搜索真实操作块；用户名/简介与隐私说明卡。
+- [x] 媒体/链接吸顶胶囊，三列已加载图片网格，点图复用Hero查看器。**仅本机已加载消息，页面明确标注，不能当作全部历史统计。**
+- [ ] 透明顶栏编辑/⋮、二维码sheet、分享、按类型加入/退出/屏蔽、收藏/文件/音频/语音/群组分页。
+- [ ] 滚动折叠到姓名+全量媒体计数的紧凑头；头像下拉展开全宽，不只圆形Hero。
+- [ ] 右侧可拖动快滚胶囊与跟手月份label，闲置自动淡出；按月统计/按日期偏移定位；不是线性跳到当前已缓存列表的伪实现。
+- [ ] 双指2–6列网格连续变形；保持手势中心的消息锚点，不刷新到列表顶部。
+- [ ] 后端：每会话按kind分页的shared-media列表、鉴权的总量/年月桶、date+id cursor；删除/清空/封锁权限一致；月份与显示时区一致；返回计数不泄露不属于自己的会话。
+
+| 交互 | 来源精确参数/属性 | 本版/后续说明 |
+|---|---|---|
+| 资料打开 | `ProfileActivity.onCustomTransitionAnimation:10211,10515`：普通180ms/Decelerate；playProfileAnimation==2为250ms/DEFAULT | 本版普通资料路由180ms/Decelerate+Hero；没有宣称完整header/名称联动复刻 |
+| 头像展开/收起 | `ProfileActivity:8767–8773,8861–8867`：剩余进度×250ms÷durationFactor；story分支另乘1.3、FastOutSlowIn；普通EASE_BOTH；横屏收起0ms | 待做可打断的下拉头像展开 |
+| 资料header切换 | `ProfileActivity:8204–8231`：150ms/DEFAULT；header shadow后100ms | 当前SliverAppBar随滚动收缩，尚未做这一套独立名称/影子状态机 |
+| 网格捏合结束归位 | `SharedMediaLayout:4049–4050`：200ms/DEFAULT，围绕pinchCenterPosition恢复偏移 | 待做，不能用整页crossfade冒充 |
+| 命令式换列 | `SharedMediaLayout.animateToMediaColumnsCount:4131–4133`：延迟100ms+350ms/DEFAULT；两套布局混合进度，锚定scroll position | 待做，和捏合结束200ms不是同分支 |
+| 媒体列表item动画 | `SharedMediaLayout:2621–2623`：280ms/EASE_OUT_QUINT | 待做服务端分页后增量插入 |
+| 快滚显隐 | `SharedMediaLayout.updateFastScrollVisibility:671–703`：alpha↔0/1各150ms（未指定插值，Android默认） | 只有满足fastScrollEnabled且顶部吸附才显示；右侧胶囊具体绘制在RecyclerListView，尚未验证其idle延迟，不编造数字 |
+| 快滚提示 | `SharedMediaLayout:4925–4928`：alpha0→1、scale .8→1，150ms | 不是闲置自动隐藏时长 |
+| 日期浮层隐藏 | `SharedMediaLayout.hideFloatingDateView:4470–4476`：180ms/EASE_OUT，alpha→0、Y→-48dp+额外偏移 | 此版本showFloatingDateView为空，显示分支要继续追，不能根据hide反推出完整逻辑 |
+
+### 后端与完整0.2验收仍未完成
+- SQLite FTS5中文tokenization与云端搜索、私聊block、clear-history单方/双方、report、合法转发来源生成、完整shared-media索引与媒体新kind。
+- 目前⋮仅显示已有真实能力（静音时长子菜单、本机搜索、资料），没有伪造“举报成功/已屏蔽/清空成功”。多选已有选择/回复/复制/授权撤回/单条自有编辑；转发与拖选仍未开放。
