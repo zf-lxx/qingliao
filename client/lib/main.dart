@@ -16,6 +16,7 @@ import 'widgets/connection_title.dart';
 import 'widgets/reply_quote.dart';
 import 'widgets/image_viewer.dart';
 import 'ui/motion/tg_motion.dart';
+import 'ui/home/chat_list_widgets.dart';
 
 const bg = Color(0xff0e1621),
     panel = Color(0xff17212b),
@@ -378,6 +379,13 @@ class _LoginPageState extends State<LoginPage> {
   );
 }
 
+String shortTime(dynamic value) {
+  final d = DateTime.tryParse(value?.toString() ?? '')?.toLocal();
+  return d == null
+      ? ''
+      : '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+}
+
 class Avatar extends StatelessWidget {
   final String name;
   final double radius;
@@ -409,6 +417,103 @@ class DialogsPage extends StatefulWidget {
 }
 
 class _DialogsPageState extends State<DialogsPage> {
+  int nav = 0;
+  bool showCompose = true;
+  void newChat() => Navigator.push(context, chatRoute(NewChatPage(engine: e)));
+  void profile() => Navigator.push(context, chatRoute(ProfilePage(engine: e)));
+  Widget navigationBody() {
+    final users = e.users.values.where((u) => u['id'] != e.uid).toList();
+    if (nav == 1) {
+      return ListView(
+        children: [
+          ListTile(
+            leading: const Icon(Icons.person_add_alt_1_rounded),
+            title: const Text('搜索用户 / 新建群聊'),
+            onTap: newChat,
+          ),
+          const Padding(
+            padding: EdgeInsets.all(16),
+            child: Text('最近联系人', style: TextStyle(color: muted)),
+          ),
+          for (final u in users)
+            ListTile(
+              leading: Avatar(u['display_name'] ?? u['handle'] ?? '?'),
+              title: Text(u['display_name'] ?? u['handle'] ?? '用户'),
+              subtitle: Text('@${u['handle'] ?? ''}'),
+              onTap: () => guard(context, () async {
+                final d = obj(
+                  await e.api!.call('POST', '/conversations', {
+                    'kind': 'direct',
+                    'member_ids': [u['id']],
+                  }),
+                );
+                await e.refreshDialogs();
+                if (!mounted) return;
+                Navigator.push(
+                  context,
+                  chatRoute(
+                    ChatPage(
+                      engine: e,
+                      cid: d['id'],
+                      title: u['display_name'] ?? u['handle'] ?? '用户',
+                    ),
+                  ),
+                );
+              }),
+            ),
+          if (users.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(24),
+              child: Text('搜索用户名开始新的聊天，常用联系人会显示在这里。'),
+            ),
+        ],
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+      children: [
+        Center(
+          child: Avatar(
+            e.me['display_name'] ?? e.me['handle'] ?? '我',
+            radius: 44,
+          ),
+        ),
+        const SizedBox(height: 16),
+        Center(
+          child: Text(
+            e.me['display_name'] ?? e.me['handle'] ?? '我',
+            style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w700),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Center(
+          child: Text(
+            '@${e.me['handle'] ?? ''}',
+            style: const TextStyle(color: muted),
+          ),
+        ),
+        const SizedBox(height: 24),
+        ListTile(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(20),
+          ),
+          tileColor: Theme.of(context).colorScheme.surfaceContainer,
+          leading: const Icon(Icons.manage_accounts_rounded),
+          title: Text(nav == 2 ? '账号、隐私与回执' : '编辑个人资料'),
+          subtitle: const Text('昵称、简介、已读回执和退出登录'),
+          trailing: const Icon(Icons.chevron_right_rounded),
+          onTap: profile,
+        ),
+        const SizedBox(height: 20),
+        const ListTile(
+          leading: Icon(Icons.info_outline_rounded),
+          title: Text('轻聊 0.2.0'),
+          subtitle: Text('界面重绘 · 自主实现的 Telegram 风格动效'),
+        ),
+      ],
+    );
+  }
+
   ChatEngine get e => widget.engine;
   final Map<String, String> titles = {};
   final Set<String> fetching = {};
@@ -555,102 +660,103 @@ class _DialogsPageState extends State<DialogsPage> {
           return number(b['last_activity'])
               .compareTo(number(a['last_activity']));
         });
-      return Scaffold(
-        appBar: AppBar(
-          centerTitle: false,
-          title: Row(
-            children: [
-              Flexible(
-                child: ConnectionTitle(
-                  engine: e,
-                  title: archived ? '归档聊天' : '轻聊',
-                  style: const TextStyle(
-                    fontSize: 25,
-                    fontWeight: FontWeight.w700,
-                  ),
+      final archivedCount = e.dialogs.values
+          .where((d) => d['archived'] == true)
+          .length;
+      final list = Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
+            child: TextField(
+              onChanged: (v) => setState(() => query = v),
+              decoration: InputDecoration(
+                hintText: '搜索会话',
+                prefixIcon: const Icon(Icons.search_rounded),
+                isDense: true,
+                filled: true,
+                fillColor: Theme.of(context).colorScheme.surfaceContainerHighest
+                    .withValues(alpha: .6),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(28),
+                  borderSide: BorderSide.none,
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(28),
+                  borderSide: BorderSide.none,
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(28),
+                  borderSide: BorderSide(color: blue.withValues(alpha: .5)),
                 ),
               ),
-              if (e.badge > 0) ...[
-                const SizedBox(width: 9),
-                Badge(label: Text('${e.badge}')),
-              ],
+            ),
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: TgFolderTabs(
+                  selected: folder,
+                  onSelected: (id) => setState(() => folder = id),
+                  tabs: [
+                    (id: '', label: '全部', count: e.badge),
+                    for (final f in e.folders)
+                      (
+                        id: '${f['id']}',
+                        label: '${f['name']}',
+                        count: number(f['unread_count']),
+                      ),
+                  ],
+                ),
+              ),
+              TgIconButton(
+                tooltip: '新建文件夹',
+                icon: Icons.add_rounded,
+                onPressed: makeFolder,
+                size: 38,
+              ),
+              const SizedBox(width: 8),
             ],
           ),
-          actions: [
-            IconButton(
-              tooltip: '归档',
-              onPressed: () => setState(() => archived = !archived),
-              icon: Icon(
-                archived ? Icons.inbox_outlined : Icons.archive_outlined,
-              ),
-            ),
-            IconButton(
-              tooltip: '个人资料',
-              onPressed: () =>
-                  Navigator.push(context, chatRoute(ProfilePage(engine: e))),
-              icon: const Icon(Icons.person_outline),
-            ),
-          ],
-        ),
-        floatingActionButton: FloatingActionButton(
-          tooltip: '新建聊天',
-          onPressed: () =>
-              Navigator.push(context, chatRoute(NewChatPage(engine: e))),
-          child: const Icon(Icons.edit_outlined),
-        ),
-        body: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-              child: TextField(
-                onChanged: (v) => setState(() => query = v),
-                decoration: const InputDecoration(
-                  hintText: '搜索会话',
-                  prefixIcon: Icon(Icons.search),
-                  isDense: true,
+          if (archivedCount > 0 || archived)
+            ListTile(
+              dense: true,
+              leading: Container(
+                width: 48,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(22),
+                ),
+                child: Icon(
+                  archived ? Icons.inbox_rounded : Icons.archive_rounded,
+                  color: muted,
                 ),
               ),
-            ),
-            SizedBox(
-              height: 46,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(right: 8),
-                    child: ChoiceChip(
-                      label: const Text('全部'),
-                      selected: folder.isEmpty,
-                      onSelected: (_) => setState(() => folder = ''),
-                    ),
-                  ),
-                  for (final f in e.folders)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        label: Text(
-                          '${f['name']} ${number(f['unread_count']) > 0 ? f['unread_count'] : ''}',
-                        ),
-                        selected: folder == f['id'],
-                        onSelected: (_) => setState(() => folder = f['id']),
-                      ),
-                    ),
-                  IconButton(
-                    tooltip: '新建文件夹',
-                    onPressed: makeFolder,
-                    icon: const Icon(Icons.add),
-                  ),
-                ],
+              title: Text(
+                archived ? '返回全部聊天' : '已归档的聊天',
+                style: const TextStyle(fontWeight: FontWeight.w600),
               ),
+              trailing: Text(
+                '$archivedCount',
+                style: const TextStyle(color: muted),
+              ),
+              onTap: () => setState(() => archived = !archived),
             ),
-            Expanded(
+          Expanded(
+            child: NotificationListener<ScrollUpdateNotification>(
+              onNotification: (n) {
+                if (n.depth == 0 && (n.scrollDelta ?? 0).abs() > 3) {
+                  final v = (n.scrollDelta ?? 0) < 0;
+                  if (v != showCompose) setState(() => showCompose = v);
+                }
+                return false;
+              },
               child: RefreshIndicator(
                 onRefresh: e.refreshDialogs,
                 child: items.isEmpty
                     ? ListView(
                         children: const [
-                          SizedBox(height: 120),
+                          SizedBox(height: 100),
                           Icon(Icons.forum_outlined, size: 50, color: muted),
                           SizedBox(height: 18),
                           Center(
@@ -661,133 +767,104 @@ class _DialogsPageState extends State<DialogsPage> {
                           ),
                         ],
                       )
-                    : ListView.separated(
+                    : ListView.builder(
+                        padding: const EdgeInsets.only(bottom: 88),
                         itemCount: items.length,
-                        separatorBuilder: (_, _) => const Divider(
-                          height: 1,
-                          indent: 80,
-                          color: Color(0xff1d2b38),
-                        ),
+                        findChildIndexCallback: (key) {
+                          final i = items.indexWhere(
+                            (d) => ValueKey(d['id']) == key,
+                          );
+                          return i < 0 ? null : i;
+                        },
                         itemBuilder: (context, i) {
                           final d = items[i],
                               last = obj(d['last_message']),
                               draft = obj(d['draft']);
                           final name = title(d);
-                          final unread = number(d['unread_count']),
-                              isMuted =
-                                  number(d['notification_mute_until']) >
-                                  DateTime.now().millisecondsSinceEpoch ~/ 1000;
-                          final text =
+                          final unread = number(d['unread_count']);
+                          final isMuted =
+                              number(d['notification_mute_until']) >
+                              DateTime.now().millisecondsSinceEpoch ~/ 1000;
+                          final preview =
                               draft['text']?.toString().isNotEmpty == true
                               ? '草稿：${draft['text']}'
                               : last['deleted'] == true
                               ? '消息已撤回'
                               : last['kind'] == 'image'
-                              ? '[图片] ${last['text'] ?? ''}'
+                              ? '图片 ${last['text'] ?? ''}'
                               : last['text'] ?? '开始对话';
-                          final own = last['sender_id'] == e.uid;
-                          return ListTile(
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 7,
-                            ),
-                            leading: Avatar(name),
-                            title: Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w600,
+                          return TgReorderItem(
+                            key: ValueKey(d['id']),
+                            index: i,
+                            child: Dismissible(
+                              key: ValueKey('swipe-${d['id']}'),
+                              confirmDismiss: (direction) async {
+                                await guard(
+                                  context,
+                                  () => e.state(
+                                    d['id'],
+                                    direction == DismissDirection.endToStart
+                                        ? {'archived': d['archived'] != true}
+                                        : {
+                                            'manual_unread':
+                                                d['manual_unread'] != true,
+                                          },
+                                  ),
+                                );
+                                return false;
+                              },
+                              background: Container(
+                                alignment: Alignment.centerLeft,
+                                padding: const EdgeInsets.only(left: 24),
+                                color: blue,
+                                child: const Icon(
+                                  Icons.mark_chat_unread_rounded,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              secondaryBackground: Container(
+                                alignment: Alignment.centerRight,
+                                padding: const EdgeInsets.only(right: 24),
+                                color: const Color(0xff7793a5),
+                                child: Icon(
+                                  archived
+                                      ? Icons.unarchive_rounded
+                                      : Icons.archive_rounded,
+                                  color: Colors.white,
+                                ),
+                              ),
+                              child: TgChatRow(
+                                avatar: Avatar(name, radius: 29),
+                                title: name,
+                                preview: preview,
+                                time: last.isEmpty
+                                    ? ''
+                                    : shortTime(last['created_at']),
+                                unread: unread > 0
+                                    ? unread
+                                    : d['manual_unread'] == true
+                                    ? 1
+                                    : 0,
+                                muted: isMuted,
+                                pinned: number(d['pinned_order']) > 0,
+                                mention: number(d['unread_mention_count']) > 0,
+                                outgoing:
+                                    last['sender_id'] == e.uid && draft.isEmpty,
+                                read:
+                                    d['read_receipts_visible'] == true &&
+                                    number(d['last_message_read_count']) > 0,
+                                draft: draft.isNotEmpty,
+                                onLongPress: () => menu(d),
+                                onTap: () => Navigator.push(
+                                  context,
+                                  chatRoute(
+                                    ChatPage(
+                                      engine: e,
+                                      cid: d['id'],
+                                      title: name,
                                     ),
                                   ),
                                 ),
-                                if (isMuted)
-                                  const Icon(
-                                    Icons.volume_off,
-                                    size: 15,
-                                    color: muted,
-                                  ),
-                                if (number(d['pinned_order']) > 0)
-                                  const Icon(
-                                    Icons.push_pin,
-                                    size: 15,
-                                    color: muted,
-                                  ),
-                              ],
-                            ),
-                            subtitle: Padding(
-                              padding: const EdgeInsets.only(top: 4),
-                              child: Row(
-                                children: [
-                                  if (own && draft.isEmpty)
-                                    Padding(
-                                      padding: const EdgeInsets.only(right: 4),
-                                      child: Icon(
-                                        d['kind'] == 'direct' &&
-                                                d['read_receipts_visible'] ==
-                                                    true &&
-                                                number(
-                                                      d['last_message_read_count'],
-                                                    ) >
-                                                    0
-                                            ? Icons.done_all
-                                            : Icons.check,
-                                        size: 16,
-                                        color: blue,
-                                      ),
-                                    ),
-                                  Expanded(
-                                    child: Text(
-                                      text,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: TextStyle(
-                                        color: draft.isEmpty ? muted : blue,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            trailing: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                if (number(d['unread_mention_count']) > 0)
-                                  const Text(
-                                    '@',
-                                    style: TextStyle(
-                                      color: blue,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                if (unread > 0 || d['manual_unread'] == true)
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 7,
-                                      vertical: 2,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: isMuted ? muted : blue,
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: Text(
-                                      '${unread > 0 ? unread : 1}',
-                                      style: const TextStyle(
-                                        color: bg,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            onLongPress: () => menu(d),
-                            onTap: () => Navigator.push(
-                              context,
-                              chatRoute(
-                                ChatPage(engine: e, cid: d['id'], title: name),
                               ),
                             ),
                           );
@@ -795,8 +872,81 @@ class _DialogsPageState extends State<DialogsPage> {
                       ),
               ),
             ),
+          ),
+        ],
+      );
+      return Scaffold(
+        appBar: AppBar(
+          toolbarHeight: 78,
+          centerTitle: false,
+          titleSpacing: 20,
+          title: nav == 0
+              ? ConnectionTitle(
+                  engine: e,
+                  title: archived ? '归档聊天' : '轻聊',
+                  style: const TextStyle(
+                    fontSize: 34,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: -.8,
+                  ),
+                )
+              : Text(
+                  ['轻聊', '联系人', '设置', '个人资料'][nav],
+                  style: const TextStyle(
+                    fontSize: 30,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+          actions: [
+            TgIconButton(
+              tooltip: '个人资料',
+              icon: Icons.person_outline_rounded,
+              onPressed: profile,
+            ),
+            const SizedBox(width: 12),
           ],
         ),
+        body: nav == 0 ? list : navigationBody(),
+        bottomNavigationBar: TgBottomNav(
+          selected: nav,
+          badge: e.badge,
+          onChanged: (i) => setState(() => nav = i),
+        ),
+        floatingActionButton: nav == 0
+            ? AnimatedSlide(
+                duration: const Duration(milliseconds: 280),
+                curve: Curves.decelerate,
+                offset: showCompose ? Offset.zero : const Offset(0, 1.6),
+                child: AnimatedScale(
+                  duration: const Duration(milliseconds: 280),
+                  scale: showCompose ? 1 : .7,
+                  child: AnimatedOpacity(
+                    duration: const Duration(milliseconds: 280),
+                    opacity: showCompose ? 1 : 0,
+                    child: IgnorePointer(
+                      ignoring: !showCompose,
+                      child: PressableScale(
+                        onTap: newChat,
+                        tooltip: '新建聊天',
+                        child: Container(
+                          width: 60,
+                          height: 60,
+                          decoration: const BoxDecoration(
+                            color: blue,
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(
+                            Icons.edit_rounded,
+                            color: Colors.white,
+                            size: 26,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              )
+            : null,
       );
     },
   );
