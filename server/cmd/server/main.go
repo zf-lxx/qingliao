@@ -50,8 +50,9 @@ func main() {
 	c.AllowedOrigin = os.Getenv("CHAT_ORIGIN")
 	c.AdminHandle = os.Getenv("CHAT_ADMIN_HANDLE")
 	c.AdminPassword = os.Getenv("CHAT_ADMIN_PASSWORD")
-	c.XiaomiSecret = os.Getenv("XIAOMI_APP_SECRET")
-	c.XiaomiPackage = os.Getenv("XIAOMI_PACKAGE")
+	c.XiaomiSecret = env("MIPUSH_APP_SECRET", os.Getenv("XIAOMI_APP_SECRET"))
+	c.XiaomiPackage = env("MIPUSH_PACKAGE", os.Getenv("XIAOMI_PACKAGE"))
+	c.FCMServiceAccount = os.Getenv("FCM_SERVICE_ACCOUNT_FILE")
 	c.XiaomiURL = env("XIAOMI_ENDPOINT", c.XiaomiURL)
 	parse := func(key string, def int64) int64 {
 		v := os.Getenv(key)

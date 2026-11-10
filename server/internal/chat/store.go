@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"golang.org/x/crypto/bcrypt"
 	_ "modernc.org/sqlite"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -21,6 +22,8 @@ type Config struct {
 	Addr, DataDir, AllowedOrigin, AdminHandle, AdminPassword string
 	StorageDriver                                            string
 	ReadReceiptsEnabled                                      bool
+	FCMServiceAccount                                        string
+	PushProviders                                            map[string]PushProvider
 	MediaQuota, MaxFile                                      int64
 	SessionTTL                                               time.Duration
 	XiaomiSecret, XiaomiPackage, XiaomiURL                   string
@@ -31,6 +34,9 @@ func DefaultConfig() Config {
 }
 
 type App struct {
+	ctx       context.Context
+	cancel    context.CancelFunc
+	providers map[string]PushProvider
 	DB        *sql.DB
 	C         Config
 	mu        sync.Mutex
@@ -140,6 +146,23 @@ func Open(c Config) (*App, error) {
 		db.Close()
 		return nil, e
 	}
+	a.ctx, a.cancel = context.WithCancel(context.Background())
+	a.providers = map[string]PushProvider{}
+	if c.XiaomiSecret != "" && c.XiaomiPackage != "" {
+		a.providers["mipush"] = &XiaomiPush{Secret: c.XiaomiSecret, Package: c.XiaomiPackage, Endpoint: c.XiaomiURL, Client: &http.Client{Timeout: 8 * time.Second}}
+	}
+	if c.FCMServiceAccount != "" {
+		provider, err := loadFCM(a.ctx, c.FCMServiceAccount, &http.Client{Timeout: 8 * time.Second})
+		if err != nil {
+			a.cancel()
+			db.Close()
+			return nil, fmt.Errorf("invalid FCM service account configuration")
+		}
+		a.providers["fcm"] = provider
+	}
+	for name, provider := range c.PushProviders {
+		a.providers[name] = provider
+	}
 	if c.AdminHandle != "" && c.AdminPassword != "" {
 		if e = a.Bootstrap(c.AdminHandle, c.AdminPassword); e != nil {
 			db.Close()
@@ -149,7 +172,13 @@ func Open(c Config) (*App, error) {
 	go a.pushWorker()
 	return a, nil
 }
-func (a *App) Close() error { close(a.stop); a.hub.closeAll(); <-a.done; return a.DB.Close() }
+func (a *App) Close() error {
+	a.cancel()
+	close(a.stop)
+	a.hub.closeAll()
+	<-a.done
+	return a.DB.Close()
+}
 func (a *App) Bootstrap(handle, password string) error {
 	if !validHandle(handle) || len(password) < 12 || len(password) > 72 {
 		return fmt.Errorf("admin handle invalid or password not 12..72 bytes")

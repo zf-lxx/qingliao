@@ -40,6 +40,16 @@ func (h *Hub) online(user string) bool {
 	}
 	return false
 }
+func (h *Hub) deviceOnline(id string) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for c := range h.clients {
+		if c.p.DeviceID == id {
+			return true
+		}
+	}
+	return false
+}
 func (h *Hub) add(c *connection) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()

@@ -16,8 +16,8 @@ services:
       READ_RECEIPTS_ENABLED: "${READ_RECEIPTS_ENABLED:-true}"
       GOMEMLIMIT: 64MiB
       GOMAXPROCS: "2"
-      XIAOMI_APP_SECRET: "${XIAOMI_APP_SECRET:-}"
-      XIAOMI_PACKAGE: "${XIAOMI_PACKAGE:-}"
+      MIPUSH_APP_SECRET: "${MIPUSH_APP_SECRET:-}"
+      MIPUSH_PACKAGE: "${MIPUSH_PACKAGE:-}"
     secrets:
       - bootstrap_password
     volumes:

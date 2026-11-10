@@ -58,6 +58,9 @@ CREATE INDEX IF NOT EXISTS folders_user ON folders(user_id,sort_order);
 CREATE INDEX IF NOT EXISTS chat_activity ON chats(last_activity DESC,id);
 CREATE INDEX IF NOT EXISTS member_dialogs ON members(user_id,archived,pin_order,chat_id);
 CREATE INDEX IF NOT EXISTS notification_mute_expiry ON members(notification_mute_until) WHERE notification_mute_until>0;
+UPDATE devices SET push_provider='mipush' WHERE push_provider='xiaomi';
+UPDATE devices SET push_provider='none' WHERE push_provider='';
+CREATE INDEX IF NOT EXISTS push_coalesce ON push_jobs(user_id,chat_id,done);
 PRAGMA user_version=3;`
 
 func audit(tx *sql.Tx, cid, actor, action, target string, details any) error {

@@ -27,7 +27,7 @@
 | PATCH `/me` | `{display_name,avatar_media_id}`；头像必须本人上传的受支持图片；空字符串清头像 |
 | GET `/users?q=bo` | 已登录用户搜索 handle，至少 2 字符，最多 30 条（小圈子目录，不是匿名全网搜索） |
 | GET `/devices` | 自己的设备、platform、revoked、last_persisted_event_seq、current；不返回 push token |
-| PUT `/devices/current/push` | `{provider:"xiaomi",token:"MiPush regId"}`；空 provider/token 可清除 |
+| PUT `/devices/current/push` | 主通道`mipush/fcm/huawei/oppo/vivo/none`，none+空token清除；详见push.md |
 | DELETE `/devices/{id}` | 仅本人设备，撤销该设备的所有会话，并关闭 WS |
 
 注册/登录返回：
@@ -129,7 +129,9 @@ Storage 接口含 Put/Open/Delete/Usage/PresignUpload，local 实现可用；`CH
 
 客户端负责压缩、去 EXIF、缩略图、媒体尺寸/时长/波形；本版尚无这些结构化元数据/缩略图引用 API，也无病毒扫描/超大图片像素检测/自动孤儿清理，正式开放媒体前需补齐。服务器只存原始已压缩字节，不宣称已有安全转码。
 
-## 7. 小米推送与 Bot 边界
+## 7. 推送与 Bot 边界
+
+> 推送代码已更新为可插拔MiPush+FCM HTTP v1，请以[push.md](push.md)为准；以下早期单小米作业描述不再完整。
 
 - 提交消息时，同事务为每个其他成员建 push_jobs。worker 每秒取最多 16 个作业，离线、仍是成员、仍有未读才推；在线跳过。HTTP API 成功不是设备收到，更不是已读。
 - 配置 `XIAOMI_APP_SECRET / XIAOMI_PACKAGE`；默认接口 `https://api.xmpush.xiaomi.com/v3/message/regid`。无配置时作业保留，5 分钟后再检查，不发送假推送；token 无效/渠道失败指数重试，最多 6 次后 dead-letter `done=-1`。当前每作业多设备失败会整体重试，jobkey 尽量去重。

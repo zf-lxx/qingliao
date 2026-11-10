@@ -348,7 +348,7 @@ func (a *App) newSession(tx *sql.Tx, user, platform string) (map[string]any, err
 	token := id() + id()
 	device, sid := id(), id()
 	expires := time.Now().Add(a.C.SessionTTL).Unix()
-	if _, e := tx.Exec("INSERT INTO devices(id,user_id,platform) VALUES(?,?,?)", device, user, platform); e != nil {
+	if _, e := tx.Exec("INSERT INTO devices(id,user_id,platform,push_provider) VALUES(?,?,?,'none')", device, user, platform); e != nil {
 		return nil, e
 	}
 	if _, e := tx.Exec("INSERT INTO sessions(id,user_id,device_id,token_hash,expires) VALUES(?,?,?,?,?)", sid, user, device, hash(token), expires); e != nil {
@@ -499,7 +499,8 @@ func (a *App) devicePush(w http.ResponseWriter, r *http.Request, p Principal) {
 	if !decode(w, r, &b) {
 		return
 	}
-	if (b.Provider != "" && b.Provider != "xiaomi") || len(b.Token) > 1024 {
+	valid := map[string]bool{"mipush": true, "fcm": true, "huawei": true, "oppo": true, "vivo": true, "none": true}
+	if !valid[b.Provider] || len(b.Token) > 4096 || (b.Provider == "none" && b.Token != "") || (b.Provider != "none" && b.Token == "") {
 		fail(w, ErrInvalid)
 		return
 	}

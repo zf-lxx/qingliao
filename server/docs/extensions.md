@@ -65,7 +65,7 @@ action：mute（1–43200分钟）、unmute、ban（移出群+禁再加入）、
 
 GET `/conversations?limit=50&cursor=...&archived=all&folder_id=...`：
 - 默认不含归档；archived=true仅归档，all包含全部。
-- **一条SQL**：未读范围聚合CTE（索引只扫read_seq/joined_seq之后）、总badge、最后消息索引查询、角色/个性状态、keyset分页；无逐会话HTTP查询。置顶聊天先按pinned_order升序，其余按last_activity降序、id稳定打破同时间，cursor为opaque base64 JSON。
+- **列表业务一条SQL**（认证另查session）：未读范围聚合CTE（索引只扫read_seq/joined_seq之后）、总badge、最后消息索引查询、角色/个性状态、keyset分页；无逐会话HTTP查询。置顶聊天先按pinned_order升序，其余按last_activity降序、id稳定打破同时间，cursor为opaque base64 JSON。
 - `{conversations:[...],total_unread_badge,next_cursor,has_more}`；limit默认50/最大100。即使当前页/归档筛选为空，也返回全局badge。
 - 每项：unread_count、unread_mention_count、manual_unread、last_read_seq、last_message（含text/kind/seq/sender/deleted/edited_at）、last_message_read_count/recipient_count、read_receipts_visible、draft、archived、pinned_order、notification_mute_until。
 - @badge为正文中的本群有效@handle（大小写不敏感、不能是email中间），不计自己/已读/已删；编辑重建mention索引。未做“所有人@all”权限/通知。
@@ -75,7 +75,7 @@ PATCH `/conversations/{id}/state`（只改当前用户、各字段可独立省�
 {"archived":true,"pinned_order":1,"mute_until":"forever","mark_unread":true,"draft":{"text":"草稿","entities":[],"reply_to":"m1"}}
 ```
 - pinned_order=0取消；1–1000决定顺序（允许同序，稳定按活动/id）。这是**聊天置顶**，与消息pins不同。
-- mute_until可为RFC3339绝对时间、"forever"（存极远未来）、""取消。未读数仍可见，但静音消息不计总badge/文件夹badge，不推送。解静音后历史未读重新计入。
+- mute_until可为RFC3339绝对时间、"forever"（存极远未来）、""取消。未读数仍可见，但静音消息不计总badge/文件夹badge，不推送。解静音后历史未读重新计入；有限静音到期由每秒有界worker清除并发本人状态事件。
 - mark_unread=true只设手工标记，不回退read_seq，badge至少1；false将读位推进到当前last_seq，发隐私允许的read.updated。普通/read也会清手工标记。
 - draft纯文本/entities/reply_to，本人多端同步；clear_draft=true清草稿。当前按最后提交到服务器覆盖，无协同合并；发送后客户端显式clear_draft，不擅自覆盖另端新草稿。
 - 个性变更只给本人设备持久dialog.updated；读位更新还给隐私允许的其他成员更新列表。draft不发给别人。

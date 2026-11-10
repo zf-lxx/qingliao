@@ -50,12 +50,16 @@ func req(t *testing.T, s *httptest.Server, method, path, token string, body any,
 	json.Unmarshal(b, &out)
 	return out
 }
-func setup(t *testing.T) *fixture {
+func setup(t *testing.T) *fixture { return setupConfig(t, nil) }
+func setupConfig(t *testing.T, configure func(*Config)) *fixture {
 	t.Helper()
 	c := DefaultConfig()
 	c.DataDir = t.TempDir()
 	c.AdminHandle = "admin"
 	c.AdminPassword = "test-password-long"
+	if configure != nil {
+		configure(&c)
+	}
 	a, e := Open(c)
 	if e != nil {
 		t.Fatal(e)
@@ -95,7 +99,7 @@ func TestInviteAuthAndRevocation(t *testing.T) {
 	req(t, f.s, "POST", "/v1/auth/register", "", map[string]any{"handle": "bad", "password": "test-password-long", "invite_code": "bad"}, 403)
 	req(t, f.s, "POST", "/v1/auth/login", "", map[string]any{"handle": "admin", "password": "bad"}, 401)
 	req(t, f.s, "POST", "/v1/invites", f.bt, map[string]any{"uses": 1, "expires_hours": 1}, 403)
-	req(t, f.s, "PUT", "/v1/devices/current/push", f.bt, map[string]any{"provider": "xiaomi", "token": "fake-device-id"}, 200)
+	req(t, f.s, "PUT", "/v1/devices/current/push", f.bt, map[string]any{"provider": "mipush", "token": "fake-device-id"}, 200)
 	req(t, f.s, "DELETE", "/v1/devices/"+f.bob.DeviceID, f.at, nil, 403)
 	req(t, f.s, "DELETE", "/v1/devices/"+f.bob.DeviceID, f.bt, nil, 200)
 	req(t, f.s, "GET", "/v1/me", f.bt, nil, 401)
@@ -576,9 +580,10 @@ func TestVoiceFileAndPushJobDurability(t *testing.T) {
 	if _, e := f.a.SendMessage(f.admin, cid, Send{ClientID: "file", Kind: "file", MediaID: media["id"].(string)}); e != nil {
 		t.Fatal(e)
 	}
+	f.a.DB.Exec("UPDATE devices SET push_provider='mipush',push_token='test-regid' WHERE id=?", f.bob.DeviceID)
 	f.a.processPush()
 	var n int
-	if e := f.a.DB.QueryRow("SELECT count(*) FROM push_jobs WHERE user_id=? AND done=0 AND last_error='xiaomi_not_configured'", f.bob.UserID).Scan(&n); e != nil || n != 2 {
+	if e := f.a.DB.QueryRow("SELECT count(*) FROM push_jobs WHERE user_id=? AND done=0 AND last_error='mipush_not_configured'", f.bob.UserID).Scan(&n); e != nil || n != 1 {
 		t.Fatal(n, e)
 	}
 }

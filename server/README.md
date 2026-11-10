@@ -49,6 +49,8 @@ Traefik 用 `compose.traefik.example.yml` 作为**待核对**覆盖文件：填�
 
 邀请注册/会话撤销/设备推送 token；用户资料头像；双人/群/角色；文字图片语音文件、回复编辑撤回反应；会话 seq/幂等发送；按用户持久事件补齐、WS ACK、typing/presence；已读/未读；鉴权媒体、磁盘配额；事务型离线推送作业和小米 HTTP 模块；Bot 扩展契约（仅接口）；UTF-16富文本/内联键盘、多置顶、SSRF防护链接预览、群审核/审计；跨设备未读/@提醒/文件夹/置顶归档/静音/草稿；已读全局+个人互惠开关。投票/回调仅 schema、校验和501 stub，不是假装已实现。
 
+推送接入：[docs/push.md](docs/push.md)（MiPush/FCM已编码、无凭据禁用；无真实送达实测）。
+
 新增功能协议：[docs/extensions.md](docs/extensions.md)（富文本、审核、列表状态、已读隐私；投票与Bot回调明确501）。
 
 完整中文协议：[docs/api.md](docs/api.md)。实测报告：[docs/verification.md](docs/verification.md)。Flutter接线：[docs/flutter.md](docs/flutter.md)。
