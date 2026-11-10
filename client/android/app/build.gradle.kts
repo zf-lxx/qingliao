@@ -40,6 +40,8 @@ android {
 
     buildTypes {
         release {
+            isMinifyEnabled = true
+            isShrinkResources = true
             // Native JNI dependencies otherwise include unused ARMv7/x86_64 .so.
             ndk { abiFilters.clear(); abiFilters.add("arm64-v8a") }
             // TODO: Add your own signing config for the release build.

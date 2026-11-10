@@ -4,7 +4,10 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
+
+import 'desktop_fonts.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qingliao/main.dart';
 import 'package:qingliao/core/api.dart';
@@ -22,15 +25,8 @@ void main() {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
-      await (FontLoader(
-        'ChatSans',
-      )..addFont(rootBundle.load('assets/fonts/ChatSans.otf'))).load();
-      await (FontLoader(
-        'ChatEmoji',
-      )..addFont(rootBundle.load('assets/fonts/ChatEmoji.ttf'))).load();
-      await (FontLoader(
-        'MaterialIcons',
-      )..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
+      await loadDesktopFonts();
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
       sqfliteFfiInit();
       final store = await tester.runAsync(
         () => LocalStore.open(
@@ -109,6 +105,7 @@ void main() {
         engine.api?.close();
         await store.close();
       });
+      debugDefaultTargetPlatformOverride = null;
     },
     skip: !File('artifacts/screens-state.json').existsSync(),
     timeout: const Timeout(Duration(minutes: 1)),

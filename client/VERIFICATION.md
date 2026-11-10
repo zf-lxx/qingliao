@@ -1,16 +1,23 @@
 # 轻聊 Android 0.1.0 内测验收
 
-验收：2026-11-10 23:43:28 CST (UTC+8)。所有服务仅运行在 box loopback，未部署 HW_HK 或任何远程服务器。
+验收：2026-11-10 23:49:39 CST (UTC+8)。本客户端验收只使用 box loopback 测试服务，本任务未执行远程部署；后端部署由另一工作流负责，状态以 `server/docs/deployment.md` 为准。
 
 ## 交付 APK
 
 - 文件：`/workspace/qingliao-0.1.0-arm64.apk`（仓库内构建路径 `client/build/app/outputs/flutter-apk/app-release.apk`）。
-- 大小：**43,618,559 bytes**（43.62 MB / 41.60 MiB）。
+- 大小：**18,469,744 bytes**（18.47 MB / 17.61 MiB）；已由 43.62 MB 精简 **约 57.7%**。
 - 包名：`xyz.qingliao.app`；版本 `0.1.0+1`；仅 `arm64-v8a`；最低 Android 7.0 / API24，target36。
-- SHA256：`8f2f126bd2602d9938e95e5b0d66e949a32677acea7dd01966fb7f70bb57d7b5`。
+- SHA256：`5580457a3b0b4fbde598f313d8a72213cd330cf9ba064d1b9e8d9c0fff9199d2`。
 - `apksigner verify --verbose`：Verifies，APK Signature Scheme v2=true。
 - 内测使用 box 的 Android debug keystore（`/home/box/.android/debug.keystore`），未入 Git；正式分发需固定正式签名。APK 本身与 build/ 也未入 Git。
 - 未内置服务器地址、账号、邀请码或凭据；登录页地址默认为空。生产必须 HTTPS。
+
+## 包体优化（已核验）
+
+- 从 pubspec 和当前客户端目录移除两个自带字体二进制；Android 使用系统字体与系统 emoji，ZIP 实测没有 ChatSans/ChatEmoji 或 assets/fonts 数据。Linux 截图仅在测试进程从 OS 字体路径加载，不进入 APK。
+- 唯一 ABI `arm64-v8a`（连传递 JNI AAR 的其他 ABI 也排除），不是只修改文件名。
+- Release 显式启用 R8 `isMinifyEnabled=true`、`isShrinkResources=true`，Dart obfuscate + strip；独立符号位于 `/workspace/tg-chat-secrets/symbols/0.1.0/app.android-arm64.symbols`，不入 Git。
+- APK 签名仍有效；服务器地址继续在登录页自由配置、默认为空。
 
 ## 自动验收（真实结果）
 
@@ -26,7 +33,7 @@
 
 `go test ./... -count=1` → **通过**（此次未改后端业务代码）。
 
-`flutter build apk --release --target-platform android-arm64` → **成功**；`aapt dump badging` 核验标签“轻聊”、包名、版本、SDK、**唯一 ABI arm64-v8a**；`apksigner` 核验签名。完整本地构建/测试状态元数据见 Git 忽略的 `client/artifacts/verification.json`。
+`flutter build apk --release --target-platform android-arm64 --obfuscate --split-debug-info=/workspace/tg-chat-secrets/symbols/0.1.0 --extra-gen-snapshot-options=--strip` → **成功**；`aapt dump badging` 核验标签“轻聊”、包名、版本、SDK、**唯一 ABI arm64-v8a**；`apksigner` 核验签名。完整本地构建/测试状态元数据见 Git 忽略的 `client/artifacts/verification.json`。
 
 ## 截图
 
@@ -52,4 +59,5 @@
 
 - `c24c5cb`：客户端真实协议、UI 和持久 outbox 首版。
 - `e8aa50e`：真实双账号/UI/离线回归、离线草稿与完整字体、五张界面截图。
-- 后续验收记录提交仅补充本文，不改变 APK 对应业务代码。
+- `b07a28b`：首轮包体验签与验收记录。
+- 后续精简包提交：移除 Android 自带字体、R8/混淆裁剪，更新五张 Linux 渲染截图及最终 SHA256。

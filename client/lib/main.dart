@@ -19,6 +19,12 @@ const bg = Color(0xff0e1621),
     muted = Color(0xff7d91a5);
 const slideCurve = Cubic(.33, .52, .25, .99);
 const sendCurve = Cubic(.1992, .0106, .2792, .9103);
+// Android deliberately uses the device's own font/emoji. Desktop screenshot
+// tests register these aliases from Linux system fonts, never APK assets.
+String? get chatFont =>
+    defaultTargetPlatform == TargetPlatform.android ? null : 'ChatSans';
+List<String>? get emojiFallback =>
+    defaultTargetPlatform == TargetPlatform.android ? null : ['ChatEmoji'];
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -79,7 +85,7 @@ class _QingliaoAppState extends State<QingliaoApp> with WidgetsBindingObserver {
         surface: panel,
       ),
       textTheme: ThemeData.dark().textTheme.apply(
-        fontFamily: 'ChatSans',
+        fontFamily: chatFont,
         bodyColor: const Color(0xffeef4fa),
         displayColor: const Color(0xffeef4fa),
       ),
@@ -1057,9 +1063,9 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                         padding: const EdgeInsets.all(8),
                         child: Text(
                           emoji,
-                          style: const TextStyle(
+                          style: TextStyle(
                             fontSize: 27,
-                            fontFamilyFallback: ['ChatEmoji'],
+                            fontFamilyFallback: emojiFallback,
                           ),
                         ),
                       ),
@@ -1780,9 +1786,9 @@ class _BubbleState extends State<Bubble> {
                                 ),
                                 child: Text(
                                   '$emoji ${reactions.where((r) => r['emoji'] == emoji).length}',
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                     fontSize: 12,
-                                    fontFamilyFallback: ['ChatEmoji'],
+                                    fontFamilyFallback: emojiFallback,
                                   ),
                                 ),
                               ),
@@ -1939,11 +1945,11 @@ class _EntityTextState extends State<EntityText> {
     final spans = <TextSpan>[];
     for (var i = 0; i + 1 < breaks.length; i++) {
       final start = breaks[i], end = breaks[i + 1];
-      var style = const TextStyle(
+      var style = TextStyle(
         fontSize: 15,
         height: 1.45,
-        fontFamily: 'ChatSans',
-        fontFamilyFallback: ['ChatEmoji'],
+        fontFamily: chatFont,
+        fontFamilyFallback: emojiFallback,
       );
       String? url;
       bool spoiler = false;

@@ -6,7 +6,10 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
+
+import 'desktop_fonts.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qingliao/core/api.dart';
 import 'package:qingliao/core/chat_engine.dart';
@@ -27,13 +30,8 @@ void main() {
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
-      for (final font in [
-        ('ChatSans', 'assets/fonts/ChatSans.otf'),
-        ('ChatEmoji', 'assets/fonts/ChatEmoji.ttf'),
-        ('MaterialIcons', 'fonts/MaterialIcons-Regular.otf'),
-      ]) {
-        await (FontLoader(font.$1)..addFont(rootBundle.load(font.$2))).load();
-      }
+      await loadDesktopFonts();
+      addTearDown(() => debugDefaultTargetPlatformOverride = null);
       final dir = await Directory.systemTemp.createTemp('qingliao-live-ui-');
       final bind = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
       final port = bind.port;
@@ -222,6 +220,7 @@ void main() {
         server.kill(ProcessSignal.sigterm);
         await server.exitCode.timeout(const Duration(seconds: 10));
         await dir.delete(recursive: true);
+        debugDefaultTargetPlatformOverride = null;
       }
     },
     timeout: const Timeout(Duration(minutes: 2)),

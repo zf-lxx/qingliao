@@ -10,7 +10,7 @@ flutter pub get
 flutter analyze
 flutter test test/engine_live_test.dart
 flutter test
-flutter build apk --release --target-platform android-arm64
+flutter build apk --release --target-platform android-arm64 --obfuscate --split-debug-info=/workspace/tg-chat-secrets/symbols/0.1.0 --extra-gen-snapshot-options=--strip
 ```
 
 登录页服务器地址默认为空，生产只允许 HTTPS 根地址。HTTP 仅允许 localhost、127.0.0.1 和 Android 模拟器宿主 10.0.2.2。应用不预装任何账号/邀请码/服务器密码。
@@ -25,7 +25,9 @@ flutter build apk --release --target-platform android-arm64
 - UTF-16 富文本、内联 URL 按钮、文字链接需点击确认；Bot callback 按钮明确提示二期。
 - 本地图片选取，1600px/82% JPEG 压缩、移除 EXIF、鉴权上传和鉴权图片下载/缩放查看。
 - 阅读只有聊天页在前台、底部可见时上报；遵守全局/个人回执隐私。stored 单勾，已读双勾，不伪造 delivered。
-- 沿用 demo 深色配色、字体、250ms 消息动效与 Cubic(.33,.52,.25,.99) 聊天切页；边缘滑动返回、滑动回复和长按反应菜单。
+- 沿用 demo 深色配色、250ms 消息动效与 Cubic(.33,.52,.25,.99) 聊天切页；边缘滑动返回、滑动回复和长按反应菜单。
+
+Android 采用手机系统字体与系统 emoji，不打包自带字体。桌面截图测试单独加载 Linux 系统字体（不进入 APK）。Release 启用 R8 代码/资源裁剪和 Dart 混淆；符号文件在上述私有目录，勿提交 Git。
 
 ## 明确未完成
 
@@ -43,6 +45,6 @@ Release 暂用 box 的 Android debug keystore（`~/.android/debug.keystore`，�
 
 `python3 scripts/android_acceptance.py` 为 Android 集成测试驱动（登录 UI、双账号、重连、截图）；要求已正常启动的 Android 模拟器，可通过 TEST_DEVICE 指定。此次 box 模拟器初始化挂起，未能完成此项，不能据此声称 Android UI/Keystore/相册插件已实测。
 
-Flutter 同目录的 analyze/test/build **串行**运行，避免插件注册生成文件与 release build 发生竞态。
+Flutter 同目录的 analyze/test/build **串行**运行，避免插件注册生成文件与 release build 发生竞态。测试后 build 不要添加 `--no-pub`：此版本 Flutter 需要默认 pub 阶段清掉测试插件注册，避免 GeneratedPluginRegistrant 引用未打包的 integration_test。
 
-验收和 APK 信息见 `VERIFICATION.md`（完成后补齐）；代码未部署 HK。
+验收和 APK 信息见 `VERIFICATION.md`（完成后补齐）；本客户端任务不执行部署；后端部署状态由 `server/docs/deployment.md` 另行记录。

@@ -26,10 +26,3 @@ dev_dependencies:
   sqflite_common_ffi: ^2.3.7
 flutter:
   uses-material-design: true
-  fonts:
-    - family: ChatSans
-      fonts:
-        - asset: assets/fonts/ChatSans.otf
-    - family: ChatEmoji
-      fonts:
-        - asset: assets/fonts/ChatEmoji.ttf
