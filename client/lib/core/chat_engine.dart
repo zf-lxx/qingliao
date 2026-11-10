@@ -23,6 +23,8 @@ class ChatEngine extends ChangeNotifier {
   Json? session;
   Json me = {}, privacy = {};
   final Map<String, Json> dialogs = {}, messages = {}, outbox = {}, users = {};
+  final Map<String, Json> draftOutbox = {};
+  bool _flushingDrafts = false;
   List<Json> folders = [];
   final Map<String, Map<String, int?>> readPositions = {};
   final Map<String, DateTime> typingUntil = {};
@@ -50,6 +52,9 @@ class ChatEngine extends ChangeNotifier {
     'folders': folders,
     'me': me,
     'badge': badge,
+    'draft_outbox': draftOutbox,
+    'reactions': reactions,
+    'users': users,
   };
   Future<void> persist() => store.save(account, snapshot());
   void restore(Json v) {
@@ -65,6 +70,15 @@ class ChatEngine extends ChangeNotifier {
         ..clear()
         ..addAll(obj(v[pair.$2]).map((k, x) => MapEntry(k, obj(x))));
     }
+    draftOutbox
+      ..clear()
+      ..addAll(obj(v['draft_outbox']).map((k, x) => MapEntry(k, obj(x))));
+    users
+      ..clear()
+      ..addAll(obj(v['users']).map((k, x) => MapEntry(k, obj(x))));
+    reactions
+      ..clear()
+      ..addAll(obj(v['reactions']).map((k, x) => MapEntry(k, objects(x))));
     folders = objects(v['folders']);
   }
 
@@ -130,6 +144,16 @@ class ChatEngine extends ChangeNotifier {
       badge = number(data['total_unread_badge']);
       next = data['has_more'] == true ? data['next_cursor'] ?? '' : '';
     } while (next.isNotEmpty);
+    for (final d in all.values) {
+      if (dialogs[d['id']]?['display_title'] != null) {
+        d['display_title'] = dialogs[d['id']]!['display_title'];
+      }
+    }
+    for (final entry in draftOutbox.entries) {
+      if (all[entry.key] != null) {
+        all[entry.key]!['draft'] = entry.value['draft'];
+      }
+    }
     dialogs
       ..clear()
       ..addAll(all);
@@ -204,6 +228,7 @@ class ChatEngine extends ChangeNotifier {
             notifyListeners();
           });
           retryPending();
+          unawaited(_quiet(flushDrafts));
           notifyListeners();
         }
       case 'event':
@@ -285,6 +310,9 @@ class ChatEngine extends ChangeNotifier {
         _clearFlight(data['client_msg_id']);
       } else if (type == 'dialog.updated') {
         dialogs[cid] = {...?dialogs[cid], ...data};
+        if (draftOutbox[cid] != null) {
+          dialogs[cid]!['draft'] = draftOutbox[cid]!['draft'];
+        }
         badge = number(data['total_unread_badge']);
         final counts = obj(data['folder_unread_counts']);
         for (final f in folders) {
@@ -327,6 +355,10 @@ class ChatEngine extends ChangeNotifier {
       rethrow;
     }
     notifyListeners();
+    if (type == 'dialog.updated') {
+      readPositions.remove(cid);
+      if (receipts) unawaited(_quiet(() => loadMembers(cid)));
+    }
     if ([
       'conversation.created',
       'membership.changed',
@@ -413,9 +445,12 @@ class ChatEngine extends ChangeNotifier {
     for (final m in members) {
       if (m['user_id'] != uid) {
         final u = await user(m['user_id']);
-        return u['display_name']?.toString().isNotEmpty == true
-            ? u['display_name']
+        final title = u['display_name']?.toString().isNotEmpty == true
+            ? u['display_name'] as String
             : '@${u['handle']}';
+        dialogs[d['id']]?['display_title'] = title;
+        await persist();
+        return title;
       }
     }
     return '私聊';
@@ -490,14 +525,35 @@ class ChatEngine extends ChangeNotifier {
     await api!.call('PATCH', '/conversations/$cid/state', patch);
   }
 
-  Future<void> draft(String cid, String text, String reply) => state(
-    cid,
-    text.isEmpty && reply.isEmpty
-        ? {'clear_draft': true}
-        : {
+  Future<void> draft(String cid, String text, String reply) async {
+    final patch = text.isEmpty && reply.isEmpty
+        ? <String, dynamic>{'clear_draft': true}
+        : <String, dynamic>{
             'draft': {'text': text, 'entities': [], 'reply_to': reply},
-          },
-  );
+          };
+    draftOutbox[cid] = patch;
+    if (dialogs[cid] != null) dialogs[cid]!['draft'] = patch['draft'];
+    await persist();
+    notifyListeners();
+    if (online) await flushDrafts();
+  }
+
+  Future<void> flushDrafts() async {
+    if (_flushingDrafts || !online) return;
+    _flushingDrafts = true;
+    try {
+      for (final entry in draftOutbox.entries.toList()) {
+        await state(entry.key, entry.value);
+        if (identical(draftOutbox[entry.key], entry.value)) {
+          draftOutbox.remove(entry.key);
+        }
+        await persist();
+      }
+    } finally {
+      _flushingDrafts = false;
+    }
+  }
+
   Future<void> read(String cid, int seq) async {
     if (!online || seq <= number(dialogs[cid]?['last_read_seq'])) return;
     await api!.call('POST', '/conversations/$cid/read', {'last_read_seq': seq});

@@ -404,7 +404,7 @@ class _DialogsPageState extends State<DialogsPage> {
   String title(Json d) {
     final id = d['id'] as String;
     if (d['kind'] == 'group') return d['title'] ?? '群聊';
-    if (!titles.containsKey(id) && fetching.add(id) && e.online) {
+    if (!titles.containsKey(id) && e.online && fetching.add(id)) {
       e
           .title(d)
           .then((t) {
@@ -413,7 +413,7 @@ class _DialogsPageState extends State<DialogsPage> {
           .catchError((_) {})
           .whenComplete(() => fetching.remove(id));
     }
-    return titles[id] ?? '私聊';
+    return titles[id] ?? d['display_title'] ?? '私聊';
   }
 
   bool matches(Json d) {
@@ -704,7 +704,9 @@ class _DialogsPageState extends State<DialogsPage> {
                                     Padding(
                                       padding: const EdgeInsets.only(right: 4),
                                       child: Icon(
-                                        d['read_receipts_visible'] == true &&
+                                        d['kind'] == 'direct' &&
+                                                d['read_receipts_visible'] ==
+                                                    true &&
                                                 number(
                                                       d['last_message_read_count'],
                                                     ) >
@@ -797,7 +799,11 @@ class ConnectionBanner extends StatelessWidget {
                   const SizedBox(width: 8),
                   Flexible(
                     child: Text(
-                      engine.error.isNotEmpty ? engine.error : '正在连接…',
+                      engine.error.isNotEmpty
+                          ? engine.error
+                          : engine.suspended
+                          ? '连接已暂停 · 点击重连'
+                          : '正在连接…',
                       style: const TextStyle(fontSize: 12),
                     ),
                   ),
@@ -851,6 +857,14 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   }
 
   Future<void> load() async {
+    if (!e.online && e.history(widget.cid).isNotEmpty) {
+      setState(() {
+        loading = false;
+        loadError = null;
+      });
+      bottom(false);
+      return;
+    }
     try {
       await e.loadHistory(widget.cid);
       await e.loadMembers(widget.cid);
@@ -983,7 +997,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
       bottom();
       if (editingNow == null) {
         try {
-          await e.state(widget.cid, {'clear_draft': true});
+          await e.draft(widget.cid, '', '');
         } catch (_) {}
       }
     });
@@ -1798,7 +1812,9 @@ class _BubbleState extends State<Bubble> {
                               ? Icons.error_outline
                               : pending
                               ? Icons.schedule
-                              : e.isRead(m)
+                              : e.dialogs[m['conversation_id']]?['kind'] ==
+                                        'direct' &&
+                                    e.isRead(m)
                               ? Icons.done_all
                               : Icons.check,
                           color: failed ? Colors.orangeAccent : blue,
@@ -2275,7 +2291,7 @@ class _ProfilePageState extends State<ProfilePage> {
             },
             child: const Text('退出登录'),
           ),
-          if (e.suspended)
+          if (e.suspended && e.error.contains('登录'))
             TextButton(
               onPressed: () => guard(context, () async {
                 await e.logout(localOnly: true);

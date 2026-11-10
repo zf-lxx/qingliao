@@ -29,8 +29,19 @@ android {
         versionName = flutter.versionName
     }
 
+    // Flutter target-platform does not filter transitive JNI AARs in this SDK.
+    // Exclude their unused ABI copies only for the ARM64 build, retaining x64
+    // debug support for future emulator acceptance.
+    if (project.findProperty("target-platform") == "android-arm64") {
+        packaging {
+            jniLibs.excludes.addAll(listOf("**/armeabi-v7a/**", "**/x86_64/**", "**/x86/**"))
+        }
+    }
+
     buildTypes {
         release {
+            // Native JNI dependencies otherwise include unused ARMv7/x86_64 .so.
+            ndk { abiFilters.clear(); abiFilters.add("arm64-v8a") }
             // TODO: Add your own signing config for the release build.
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
