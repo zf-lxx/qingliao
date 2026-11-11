@@ -182,14 +182,15 @@ class TgComposerAction extends StatelessWidget {
           duration: const Duration(milliseconds: 220),
           switchInCurve: tgEaseOutQuint,
           switchOutCurve: tgEaseOutQuint,
+          layoutBuilder: (current, previous) => Stack(
+            alignment: Alignment.center,
+            children: [...previous, ?current],
+          ),
           transitionBuilder: (child, a) => FadeTransition(
             opacity: a,
             child: ScaleTransition(
               scale: Tween<double>(begin: .5, end: 1).animate(a),
-              child: RotationTransition(
-                turns: Tween<double>(begin: -.12, end: 0).animate(a),
-                child: child,
-              ),
+              child: child,
             ),
           ),
           child: sending
@@ -208,6 +209,31 @@ class TgComposerAction extends StatelessWidget {
                   color: Colors.white,
                   size: 23,
                 ),
+        ),
+      ),
+    ),
+  );
+}
+
+class TgAttachSlot extends StatelessWidget {
+  final bool visible;
+  final Widget child;
+  const TgAttachSlot({super.key, required this.visible, required this.child});
+  @override
+  Widget build(BuildContext context) => ClipRect(
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: tgEaseOutQuint,
+      width: visible ? 38 : 0,
+      height: 46,
+      alignment: Alignment.centerRight,
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 220),
+        curve: tgEaseOutQuint,
+        opacity: visible ? 1 : 0,
+        child: SizedBox(
+          width: 38,
+          child: IgnorePointer(ignoring: !visible, child: child),
         ),
       ),
     ),

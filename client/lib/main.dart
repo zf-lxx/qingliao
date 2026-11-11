@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart';
@@ -1209,49 +1210,53 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     });
   }
 
-  void emojiPanel() => showTgSheet(
-    context: context,
-    builder: (c) => Padding(
-      padding: const EdgeInsets.all(24),
-      child: Wrap(
-        spacing: 16,
-        runSpacing: 16,
-        children: [
-          for (final emoji in [
-            '😀',
-            '😂',
-            '🥰',
-            '👍',
-            '❤️',
-            '🎉',
-            '🔥',
-            '🥹',
-            '🙏',
-            '👌',
-            '✨',
-            '💯',
-          ])
-            PressableScale(
-              onTap: () {
-                input.text += emoji;
-                input.selection = TextSelection.collapsed(
-                  offset: input.text.length,
-                );
-                textChanged(input.text);
-                Navigator.pop(c);
-              },
-              child: Text(
-                emoji,
-                style: TextStyle(
-                  fontSize: 30,
-                  fontFamilyFallback: emojiFallback,
-                ),
-              ),
-            ),
-        ],
-      ),
-    ),
-  );
+  static const _quickEmoji = [
+    '😀',
+    '😂',
+    '🥰',
+    '👍',
+    '❤️',
+    '🎉',
+    '🔥',
+    '🥹',
+    '🙏',
+    '👌',
+    '✨',
+    '💯',
+  ];
+
+  void insertEmoji(String emoji) {
+    final sel = input.selection;
+    final text = input.text;
+    final start = sel.isValid ? sel.start : text.length;
+    final end = sel.isValid ? sel.end : text.length;
+    input.value = TextEditingValue(
+      text: text.replaceRange(start, end, emoji),
+      selection: TextSelection.collapsed(offset: start + emoji.length),
+    );
+    textChanged(input.text);
+  }
+
+  Future<void> toggleEmoji() async {
+    if (_emojiOpen) {
+      setState(() => _emojiOpen = false);
+      _focus.requestFocus();
+      return;
+    }
+    FocusManager.instance.primaryFocus?.unfocus();
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    if (mounted) setState(() => _emojiOpen = true);
+  }
+
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    final inset = View.of(context).viewInsets.bottom;
+    if (inset > 80 && _emojiOpen) {
+      setState(() => _emojiOpen = false);
+    }
+  }
+
   void localSearch() {
     String q = '';
     showTgSheet(
@@ -1576,6 +1581,8 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   ChatEngine get e => widget.engine;
   final input = TextEditingController(), scroll = ScrollController();
   final composerKey = GlobalKey();
+  final _focus = FocusNode();
+  bool _emojiOpen = false;
   final _shellKey = GlobalKey();
   final _enter = MessageEnterController();
   int _insertGen = 0, _lastCount = 0;
@@ -1735,6 +1742,9 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
       e.scrollOffsets[widget.cid] = scroll.offset;
     });
     WidgetsBinding.instance.addObserver(this);
+    _focus.addListener(() {
+      if (_focus.hasFocus && _emojiOpen) setState(() => _emojiOpen = false);
+    });
     input.text = obj(e.dialogs[widget.cid]?['draft'])['text'] ?? '';
     e.addListener(changed);
     unawaited(load());
@@ -2107,6 +2117,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
       unawaited(e.rememberScroll(widget.cid, scroll.offset));
     }
     input.dispose();
+    _focus.dispose();
     _highlightTimer?.cancel();
     scroll.dispose();
     super.dispose();
@@ -2517,9 +2528,11 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
                             TgIconButton(
-                              tooltip: '表情',
-                              icon: Icons.emoji_emotions_outlined,
-                              onPressed: removed ? null : emojiPanel,
+                              tooltip: _emojiOpen ? '键盘' : '表情',
+                              icon: _emojiOpen
+                                  ? Icons.keyboard_alt_outlined
+                                  : Icons.emoji_emotions_outlined,
+                              onPressed: removed ? null : toggleEmoji,
                               color: muted,
                               size: 40,
                             ),
@@ -2529,6 +2542,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                                 child: TextField(
                                   key: composerKey,
                                   controller: input,
+                                  focusNode: _focus,
                                   minLines: 1,
                                   maxLines: 5,
                                   maxLength: 4000,
@@ -2548,14 +2562,20 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                                 ),
                               ),
                             ),
-                            TgIconButton(
-                              tooltip: '添加图片',
-                              icon: Icons.attach_file_rounded,
-                              onPressed: sending || removed || !e.online
-                                  ? null
-                                  : image,
-                              color: muted,
-                              size: 38,
+                            ValueListenableBuilder<TextEditingValue>(
+                              valueListenable: input,
+                              builder: (context, value, _) => TgAttachSlot(
+                                visible: value.text.trim().isEmpty,
+                                child: TgIconButton(
+                                  tooltip: '添加图片',
+                                  icon: Icons.attach_file_rounded,
+                                  onPressed: sending || removed || !e.online
+                                      ? null
+                                      : image,
+                                  color: muted,
+                                  size: 38,
+                                ),
+                              ),
                             ),
                             const SizedBox(width: 4),
                             ValueListenableBuilder<TextEditingValue>(
@@ -2575,6 +2595,56 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                         ),
                       ),
                     ),
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 250),
+                    curve: tgMessageCurve,
+                    child: _emojiOpen
+                        ? ColoredBox(
+                            color: panel,
+                            child: SafeArea(
+                              top: false,
+                              child: SizedBox(
+                                height: math.max(
+                                  220,
+                                  MediaQuery.viewInsetsOf(context).bottom,
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    12,
+                                    8,
+                                    12,
+                                    8,
+                                  ),
+                                  child: Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: [
+                                      for (final emoji in _quickEmoji)
+                                        SizedBox(
+                                          width: 40,
+                                          height: 40,
+                                          child: PressableScale(
+                                            onTap: () => insertEmoji(emoji),
+                                            child: Center(
+                                              child: Text(
+                                                emoji,
+                                                style: TextStyle(
+                                                  fontSize: 26,
+                                                  fontFamilyFallback:
+                                                      emojiFallback,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          )
+                        : const SizedBox.shrink(),
+                  ),
                 ],
               ),
             ),

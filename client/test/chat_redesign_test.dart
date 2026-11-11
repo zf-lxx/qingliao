@@ -202,4 +202,51 @@ void main() {
     expect(find.text('个人资料'), findsOneWidget);
     expect(find.text('账号'), findsOneWidget);
   });
+
+  testWidgets(
+    'composer hides attach when typing and emoji panel replaces sheet',
+    (tester) async {
+      sqfliteFfiInit();
+      final store = (await tester.runAsync(
+        () => LocalStore.open(
+          factory: databaseFactoryFfi,
+          path: inMemoryDatabasePath,
+        ),
+      ))!;
+      final engine = HistoryEngine(store, MemoryVault())
+        ..session = {'user_id': 'me'}
+        ..online = true;
+      engine.dialogs['chat'] = {'id': 'chat', 'kind': 'direct'};
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChatPage(engine: engine, cid: 'chat', title: '测试聊天'),
+        ),
+      );
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 40));
+      }
+      expect(find.byTooltip('添加图片'), findsOneWidget);
+      await tester.enterText(find.byKey(const Key('composer')), '有字');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 230));
+      expect(tester.getSize(find.byType(TgAttachSlot)).width, lessThan(8));
+      await tester.tap(find.byTooltip('表情'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 260));
+      expect(find.text('😀'), findsOneWidget);
+      await tester.tap(find.text('😀'), warnIfMissed: false);
+      await tester.pump();
+      expect(
+        tester
+            .widget<TextField>(find.byType(TextField).first)
+            .controller!
+            .text,
+        contains('😀'),
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await engine.shutdown();
+      await tester.runAsync(store.close);
+    },
+  );
 }
