@@ -1,0 +1,587 @@
+//
+//  community_view.dart
+//
+//  Telegram Communities browser based on the July 2026 iOS flow: a community
+//  can occupy one chat-list row, opening a compact hub for its related chats.
+//
+
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../app/app_navigator.dart';
+import '../chat/chat_view.dart';
+import '../chats/chat_row_view.dart';
+import '../components/app_icons.dart';
+import '../components/app_interactive_surface.dart';
+import '../components/photo_avatar.dart';
+import '../components/ui_components.dart';
+import '../l10n/app_localizations.dart';
+import '../tdlib/td_models.dart';
+import '../theme/app_motion.dart';
+import '../theme/app_theme.dart';
+import '../theme/theme_controller.dart';
+import 'community_edit_view.dart';
+import 'community_models.dart';
+
+enum _CommunityHeaderAction { toggleCollapsed, editProfile }
+
+class CommunityChatListRow extends StatelessWidget {
+  const CommunityChatListRow({
+    super.key,
+    required this.entry,
+    this.selected = false,
+    this.onClearUnread,
+  });
+
+  final CommunityGroupEntry entry;
+  final bool selected;
+  final VoidCallback? onClearUnread;
+
+  ChatSummary get summary {
+    final latest = entry.latestChat;
+    return ChatSummary(
+      id: -entry.community.id.abs(),
+      title: entry.community.name,
+      lastMessage: latest.lastMessage.trim().isEmpty
+          ? AppStrings.plural(
+              AppStringKeys.communityChatCount,
+              entry.chats.length,
+            )
+          : latest.lastMessage,
+      lastMessageId: latest.lastMessageId,
+      date: latest.date,
+      unreadCount: entry.unreadCount,
+      order: latest.order,
+      isMuted: entry.isMuted,
+      lastSender: latest.lastSender,
+      isPinned: entry.isPinned,
+      isMarkedUnread: entry.isMarkedUnread,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final theme = context.watch<ThemeController>();
+    final summary = this.summary;
+    return ChatRowView(
+      chat: summary,
+      selected: selected,
+      onClearUnread: onClearUnread,
+      avatarBuilder: (size) => _CommunityStackedAvatar(
+        title: entry.community.name,
+        photo: entry.community.photo,
+        size: size,
+        square: !theme.circularGroupAvatars,
+      ),
+      titleTrailing: AppIcon(
+        HeroAppIcons.objectGroup,
+        size: 14,
+        color: c.textTertiary,
+      ),
+      trailingIndicator: AppIcon(
+        HeroAppIcons.chevronRight,
+        size: AppIconSize.sm,
+        color: c.textTertiary,
+      ),
+    );
+  }
+}
+
+class _CommunityStackedAvatar extends StatelessWidget {
+  const _CommunityStackedAvatar({
+    required this.title,
+    required this.photo,
+    required this.size,
+    required this.square,
+  });
+
+  final String title;
+  final TdFileRef? photo;
+  final double size;
+  final bool square;
+
+  @override
+  Widget build(BuildContext context) {
+    final backColor = context.colors.textTertiary;
+    final cornerRadius = square
+        ? size * AppTheme.groupAvatarCornerRatio
+        : size / 2;
+    Widget plate(Key key, double opacity) => Container(
+      key: key,
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        color: backColor.withValues(alpha: opacity),
+        borderRadius: BorderRadius.circular(cornerRadius),
+      ),
+    );
+
+    return SizedBox(
+      key: const ValueKey('community-stacked-avatar'),
+      width: size,
+      height: size,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned(
+            left: -size * 0.18,
+            top: size * 0.12,
+            child: plate(const ValueKey('community-avatar-back-2'), 0.28),
+          ),
+          Positioned(
+            left: -size * 0.09,
+            top: size * 0.06,
+            child: plate(const ValueKey('community-avatar-back-1'), 0.42),
+          ),
+          PhotoAvatar(
+            key: const ValueKey('community-avatar-front'),
+            title: title,
+            photo: photo,
+            size: size,
+            square: square,
+            allowAnimation: false,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Corner marker on a chat row whose chat belongs to a community. Tapping it
+/// opens the community hub instead of the chat, which is the only route into
+/// the hub while the community is shown as separate chats.
+class CommunityAvatarBadge extends StatelessWidget {
+  const CommunityAvatarBadge({super.key, required this.onTap});
+
+  final VoidCallback onTap;
+
+  /// Extra tap room, added towards the avatar's centre. The plate alone is too
+  /// small for a fingertip, and slop hanging off the avatar would fall outside
+  /// the row's avatar stack and land on the row's own tap instead.
+  static const double hitSlop = 7;
+
+  @override
+  Widget build(BuildContext context) {
+    final size = AppMetric.communityBadgeSize();
+    return Semantics(
+      button: true,
+      label: AppStrings.t(AppStringKeys.communityTitle),
+      child: GestureDetector(
+        key: const ValueKey('community-avatar-badge'),
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: SizedBox(
+          width: size + hitSlop,
+          height: size + hitSlop,
+          child: Align(
+            alignment: Alignment.bottomRight,
+            child: Container(
+              key: const ValueKey('community-avatar-badge-plate'),
+              width: size,
+              height: size,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: AppTheme.brand,
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: Colors.white,
+                  width: AppMetric.badgeOutlinePadding,
+                ),
+              ),
+              child: AppIcon(
+                HeroAppIcons.objectGroup,
+                size: size * 0.62,
+                color: AppTheme.onBrand,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class CommunityView extends StatefulWidget {
+  const CommunityView({
+    super.key,
+    required this.community,
+    required this.chats,
+    this.viewableChats = const [],
+    this.updates,
+    this.chatsProvider,
+    this.viewableChatsProvider,
+    required this.onCollapsedChanged,
+    this.onChatSelected,
+    this.showBackButton = true,
+    this.onBack,
+  });
+
+  final CommunitySummary community;
+  final List<ChatSummary> chats;
+  final List<ChatSummary> viewableChats;
+  final Listenable? updates;
+  final List<ChatSummary> Function()? chatsProvider;
+  final List<ChatSummary> Function()? viewableChatsProvider;
+  final ValueChanged<bool> onCollapsedChanged;
+  final ValueChanged<ChatSummary>? onChatSelected;
+  final bool showBackButton;
+  final VoidCallback? onBack;
+
+  @override
+  State<CommunityView> createState() => _CommunityViewState();
+}
+
+class _CommunityViewState extends State<CommunityView> {
+  late bool _collapsed = widget.community.collapsed;
+
+  List<ChatSummary> get _currentChats =>
+      widget.chatsProvider?.call() ?? widget.chats;
+  List<ChatSummary> get _currentViewableChats =>
+      widget.viewableChatsProvider?.call() ?? widget.viewableChats;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.updates?.addListener(_handleUpdates);
+  }
+
+  @override
+  void didUpdateWidget(covariant CommunityView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.community.collapsed != widget.community.collapsed) {
+      _collapsed = widget.community.collapsed;
+    }
+    if (oldWidget.updates != widget.updates) {
+      oldWidget.updates?.removeListener(_handleUpdates);
+      widget.updates?.addListener(_handleUpdates);
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.updates?.removeListener(_handleUpdates);
+    super.dispose();
+  }
+
+  void _handleUpdates() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _onHeaderAction(_CommunityHeaderAction action) async {
+    switch (action) {
+      case _CommunityHeaderAction.editProfile:
+        await Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (_) => CommunityEditView(community: widget.community),
+          ),
+        );
+        // The editor mutates the shared summary in place (name), so one
+        // rebuild keeps the hub header in sync after popping.
+        if (mounted) setState(() {});
+      case _CommunityHeaderAction.toggleCollapsed:
+        _setCollapsed(!_collapsed);
+    }
+  }
+
+  /// The ellipsis opens the app's owned action sheet (AppInteractiveSurface
+  /// rows in a showAppModalSheet card) instead of a Material popup menu:
+  /// the repository owns every surface users see.
+  Future<void> _showHeaderMenu() async {
+    final action = await showAppModalSheet<_CommunityHeaderAction>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => _CommunityHeaderMenuSheet(
+        canEdit: widget.community.canChangeInfo,
+        collapsed: _collapsed,
+      ),
+    );
+    if (!mounted || action == null) return;
+    await _onHeaderAction(action);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final chats = _currentChats;
+    final viewableChats = _currentViewableChats;
+    final hasResults = chats.isNotEmpty || viewableChats.isNotEmpty;
+    return Scaffold(
+      backgroundColor: c.groupedBackground,
+      body: Column(
+        children: [
+          NavHeader(
+            title: AppStringKeys.communityTitle,
+            onBack: widget.showBackButton
+                ? widget.onBack ?? () => Navigator.of(context).pop()
+                : null,
+            trailing: _headerMenu(),
+          ),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(12, 14, 12, 28),
+              children: [
+                _communityHeader(),
+                const SizedBox(height: 14),
+                if (!hasResults)
+                  _chatCard(const [])
+                else ...[
+                  if (chats.isNotEmpty) ...[
+                    _sectionHeader(AppStringKeys.communityChatsYouAreIn),
+                    const SizedBox(height: 8),
+                    _chatCard(chats),
+                  ],
+                  if (chats.isNotEmpty && viewableChats.isNotEmpty)
+                    const SizedBox(height: 20),
+                  if (viewableChats.isNotEmpty) ...[
+                    _sectionHeader(AppStringKeys.communityChatsYouCanView),
+                    const SizedBox(height: 8),
+                    _chatCard(viewableChats),
+                  ],
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _headerMenu() => AppInteractiveSurface(
+    key: const ValueKey('community-header-menu'),
+    semanticLabel: AppStringKeys.communityTitle.l10n(context),
+    onTap: _showHeaderMenu,
+    borderRadius: BorderRadius.circular(AppRadius.sm),
+    child: SizedBox(
+      width: AppMetric.hitTarget,
+      height: AppMetric.hitTarget,
+      child: AppIcon(
+        HeroAppIcons.ellipsis,
+        size: AppIconSize.nav,
+        color: context.colors.textPrimary,
+      ),
+    ),
+  );
+
+  Widget _sectionHeader(String title) => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 6),
+    child: Text(
+      title.l10n(context),
+      style: TextStyle(
+        fontSize: AppTextSize.caption,
+        fontWeight: FontWeight.w600,
+        letterSpacing: 0.5,
+        color: context.colors.textTertiary,
+      ),
+    ),
+  );
+
+  Widget _communityHeader() {
+    final c = context.colors;
+    return Container(
+      key: const ValueKey('community-header'),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+      decoration: BoxDecoration(
+        color: c.card,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+      ),
+      child: Row(
+        children: [
+          PhotoAvatar(
+            title: widget.community.name,
+            photo: widget.community.photo,
+            size: 64,
+            square: true,
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.community.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.left,
+                  style: TextStyle(
+                    fontSize: AppTextSize.title,
+                    fontWeight: FontWeight.w600,
+                    color: c.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  AppStrings.plural(
+                    AppStringKeys.communityChatCount,
+                    {
+                      ..._currentChats.map((chat) => chat.id),
+                      ..._currentViewableChats.map((chat) => chat.id),
+                    }.length,
+                  ),
+                  textAlign: TextAlign.left,
+                  style: TextStyle(
+                    fontSize: AppTextSize.callout,
+                    color: c.textTertiary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _setCollapsed(bool value) {
+    setState(() => _collapsed = value);
+    widget.onCollapsedChanged(value);
+  }
+
+  Widget _chatCard(List<ChatSummary> chats) {
+    final c = context.colors;
+    if (chats.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 38),
+        decoration: BoxDecoration(
+          color: c.card,
+          borderRadius: BorderRadius.circular(AppRadius.card),
+        ),
+        child: Column(
+          children: [
+            AppIcon(HeroAppIcons.objectGroup, size: 30, color: c.textTertiary),
+            const SizedBox(height: 10),
+            Text(
+              AppStringKeys.communityNoChats.l10n(context),
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: AppTextSize.callout,
+                color: c.textTertiary,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(AppRadius.card),
+      child: ColoredBox(
+        color: c.card,
+        child: Column(
+          children: [
+            for (var i = 0; i < chats.length; i++) ...[
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _openChat(chats[i]),
+                child: ChatRowView(chat: chats[i]),
+              ),
+              if (i != chats.length - 1) const InsetDivider(leadingInset: 72),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openChat(ChatSummary chat) async {
+    final onChatSelected = widget.onChatSelected;
+    if (onChatSelected != null) {
+      onChatSelected(chat);
+      return;
+    }
+    if (!mounted) return;
+    unawaited(
+      pushAppChatRoute(
+        context,
+        AppChatPageRoute<void>(
+          builder: (_) => ChatView(
+            chatId: chat.id,
+            title: chat.title,
+            seedMessage: chat.lastChatMessage,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The hub's owned ellipsis menu: a showAppModalSheet card of
+/// AppInteractiveSurface rows, matching the profile and story-management
+/// action sheets. Edit Profile appears only with can_change_info.
+class _CommunityHeaderMenuSheet extends StatelessWidget {
+  const _CommunityHeaderMenuSheet({
+    required this.canEdit,
+    required this.collapsed,
+  });
+
+  final bool canEdit;
+  final bool collapsed;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return SafeArea(
+      top: false,
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        decoration: BoxDecoration(
+          color: c.card,
+          borderRadius: BorderRadius.circular(AppRadius.card),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (canEdit) ...[
+              _row(
+                context,
+                icon: HeroAppIcons.penToSquare,
+                label: AppStringKeys.communityEditAction.l10n(context),
+                action: _CommunityHeaderAction.editProfile,
+              ),
+              const InsetDivider(leadingInset: 56),
+            ],
+            _row(
+              context,
+              icon: collapsed ? HeroAppIcons.check : null,
+              label: AppStringKeys.communityShowAsOneChat.l10n(context),
+              action: _CommunityHeaderAction.toggleCollapsed,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _row(
+    BuildContext context, {
+    required AppIconData? icon,
+    required String label,
+    required _CommunityHeaderAction action,
+  }) {
+    final c = context.colors;
+    return AppInteractiveSurface(
+      onTap: () => Navigator.of(context).pop(action),
+      child: SizedBox(
+        height: 56,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 21,
+                child: icon != null
+                    ? AppIcon(icon, size: 21, color: c.textPrimary)
+                    : null,
+              ),
+              const SizedBox(width: 15),
+              Text(label, style: AppTextStyle.body(c.textPrimary)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

@@ -1,0 +1,117 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+/dist/
+
+# Local platform builds and generated test/image-processing workspaces.
+/ios/build/
+/tmp/
+/.local/
+/design/message_bubbles/gpt-image-2-sources/
+/third_party/**/android/.gradle/
+/third_party/**/android/build/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# App secrets (TDLib api_id/api_hash) — copy secrets_example.dart to set up,
+# or generate from .env via scripts/gen-secrets.sh
+lib/config/secrets.dart
+
+# Raw local secrets consumed by scripts/gen-secrets.sh: Telegram api_id/api_hash
+# + base64 signing keystore & passwords. Never commit.
+.env
+/.env.*
+
+# Google Play publishing credentials stay in ~/.config/google-play and GitHub
+# Actions secrets. Ignore common local copies if one is placed in the repo.
+/.google-play/
+/google-play-service-account*.json
+/service-account*.json
+
+# Firebase client config. These are generated from repository / Xcode Cloud
+# secrets in CI and may exist locally for simulator/device runs.
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+
+# Reproducible TDJSON install outputs (large and platform-specific; resolved
+# from scripts/tdjson-manifest.json by the helpers documented in NATIVE.md).
+android/app/src/main/jniLibs/
+**/tdjson.xcframework/
+**/TgVoipWebrtc.xcframework/
+# Legacy source-build cache; unused by the manifest-based artifact installers.
+.tdlib-build/
+/native-libs/
+
+# One-time working notes (not part of the app)
+/CLAUDE.md
+/SESSION.md
+/TODO.md
+
+# App Store submission / screenshot artifacts
+/app_store_connect_descriptions/
+/fastlane/
+/screenshots/
+/real_app_store_screenshots/
+/ios/RunnerUITests/
+/docs/app-store-connect-privacy.md
+/docs/privacy-policy.md
+/docs/privacy-policy.zh-Hans.md
+
+# Local App Review credentials, OTP viewer, and relay helpers. Keep the
+# server/session tooling off GitHub.
+/scripts/review_code_relay/
+/workers/review-login-code/
+
+# Stray icon-generator output at repo root (real icons live in android/.../res/)
+/res/
+
+# Generated native-player downloads and local Android CMake output.
+/third_party/fvp/android/.cxx/
+/third_party/fvp/android/mdk-sdk/
+/third_party/fvp/android/mdk-sdk-*.7z
+
+# OHOS plugin overlay working copies (scripts/enable-ohos-plugins.sh)
+/pubspec.yaml.ohos-backup
+/pubspec.lock.ohos-backup
+# HarmonyOS-patched pub packages (scripts/patch-ohos-packages.py)
+/.ohos-packages/

@@ -1,0 +1,10 @@
+self-hosted-runner:
+  labels:
+    - mithka-physical-ios
+    - mithka-physical-android
+
+paths:
+  .github/workflows/ios-testflight.yml:
+    ignore:
+      # GitHub's approved Xcode 27 image is newer than actionlint 1.7.12.
+      - 'label "xcode-27" is unknown'

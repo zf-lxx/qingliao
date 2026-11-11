@@ -1,0 +1,1508 @@
+name: 🚀 Multi-platform Releases
+
+# Builds per-ABI Android APKs, Windows installers, portable Windows, macOS,
+# and Linux desktop archives, Linux AppImages, and the HarmonyOS hap from
+# nightly/release. Each Android ABI
+# (arm64-v8a, armeabi-v7a) builds in its OWN parallel matrix job and downloads
+# the pinned prebuilt native TDLib (tdjson) asset from iebb/mithka-tdjson. Each
+# desktop job downloads the matching pinned prebuilt asset for its host OS.
+# A final job creates the version tag from pubspec.yaml and publishes every
+# package: nightly creates a dated pre-release, release creates a stable release.
+# Each Android ABI publishes one standard APK using the tracked Android release
+# code, matching the Google Play artifact built from the same release commit.
+#
+# Ordinary packages follow nightly/release. A master store dispatch builds its
+# exact immutable submitted source, even after master advances its version.
+#
+# Required repository secrets:
+#   TELEGRAM_API_ID, TELEGRAM_API_HASH   — baked into lib/config/secrets.dart
+#   ANDROID_KEYSTORE_BASE64              — base64 of the upload keystore (.jks)
+#   ANDROID_KEYSTORE_PASSWORD            — store password
+#   ANDROID_KEY_PASSWORD                 — key password (optional; defaults to store password)
+#   ANDROID_KEY_ALIAS                    — key alias (e.g. nekoko)
+# Android release publishing fails closed if the required signing secrets are absent.
+
+on:
+  push:
+    branches: [nightly, release]
+  workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact store snapshot for a stable GitHub release; dispatch from master
+        type: string
+      desktop_test_only:
+        description: Build desktop artifacts without Android or a GitHub release
+        required: false
+        type: boolean
+        default: false
+      ohos_test_only:
+        description: Build only the HarmonyOS hap, without other platforms or a GitHub release
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: release-packages-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref == 'refs/heads/nightly' }}
+
+permissions:
+  contents: write
+  # Reads the nightly sync's release-summary artifact for the release body.
+  actions: read
+
+env:
+  FLUTTER_VERSION: '3.44.2'
+  SOURCE_COMMIT: ${{ inputs.source_commit || github.sha }}
+  CI_COMMIT: ${{ inputs.source_commit || github.sha }}
+
+jobs:
+  quality:
+    name: Required quality gate
+    uses: ./.github/workflows/quality.yml
+    with:
+      source_commit: ${{ inputs.source_commit }}
+
+  prepare:
+    name: Read pubspec version
+    needs: quality
+    runs-on: ubuntu-latest
+    outputs:
+      app_version: ${{ steps.version.outputs.app_version }}
+      version_code: ${{ steps.version.outputs.version_code }}
+      android_version_code: ${{ steps.version.outputs.android_version_code }}
+      build_stamp: ${{ steps.version.outputs.build_stamp }}
+      release_date: ${{ steps.version.outputs.release_date }}
+      artifact_label: ${{ steps.version.outputs.artifact_label }}
+      release_tag: ${{ steps.version.outputs.release_tag }}
+      release_name: ${{ steps.version.outputs.release_name }}
+      release_channel: ${{ steps.version.outputs.release_channel }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+      make_latest: ${{ steps.version.outputs.make_latest }}
+      short_sha: ${{ steps.version.outputs.short_sha }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_commit || github.sha }}
+
+      - name: Read version from pubspec.yaml
+        id: version
+        env:
+          DESKTOP_TEST_ONLY: ${{ inputs.desktop_test_only }}
+          OHOS_TEST_ONLY: ${{ inputs.ohos_test_only }}
+          STORE_SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          raw_version="$(awk '/^version:/ { print $2; exit }' pubspec.yaml)"
+          test -n "$raw_version"
+          app_version="${raw_version%%+*}"
+          version_code="${raw_version##*+}"
+          test "$raw_version" != "$version_code"
+          case "$version_code" in
+            ''|*[!0-9]*) echo "Invalid Android version code: $version_code" >&2; exit 1 ;;
+          esac
+          android_version_code="$(bash scripts/android-version-code.sh)"
+          read -r build_stamp release_date release_title_date <<< "$(
+            date -u '+%y%m%d%H %Y%m%d %Y-%m-%d'
+          )"
+          short_sha="${SOURCE_COMMIT::7}"
+          branch_name="${GITHUB_REF_NAME:-${GITHUB_REF#refs/heads/}}"
+          if [ -n "$STORE_SOURCE_COMMIT" ]; then
+            test "$GITHUB_REPOSITORY" = 'iebb/mithka'
+            test "$GITHUB_EVENT_NAME" = 'workflow_dispatch'
+            test "$GITHUB_REF" = 'refs/heads/master'
+            [[ "$STORE_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+            test "$DESKTOP_TEST_ONLY" != 'true'
+            test "$OHOS_TEST_ONLY" != 'true'
+            branch_name='store-snapshot'
+          fi
+          if [ "$DESKTOP_TEST_ONLY" = "true" ] && [ "$OHOS_TEST_ONLY" = "true" ]; then
+            echo "Choose either desktop_test_only or ohos_test_only" >&2
+            exit 1
+          fi
+          if [ "$OHOS_TEST_ONLY" = "true" ]; then
+            release_tag="ohos-test-${app_version}-${release_date}-${short_sha}"
+            release_name="Mithka $app_version HarmonyOS test ($short_sha)"
+            release_channel="HarmonyOS test"
+            artifact_label="${app_version}-ohos-test-${release_date}-${short_sha}"
+            prerelease="true"
+            make_latest="false"
+          elif [ "$DESKTOP_TEST_ONLY" = "true" ]; then
+            release_tag="desktop-test-${app_version}-${release_date}-${short_sha}"
+            release_name="Mithka $app_version desktop test ($short_sha)"
+            release_channel="desktop test"
+            artifact_label="${app_version}-desktop-test-${release_date}-${short_sha}"
+            prerelease="true"
+            make_latest="false"
+          else
+            case "$branch_name" in
+            nightly)
+              release_tag="v${app_version}-nightly.${release_date}.${short_sha}"
+              release_name="v${app_version} Nightly ${release_title_date} (${short_sha})"
+              release_channel="nightly pre-release"
+              artifact_label="${app_version}-nightly-${release_date}-${short_sha}"
+              prerelease="true"
+              make_latest="false"
+              ;;
+            release|store-snapshot)
+              release_tag="v$app_version"
+              release_name="Mithka $app_version · $release_date"
+              release_channel="release"
+              artifact_label="${app_version}-${release_date}"
+              prerelease="false"
+              make_latest="true"
+              ;;
+            *)
+              echo "Unsupported release branch: $branch_name" >&2
+              exit 1
+              ;;
+            esac
+          fi
+          {
+            echo "app_version=$app_version"
+            echo "version_code=$version_code"
+            echo "android_version_code=$android_version_code"
+            echo "build_stamp=$build_stamp"
+            echo "release_date=$release_date"
+            echo "artifact_label=$artifact_label"
+            echo "release_tag=$release_tag"
+            echo "release_name=$release_name"
+            echo "release_channel=$release_channel"
+            echo "prerelease=$prerelease"
+            echo "make_latest=$make_latest"
+            echo "short_sha=$short_sha"
+          } >> "$GITHUB_OUTPUT"
+          echo "Release tag: $release_tag"
+          echo "Release channel: $release_channel"
+          echo "Android version code: $android_version_code"
+          echo "GMT build stamp: $build_stamp"
+          echo "Release date: $release_date"
+
+  build:
+    name: Build ${{ matrix.abi }} APK
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.desktop_test_only && !inputs.ohos_test_only) }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - abi: arm64-v8a
+            target: android-arm64
+          - abi: armeabi-v7a
+            target: android-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_commit || github.sha }}
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Disable Flutter split-ABI versionCode offsets
+        run: |
+          constants="$FLUTTER_ROOT/packages/flutter_tools/gradle/src/main/kotlin/FlutterPluginConstants.kt"
+          python3 - "$constants" <<'PY'
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          text = path.read_text()
+          replacements = {
+              "ARCH_ARM32 to 1": "ARCH_ARM32 to 0",
+              "ARCH_ARM64 to 2": "ARCH_ARM64 to 0",
+              "ARCH_X86_64 to 4": "ARCH_X86_64 to 0",
+          }
+          for old, new in replacements.items():
+              if old not in text:
+                  raise SystemExit(f"Could not find {old!r} in {path}")
+              text = text.replace(old, new, 1)
+          path.write_text(text)
+          PY
+          grep -A8 'ABI_VERSION =' "$constants"
+
+      - name: Install Android NDK 28.2.13676358
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;28.2.13676358" >/dev/null 2>&1 || \
+          yes | sdkmanager "ndk;28.2.13676358" >/dev/null 2>&1 || true
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Cache tdjson (${{ matrix.abi }})
+        uses: actions/cache@v6
+        with:
+          path: android/app/src/main/jniLibs/${{ matrix.abi }}
+          key: tdjson-android-${{ runner.os }}-${{ matrix.abi }}-${{ hashFiles('scripts/tdjson-manifest.json') }}
+
+      - name: Install pinned tdjson (${{ matrix.abi }})
+        run: scripts/build-tdjson-android.sh "${{ matrix.abi }}"
+
+      - name: Flutter dependencies
+        run: flutter pub get
+
+      - name: Write Firebase Android config
+        env:
+          FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_B64: ${{ secrets.FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_B64 }}
+        run: |
+          : "${FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_B64:?set FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_B64 in repository secrets}"
+          mkdir -p android/app
+          printf '%s' "$FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_B64" | base64 -d > android/app/google-services.json
+          python3 scripts/verify_firebase_configuration.py --platform android
+
+      - name: Write secrets.dart
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          mkdir -p lib/config
+          cat > lib/config/secrets.dart <<EOF
+          class Secrets {
+            static const int apiId = ${TELEGRAM_API_ID:-0};
+            static const String apiHash = '${TELEGRAM_API_HASH}';
+            static bool get isConfigured => apiId != 0 && apiHash.isNotEmpty;
+          }
+          EOF
+
+      - name: Decode signing keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          : "${KEYSTORE_B64:?set ANDROID_KEYSTORE_BASE64 in repository secrets}"
+          : "${STORE_PASSWORD:?set ANDROID_KEYSTORE_PASSWORD in repository secrets}"
+          : "${KEY_ALIAS:?set ANDROID_KEY_ALIAS in repository secrets}"
+          printf '%s' "$KEYSTORE_B64" | base64 -d > android/app/upload-keystore.jks
+          cat > android/key.properties <<EOF
+          storePassword=$STORE_PASSWORD
+          keyPassword=${KEY_PASSWORD:-$STORE_PASSWORD}
+          keyAlias=$KEY_ALIAS
+          storeFile=upload-keystore.jks
+          EOF
+
+      - name: Build ${{ matrix.abi }} release APK
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: |
+          flutter build apk --release --split-per-abi \
+            --dart-define="I_DONT_FUCKING_CARE_ABOUT_TOS=false" \
+            --target-platform ${{ matrix.target }} \
+            --build-name="${{ needs.prepare.outputs.app_version }}" \
+            --build-number="${{ needs.prepare.outputs.android_version_code }}" \
+            --dart-define="GIT_COMMIT=${{ needs.prepare.outputs.short_sha }}" \
+            --dart-define="CI_BUILD_STAMP=${{ needs.prepare.outputs.build_stamp }}" \
+            --dart-define="SENTRY_DSN=$SENTRY_DSN"
+
+      - name: Verify APK version code
+        run: |
+          apk="build/app/outputs/flutter-apk/app-${{ matrix.abi }}-release.apk"
+          analyzer="$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer"
+          if [ ! -x "$analyzer" ]; then
+            analyzer="$(command -v apkanalyzer)"
+          fi
+          actual_version_code="$("$analyzer" manifest version-code "$apk")"
+          actual_version_name="$("$analyzer" manifest version-name "$apk")"
+          if [ "$actual_version_name" != '${{ needs.prepare.outputs.app_version }}' ]; then
+            echo "APK marketing version differs from the selected snapshot." >&2
+            exit 1
+          fi
+          expected_version_code="${{ needs.prepare.outputs.android_version_code }}"
+          if [ "$actual_version_code" != "$expected_version_code" ]; then
+            echo "Expected APK version code $expected_version_code, got $actual_version_code" >&2
+            exit 1
+          fi
+          echo "APK version code: $actual_version_code"
+
+      - name: Verify APK signing certificate
+        run: |
+          apk="build/app/outputs/flutter-apk/app-${{ matrix.abi }}-release.apk"
+          apksigner="$(
+            find "$ANDROID_HOME/build-tools" -type f -name apksigner -perm -u+x \
+              | sort -V \
+              | tail -n 1
+          )"
+          test -x "$apksigner"
+          # Build Tools 36 reports "Signer #1" while Build Tools 37 reports
+          # per-scheme labels such as "V2 Signer:" for the same certificate.
+          signer_output="$("$apksigner" verify --print-certs "$apk")"
+          signer_digests="$(printf '%s\n' "$signer_output" \
+            | awk -F': ' '
+                /^(Signer #[0-9]+|V[0-9.]+ Signer( #[0-9]+)?:) certificate SHA-256 digest:/ {
+                  print tolower($NF)
+                }
+              ' \
+            | sort -u)"
+          expected_signer="645a22f43d59b67969da5d3d3e3092d70927746198e2cb76ecd6f02a80b51305"
+          if [ "$signer_digests" != "$expected_signer" ]; then
+            echo "APK must have exactly the expected release signing certificate" >&2
+            exit 1
+          fi
+          echo "APK signing certificate verified"
+
+      - name: Verify APK native ABI contents
+        run: |
+          apk="build/app/outputs/flutter-apk/app-${{ matrix.abi }}-release.apk"
+          bad_entries="$(
+            zipinfo -1 "$apk" \
+              | grep '^lib/' \
+              | grep -v "^lib/${{ matrix.abi }}/" \
+              || true
+          )"
+          if [ -n "$bad_entries" ]; then
+            echo "APK contains native libraries outside ${{ matrix.abi }}:" >&2
+            echo "$bad_entries" >&2
+            exit 1
+          fi
+          echo "APK native libraries are limited to ${{ matrix.abi }}"
+
+      - name: Rename APK
+        run: |
+          mkdir -p dist
+          cp "build/app/outputs/flutter-apk/app-${{ matrix.abi }}-release.apk" \
+            "dist/mithka-${{ needs.prepare.outputs.artifact_label }}-android-${{ matrix.abi }}.apk"
+
+      - name: Upload standard APK artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: apk-${{ needs.prepare.outputs.artifact_label }}-${{ matrix.abi }}
+          path: dist/mithka-${{ needs.prepare.outputs.artifact_label }}-android-${{ matrix.abi }}.apk
+          if-no-files-found: error
+
+  build-desktop:
+    name: Build ${{ matrix.label }}
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.ohos_test_only }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            label: Linux x64
+            os: ubuntu-24.04
+            architecture: x64
+            library: libtdjson.so
+            archive_extension: tar.gz
+            flutter_source: archive
+          - platform: linux
+            label: Linux arm64
+            os: ubuntu-24.04-arm
+            architecture: arm64
+            library: libtdjson.so
+            archive_extension: tar.gz
+            flutter_source: git
+          - platform: macos
+            label: macOS universal
+            os: macos-15
+            architecture: universal
+            library: libtdjson.dylib
+            archive_extension: zip
+            flutter_source: archive
+          - platform: windows
+            label: Windows x64
+            os: windows-2022
+            architecture: x64
+            library: tdjson.dll
+            archive_extension: zip
+            flutter_source: archive
+          - platform: windows
+            label: Windows arm64
+            os: windows-11-arm
+            architecture: arm64
+            library: tdjson.dll
+            archive_extension: zip
+            flutter_source: git
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_commit || github.sha }}
+
+      - uses: subosito/flutter-action@v2
+        if: matrix.flutter_source == 'archive'
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Install Flutter on an arm64 host
+        if: matrix.flutter_source == 'git'
+        shell: bash
+        run: |
+          # Flutter publishes no arm64 SDK archive for Linux or Windows, so the
+          # release archive cannot be used here. A git checkout bootstraps the
+          # Dart SDK for the host architecture on first run, and Flutter targets
+          # the architecture of its own Dart executable — which is what makes
+          # these builds arm64 rather than emulated x64.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            flutter_home='/c/flutter'
+            path_entry='C:\flutter\bin'
+          else
+            flutter_home="$HOME/flutter"
+            path_entry="$flutter_home/bin"
+          fi
+          git clone --depth 1 --branch "$FLUTTER_VERSION" \
+            --config advice.detachedHead=false \
+            https://github.com/flutter/flutter.git "$flutter_home"
+          "$flutter_home/bin/flutter" --version
+          echo "$path_entry" >> "$GITHUB_PATH"
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang cmake libcurl4-openssl-dev libgtk-3-dev liblzma-dev \
+            libkeybinder-3.0-dev libsecret-1-dev libpulse0 \
+            libgirepository1.0-dev librsvg2-dev patchelf \
+            desktop-file-utils ninja-build pkg-config xvfb xdotool
+
+      - name: Cache desktop tdjson
+        uses: actions/cache@v6
+        with:
+          path: native-libs/${{ matrix.library }}
+          key: tdjson-desktop-${{ runner.os }}-${{ matrix.platform }}-${{ matrix.architecture }}-${{ hashFiles('scripts/tdjson-manifest.json') }}
+
+      - name: Install pinned desktop tdjson
+        shell: bash
+        run: |
+          scripts/build-tdjson-desktop.sh \
+            "${{ matrix.platform }}" \
+            "native-libs/${{ matrix.library }}" \
+            "${{ matrix.architecture }}"
+
+      - name: Enable Swift Package Manager for macOS
+        if: matrix.platform == 'macos'
+        run: flutter config --enable-swift-package-manager
+
+      - name: Resolve Flutter dependencies
+        run: flutter pub get
+
+      - name: Refresh the MDK Apple SDK
+        if: matrix.platform == 'macos'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # libmdk draws an "MDK SDK is outdated" QR frame over the video and
+          # stops 44 days after its own build stamp when no key is set, so the
+          # Apple SDK is resolved and verified per build instead of pinned.
+          scripts/refresh-apple-mdk.sh
+
+      - name: Write secrets.dart
+        shell: bash
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          mkdir -p lib/config
+          cat > lib/config/secrets.dart <<EOF
+          class Secrets {
+            static const int apiId = ${TELEGRAM_API_ID:-0};
+            static const String apiHash = '${TELEGRAM_API_HASH}';
+            static bool get isConfigured => apiId != 0 && apiHash.isNotEmpty;
+          }
+          EOF
+
+      - name: Build Linux release
+        if: matrix.platform == 'linux'
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: |
+          flutter build linux --release \
+            --dart-define="I_DONT_FUCKING_CARE_ABOUT_TOS=false" \
+            --target-platform="linux-${{ matrix.architecture }}" \
+            --build-name="${{ needs.prepare.outputs.app_version }}" \
+            --build-number="${{ needs.prepare.outputs.build_stamp }}" \
+            --dart-define="GIT_COMMIT=${{ needs.prepare.outputs.short_sha }}" \
+            --dart-define="CI_BUILD_STAMP=${{ needs.prepare.outputs.build_stamp }}" \
+            --dart-define="SENTRY_DSN=$SENTRY_DSN"
+
+      - name: Build macOS release
+        if: matrix.platform == 'macos'
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: |
+          flutter build macos --release \
+            --dart-define="I_DONT_FUCKING_CARE_ABOUT_TOS=false" \
+            --build-name="${{ needs.prepare.outputs.app_version }}" \
+            --build-number="${{ needs.prepare.outputs.build_stamp }}" \
+            --dart-define="GIT_COMMIT=${{ needs.prepare.outputs.short_sha }}" \
+            --dart-define="CI_BUILD_STAMP=${{ needs.prepare.outputs.build_stamp }}" \
+            --dart-define="SENTRY_DSN=$SENTRY_DSN"
+
+      - name: Drop Firebase from the Windows arm64 build
+        if: matrix.platform == 'windows' && matrix.architecture == 'arm64'
+        shell: bash
+        run: |
+          # Google ships the Firebase C++ SDK for Windows as x86 and x64 static
+          # libraries only — the archive contains no ARM64 at all — so an ARM64
+          # link fails on unresolved firebase::App symbols. Nothing is lost:
+          # Mithka initialises Firebase only when the mithka/firebase_configuration
+          # channel answers, and that channel is implemented on Android and iOS
+          # alone, so on Windows the plugin registers and is then never used.
+          python3 scripts/drop-windows-plugin.py firebase_core \
+            --reason 'Firebase publishes no Windows ARM64 binaries'
+          # Flutter writes the plugin registrant and the CMake plugin list
+          # during pub get, so both have to be regenerated from the plugin set
+          # this leaves behind; the build itself will not redo it.
+          flutter pub get
+          for generated in windows/flutter/generated_plugin_registrant.cc \
+                           windows/flutter/generated_plugins.cmake; do
+            if grep -qi firebase "$generated"; then
+              echo "$generated still registers Firebase" >&2
+              exit 1
+            fi
+          done
+
+      - name: Build Windows release
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: |
+          # --no-pub keeps pub from re-resolving over the plugin set this job
+          # settled on; the dependencies step above already fetched them.
+          flutter build windows --release --no-pub `
+            --dart-define="I_DONT_FUCKING_CARE_ABOUT_TOS=false" `
+            --build-name="${{ needs.prepare.outputs.app_version }}" `
+            --build-number="${{ needs.prepare.outputs.build_stamp }}" `
+            --dart-define="GIT_COMMIT=${{ needs.prepare.outputs.short_sha }}" `
+            --dart-define="CI_BUILD_STAMP=${{ needs.prepare.outputs.build_stamp }}" `
+            --dart-define="SENTRY_DSN=$env:SENTRY_DSN"
+
+      - name: Prune Windows release bundle
+        if: matrix.platform == 'windows'
+        shell: bash
+        run: |
+          python="$(command -v python3 || command -v python)"
+          "$python" scripts/prune-desktop-bundle.py windows \
+            "build/windows/${{ matrix.architecture }}/runner/Release"
+
+      - name: Package Linux release
+        if: matrix.platform == 'linux'
+        run: |
+          bundle="build/linux/${{ matrix.architecture }}/release/bundle"
+          install -m 0755 native-libs/libtdjson.so "$bundle/lib/libtdjson.so"
+          python3 scripts/prune-desktop-bundle.py linux "$bundle"
+          scripts/check-linux-no-system-ffmpeg.sh "$bundle"
+          nm -D "$bundle/lib/libtdjson.so" | grep ' td_create_client_id$'
+          if ldd "$bundle/lib/libtdjson.so" | grep -q 'not found'; then
+            ldd "$bundle/lib/libtdjson.so" >&2
+            exit 1
+          fi
+          mkdir -p dist/package/Mithka
+          cp -R "$bundle/." dist/package/Mithka/
+          tar -C dist/package -czf \
+            "dist/mithka-${{ needs.prepare.outputs.artifact_label }}-linux-${{ matrix.architecture }}.tar.gz" \
+            Mithka
+
+      - name: Build Linux AppImage
+        if: matrix.platform == 'linux'
+        run: |
+          scripts/build-linux-appimage.sh \
+            "${{ matrix.architecture }}" \
+            "build/linux/${{ matrix.architecture }}/release/bundle" \
+            "dist/mithka-${{ needs.prepare.outputs.artifact_label }}-linux-${{ matrix.architecture }}.AppImage"
+
+      - name: Verify Linux AppImage launch
+        if: matrix.platform == 'linux'
+        run: |
+          scripts/test-linux-appimage.sh \
+            "dist/mithka-${{ needs.prepare.outputs.artifact_label }}-linux-${{ matrix.architecture }}.AppImage"
+
+      - name: Package macOS release
+        if: matrix.platform == 'macos'
+        run: |
+          app="build/macos/Build/Products/Release/Mithka.app"
+          frameworks="$app/Contents/Frameworks"
+          install -m 0755 native-libs/libtdjson.dylib \
+            "$frameworks/libtdjson.dylib"
+          test "$(lipo -archs "$frameworks/libtdjson.dylib" | tr ' ' '\n' | sort | tr '\n' ' ')" = "arm64 x86_64 "
+          if otool -L "$frameworks/libtdjson.dylib" | grep -q '/opt/homebrew\|/usr/local'; then
+            otool -L "$frameworks/libtdjson.dylib" >&2
+            exit 1
+          fi
+          python3 scripts/prune-desktop-bundle.py macos "$app"
+          codesign --force --sign - "$frameworks/libtdjson.dylib"
+          # Pruning removed optional MDK plugins, so reseal the framework.
+          codesign --force --sign - "$frameworks/mdk.framework"
+          codesign --force --sign - \
+            --entitlements macos/Runner/Release.entitlements "$app"
+          codesign --verify --deep --strict "$app"
+          # The universal build stays the source of truth; each download is a
+          # single-architecture copy, which is roughly half the size.
+          mkdir -p dist thin
+          for pair in arm64:arm64 x86_64:x64; do
+            arch="${pair%%:*}"
+            label="${pair##*:}"
+            scripts/thin-macos-app.sh "$app" "$arch" "thin/$label/Mithka.app"
+            ditto -c -k --keepParent "thin/$label/Mithka.app" \
+              "dist/mithka-${{ needs.prepare.outputs.artifact_label }}-macos-$label.zip"
+          done
+
+      - name: Package Windows release
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $bundle = "build\windows\${{ matrix.architecture }}\runner\Release"
+          Copy-Item "native-libs\tdjson.dll" "$bundle\tdjson.dll"
+          Add-Type -TypeDefinition @'
+          using System;
+          using System.Runtime.InteropServices;
+          public static class NativeLibraryCheck {
+            [DllImport("kernel32", SetLastError = true, CharSet = CharSet.Unicode)]
+            public static extern IntPtr LoadLibrary(string path);
+            [DllImport("kernel32", SetLastError = true)]
+            public static extern IntPtr GetProcAddress(IntPtr module, string name);
+            [DllImport("kernel32", SetLastError = true)]
+            public static extern bool FreeLibrary(IntPtr module);
+          }
+          '@
+          $module = [NativeLibraryCheck]::LoadLibrary((Resolve-Path "$bundle\tdjson.dll"))
+          if ($module -eq [IntPtr]::Zero) {
+            throw "Could not load packaged tdjson.dll: $([Runtime.InteropServices.Marshal]::GetLastWin32Error())"
+          }
+          $requiredSymbols = @(
+            "td_create_client_id",
+            "td_mithka_export_session_string",
+            "td_mithka_import_session_string",
+            "td_mithka_last_error",
+            "td_mithka_set_transfer_boost"
+          )
+          foreach ($symbol in $requiredSymbols) {
+            if ([NativeLibraryCheck]::GetProcAddress($module, $symbol) -eq [IntPtr]::Zero) {
+              throw "Packaged tdjson.dll does not export $symbol"
+            }
+          }
+          [void][NativeLibraryCheck]::FreeLibrary($module)
+          New-Item -ItemType Directory -Force dist\package | Out-Null
+          Copy-Item $bundle dist\package\Mithka -Recurse
+          Compress-Archive -Path dist\package\Mithka `
+            -DestinationPath "dist\mithka-${{ needs.prepare.outputs.artifact_label }}-windows-${{ matrix.architecture }}.zip"
+
+          $installer = & scripts\build-windows-installer.ps1 `
+            -Architecture "${{ matrix.architecture }}" `
+            -BuildDirectory $bundle `
+            -OutputDirectory dist `
+            -Version "${{ needs.prepare.outputs.app_version }}" `
+            -ArtifactLabel "${{ needs.prepare.outputs.artifact_label }}"
+          if (-not (Test-Path -LiteralPath $installer -PathType Leaf)) {
+            throw "Windows installer was not created: $installer"
+          }
+
+      - name: Upload desktop artifact
+        if: matrix.platform != 'macos'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-${{ matrix.platform }}-${{ matrix.architecture }}-${{ needs.prepare.outputs.release_date }}
+          path: dist/mithka-${{ needs.prepare.outputs.artifact_label }}-${{ matrix.platform }}-${{ matrix.architecture }}.${{ matrix.archive_extension }}
+          if-no-files-found: error
+
+      - name: Upload macOS arm64 artifact
+        if: matrix.platform == 'macos'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-macos-arm64-${{ needs.prepare.outputs.release_date }}
+          path: dist/mithka-${{ needs.prepare.outputs.artifact_label }}-macos-arm64.zip
+          if-no-files-found: error
+
+      - name: Upload macOS x64 artifact
+        if: matrix.platform == 'macos'
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-macos-x64-${{ needs.prepare.outputs.release_date }}
+          path: dist/mithka-${{ needs.prepare.outputs.artifact_label }}-macos-x64.zip
+          if-no-files-found: error
+
+      - name: Upload Windows installer artifact
+        if: matrix.platform == 'windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: installer-windows-${{ matrix.architecture }}-${{ needs.prepare.outputs.release_date }}
+          path: dist/mithka-${{ needs.prepare.outputs.artifact_label }}-windows-${{ matrix.architecture }}-setup.exe
+          if-no-files-found: error
+
+      - name: Upload Linux AppImage artifact
+        if: matrix.platform == 'linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: appimage-linux-${{ matrix.architecture }}-${{ needs.prepare.outputs.release_date }}
+          path: dist/mithka-${{ needs.prepare.outputs.artifact_label }}-linux-${{ matrix.architecture }}.AppImage
+          if-no-files-found: error
+
+  build-ohos:
+    name: Build HarmonyOS hap
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.desktop_test_only }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    # Optional until its assembled path is validated: a failure here must not
+    # mark the package run failed, because the release job below and the
+    # store coordinator only require the established platforms.
+    continue-on-error: true
+    # The untrusted toolchain container never needs to mutate the repository:
+    # it only produces artifacts. Publication credentials stay exclusive to
+    # the release job below.
+    permissions:
+      contents: read
+    # Container jobs otherwise run steps with sh (dash), which rejects the
+    # `set -o pipefail` the steps below rely on.
+    defaults:
+      run:
+        shell: bash
+    container:
+      # Ships Ubuntu 20.04 with the HarmonyOS SDK (API 22), hvigor, ohpm, and
+      # node 18. Its bundled /opt/flutter is an older 3.35.8-ohos fork that
+      # must not be used; the job installs the 3.44.9+ohos canary below.
+      # Pinned by digest: a mutable `latest` tag could repoint under this
+      # workflow without review; the digest is the reviewed toolchain.
+      image: ghcr.io/niuhuan/harmony-next-flutter-pipeline-docker/image@sha256:2ec15fafd8f57ff74ea58e4ca934266eb11409169d39ef99b038be07db54e2a9
+      options: --user root
+    timeout-minutes: 90
+    env:
+      FLUTTER_OHOS_REF: '3.44.9+ohos-0.0.1-canary1'
+      DEVECO_SDK_HOME: /opt/harmonyos-tools/command-line-tools/sdk
+      # Packages resolve from pub.dev like pubspec.lock and the other jobs;
+      # the pub.flutter-io.cn mirror served archives with wrong content hashes.
+      FLUTTER_STORAGE_BASE_URL: https://storage.flutter-io.cn
+    steps:
+      - name: Put the ohos toolchain on PATH
+        run: |
+          {
+            echo "/opt/flutter-ohos/bin"
+            echo "/opt/harmonyos-tools/command-line-tools/tool/node/bin"
+            echo "/opt/harmonyos-tools/command-line-tools/bin"
+          } >> "$GITHUB_PATH"
+          # hvigor resolves its node modules through these registries.
+          cat > "$HOME/.npmrc" <<'EOF'
+          registry=https://repo.huaweicloud.com/repository/npm/
+          @ohos:registry=https://repo.harmonyos.com/npm/
+          EOF
+          node --version
+
+      - uses: actions/checkout@v7
+        with:
+          # The toolchain runs inside an untrusted third-party container:
+          # never leave repository credentials where its scripts can read
+          # them.
+          persist-credentials: false
+
+      - name: Install python3
+        run: |
+          # The image has no python3; the tdjson installer and the HAR patch
+          # below need it.
+          apt-get update -qq
+          apt-get install -y -qq python3-minimal >/dev/null
+          python3 --version
+
+      - name: Cache the ohos Flutter SDK
+        uses: actions/cache@v6
+        with:
+          path: /opt/flutter-ohos
+          key: flutter-ohos-sdk-${{ env.FLUTTER_OHOS_REF }}-v1
+
+      - name: Install the ohos Flutter fork
+        run: |
+          set -euo pipefail
+          if [ ! -x /opt/flutter-ohos/bin/flutter ]; then
+            git clone --depth 1 --branch "$FLUTTER_OHOS_REF" \
+              https://gitcode.com/openharmony-sig/flutter_flutter.git /opt/flutter-ohos
+          fi
+          # Bootstrap plus the ohos engine artifacts (several hundred MB from
+          # the Huawei cloud mirrors on the first run; cached afterwards).
+          flutter precache --ohos
+          flutter --version
+
+      - name: Patch the engine embedding HAR for API 22
+        run: |
+          set -euo pipefail
+          engine_dir=/opt/flutter-ohos/bin/cache/artifacts/engine/ohos-arm64-release
+          har="$engine_dir/flutter_embedding_release.har"
+          marker="$engine_dir/flutter_embedding_release.har.api22-patched"
+          test -s "$har"
+          if [ -f "$marker" ]; then
+            echo "Engine embedding HAR already patched for API 22"
+            exit 0
+          fi
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          # The HAR is a tar.gz whose members are prefixed with package/.
+          tar xzf "$har" -C "$work"
+
+          # 1) OhosAutoFillHelper.ets references @ohos.app.ability.autoFillManager
+          #    types that only exist from API 26; public SDKs top out at API 24.
+          #    Local type aliases with the same shapes compile against API 22.
+          #    This is an explicitly reviewed capability fallback, not a silent
+          #    rewrite: the patch refuses to apply unless the runtime guard
+          #    (early return below sdkApiVersion 26) is present in the source,
+          #    so requestAutoFill/requestAutoSave can never run on a runtime
+          #    that would have reached the real API 26 module. The stubbed
+          #    calls fail their callbacks exactly as the guarded path would.
+          python3 - "$work/package/src/main/ets/plugin/editing/OhosAutoFillHelper.ets" <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          if not path.exists():
+              print("OhosAutoFillHelper.ets absent; nothing to patch")
+              raise SystemExit(0)
+          text = path.read_text(encoding="utf-8")
+
+          # The fallback is only sound when the engine already refuses to call
+          # the API 26 module below sdkApiVersion 26; fail loudly otherwise so
+          # an engine update that drops the guard cannot ship a silent
+          # behaviour change. The guard is accepted either as the literal 26 or
+          # as AUTOFILL_SUPPORT_API when that constant is exactly 26, and it
+          # must precede the manager call inside each of the two methods.
+          guard_pattern = r"deviceInfo\.sdkApiVersion\s*<\s*(?:26\b"
+          if re.search(r"\bAUTOFILL_SUPPORT_API\s*=\s*26\s*;", text):
+              guard_pattern += r"|AUTOFILL_SUPPORT_API\b"
+          guard_pattern += r")"
+          for method, call in (
+              ("requestAutoFill", "autoFillManager.requestAutoFill("),
+              ("requestAutoSave", "autoFillManager.requestAutoSave("),
+          ):
+              start = text.find(f"static {method}(")
+              call_at = text.find(call, start) if start >= 0 else -1
+              if start < 0 or call_at < 0 or not re.search(
+                  guard_pattern, text[start:call_at]
+              ):
+                  raise SystemExit(
+                      f"OhosAutoFillHelper.{method} no longer guards autofill "
+                      "below sdkApiVersion 26; the API 22 capability fallback "
+                      "is no longer sound and must be re-reviewed"
+                  )
+
+          # Remove the manager from either a default import or a named kit
+          # import, keeping any sibling names such as bundleManager.
+          n_import = 0
+
+          def drop_named(match: re.Match) -> str:
+              global n_import
+              names = [n.strip() for n in match.group(1).split(",") if n.strip()]
+              kept = [n for n in names if n != "autoFillManager"]
+              if len(kept) == len(names):
+                  return match.group(0)
+              n_import += 1
+              if not kept:
+                  return ""
+              return f"import {{ {', '.join(kept)} }} from {match.group(2)};\n"
+
+          text = re.sub(
+              r"^[ \t]*import\s*\{([^}]*)\}\s*from\s*(['\"][^'\"]*['\"]);?[ \t]*\n",
+              drop_named,
+              text,
+              flags=re.MULTILINE,
+          )
+          text, n_default = re.subn(
+              r"^[ \t]*import\s+autoFillManager\s+from\s+['\"][^'\"]*['\"];?[ \t]*\n",
+              "",
+              text,
+              flags=re.MULTILINE,
+          )
+          n_import += n_default
+          if n_import != 1 or re.search(
+              r"^[ \t]*import\b[^;\n]*\bautoFillManager\b", text, flags=re.MULTILINE
+          ):
+              raise SystemExit("autoFillManager import was not removed exactly once")
+
+          anchor = "const TAG = 'OhosAutoFillHelper';"
+          if anchor not in text:
+              raise SystemExit("TAG anchor not found in OhosAutoFillHelper.ets")
+          # Strict ArkTS rejects object-literal types and untyped literals, so
+          # the shapes are declared as interfaces.
+          aliases = (
+              "\n"
+              "// CI compatibility shim: these API 26 autoFillManager types are\n"
+              "// aliased locally so the embedding compiles against the API 22 SDK.\n"
+              "type AutoFillType = number;\n"
+              "type ViewData = Object;\n"
+              "type AutoFillTriggerType = number;\n"
+              "interface FillRequest {\n"
+              "  type: AutoFillType;\n"
+              "  viewData: ViewData;\n"
+              "  customData: AutoFillCustomData;\n"
+              "  isPopup: boolean;\n"
+              "  triggerType: AutoFillTriggerType;\n"
+              "}\n"
+              "interface FillFailureResult {\n"
+              "  errCode: number;\n"
+              "}\n"
+              "interface AutoFillCallback {\n"
+              "  onSuccess: (v: ViewData) => void;\n"
+              "  onFailure: (r: FillFailureResult) => void;\n"
+              "}\n"
+              "interface SaveRequest {\n"
+              "  viewData: ViewData;\n"
+              "}\n"
+              "interface AutoSaveCallback {\n"
+              "  onSuccess: () => void;\n"
+              "  onFailure: () => void;\n"
+              "}\n"
+          )
+          text = text.replace(anchor, anchor + aliases, 1)
+
+          # Log through the embedding's own logger when it is imported;
+          # otherwise fall back to hilog.
+          use_log = re.search(r"^import\s+Log\s+from\b", text, flags=re.MULTILINE)
+          log_error = "Log.e(TAG, " if use_log else "hilog.error(0x0, TAG, "
+
+          # With the real module gone these two calls can no longer be made
+          # at compile time. The replacement preserves the runtime SDK
+          # distinction: below 26 the guarded path already returned, so this
+          # arm only runs on >= 26 runtimes — where silently failing would
+          # hide a lost capability, so the stub reports the failure loudly
+          # instead (the surrounding helper logs it; the callback still gets
+          # its failure so the Flutter side degrades the same way).
+          text, n_fill = re.subn(
+              r"autoFillManager\.requestAutoFill\(uiContext, fillRequest, callback\);",
+              "// API 26 autoFillManager unavailable on the CI API 22 SDK; "
+              "runtime >= 26 reaches here only through the reviewed shim.\n"
+              f"      {log_error}'requestAutoFill shim: "
+              "autoFillManager unavailable; failing loudly');\n"
+              "      const shimFailure: FillFailureResult = { errCode: -1 };\n"
+              "      callback.onFailure(shimFailure);",
+              text,
+          )
+          text, n_save = re.subn(
+              r"autoFillManager\.requestAutoSave\(uiContext, saveRequest, napiCallback\);",
+              "// API 26 autoFillManager unavailable on the CI API 22 SDK; "
+              "runtime >= 26 reaches here only through the reviewed shim.\n"
+              f"      {log_error}'requestAutoSave shim: "
+              "autoFillManager unavailable; failing loudly');\n"
+              "      napiCallback.onFailure();",
+              text,
+          )
+          if n_fill != 1 or n_save != 1:
+              raise SystemExit(
+                  f"expected one requestAutoFill and one requestAutoSave call, "
+                  f"found {n_fill} and {n_save}"
+              )
+          # The shim's loud failure needs hilog; ensure the import exists.
+          if not use_log and not re.search(r"import\s+\{\s*hilog\s*\}", text):
+              text = text.replace(
+                  "const TAG = 'OhosAutoFillHelper';",
+                  "import { hilog } from '@kit.PerformanceAnalysisKit';\n"
+                  "const TAG = 'OhosAutoFillHelper';",
+                  1,
+              )
+
+          for name in (
+              "AutoFillType",
+              "ViewData",
+              "AutoFillTriggerType",
+              "FillRequest",
+              "FillFailureResult",
+              "AutoFillCallback",
+              "SaveRequest",
+              "AutoSaveCallback",
+          ):
+              text = text.replace(f"autoFillManager.{name}", name)
+
+          leftovers = sorted(set(re.findall(r"autoFillManager\.\w+", text)))
+          if leftovers:
+              raise SystemExit(f"unhandled autoFillManager references: {leftovers}")
+          path.write_text(text, encoding="utf-8")
+          print(
+              f"OhosAutoFillHelper: import removed={n_import}, "
+              f"requestAutoFill stubbed={n_fill}, requestAutoSave stubbed={n_save}"
+          )
+          PY
+
+          # 2) FlutterPage.ets registers the same resource id in four if/else
+          #    branches; the ArkTS compiler rejects duplicate ids.
+          python3 - "$work/package/src/main/ets/embedding/ohos/FlutterPage.ets" <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          if not path.exists():
+              print("FlutterPage.ets absent; nothing to patch")
+              raise SystemExit(0)
+          text = path.read_text(encoding="utf-8")
+          pattern = re.compile(r"id\((['\"])unfocus-xcomponent-node\1\)")
+          occurrences = len(pattern.findall(text))
+          if occurrences != 4:
+              raise SystemExit(f"expected 4 unfocus ids, found {occurrences}")
+          counter = [0]
+
+          def unique_id(match: re.Match) -> str:
+              replacement = f"id({match.group(1)}unfocus-xcomponent-node-{counter[0]}{match.group(1)})"
+              counter[0] += 1
+              return replacement
+
+          text = pattern.sub(unique_id, text)
+          path.write_text(text, encoding="utf-8")
+          print(f"FlutterPage: made {counter[0]} unfocus ids unique")
+          PY
+
+          # 3) EmbeddingNodeController.ets uses CompetitionStrategy.DEFAULT, an
+          #    API 24+ enum; the call site already guards on runtime
+          #    capability, so the raw default value is equivalent.
+          python3 - "$work/package/src/main/ets/embedding/ohos/EmbeddingNodeController.ets" <<'PY'
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          if not path.exists():
+              print("EmbeddingNodeController.ets absent; nothing to patch")
+              raise SystemExit(0)
+          text = path.read_text(encoding="utf-8")
+          if "CompetitionStrategy.DEFAULT" not in text:
+              raise SystemExit("CompetitionStrategy.DEFAULT not found")
+          text = text.replace(
+              "CompetitionStrategy.DEFAULT",
+              "0 /* CompetitionStrategy.DEFAULT: API 24+ enum, raw value for API 22 SDKs */",
+          )
+          path.write_text(text, encoding="utf-8")
+          print("EmbeddingNodeController: replaced CompetitionStrategy.DEFAULT")
+          PY
+
+          # Repack from the directory that contains package/ so members keep
+          # their package/ prefix; a ./ prefix breaks ohpm ("Not Found PkgJson").
+          (cd "$work" && tar czf har.new package)
+          mv "$work/har.new" "$har"
+          touch "$marker"
+          echo "Engine embedding HAR patched for API 22"
+
+      - name: Flutter dependencies
+        run: flutter pub get
+
+      # feat/ohos-pubspec merges the ohos overlay packages into the pubspec.
+      # The overlay helper requires an explicit apply|revert argument and exits 2
+      # without one, so always pass apply here.
+      - name: Enable the ohos plugin overlay
+        run: |
+          if [ -f scripts/enable-ohos-plugins.sh ]; then
+            bash scripts/enable-ohos-plugins.sh apply
+            # Stage the lock-verified packages the overlay's path overrides
+            # point at (exhaustive TargetPlatform switches need an ohos case).
+            python3 scripts/patch-ohos-packages.py
+            flutter pub get
+          else
+            echo "scripts/enable-ohos-plugins.sh not present; skipping overlay"
+          fi
+
+      - name: Write secrets.dart
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          mkdir -p lib/config
+          cat > lib/config/secrets.dart <<EOF
+          class Secrets {
+            static const int apiId = ${TELEGRAM_API_ID:-0};
+            static const String apiHash = '${TELEGRAM_API_HASH}';
+            static bool get isConfigured => apiId != 0 && apiHash.isNotEmpty;
+          }
+          EOF
+
+      - name: Ensure the ohos host project
+        run: |
+          if [ -f ohos/build-profile.json5 ]; then
+            echo "Using the tracked ohos/ host project"
+          else
+            flutter create --platforms ohos --org ad.neko --project-name mithka .
+          fi
+
+      - name: Install the pinned ohos tdjson
+        run: |
+          set -euo pipefail
+          # The pinned schema-v2 manifest is the trust anchor: the OHOS asset
+          # entry (with its per-asset release_tag) must exist, and the archive
+          # downloaded from that release must match the pinned archive and
+          # member SHA-256/size exactly. A missing pin or a digest mismatch
+          # fails the job; the hap never ships without the verified native
+          # TDLib library.
+          python3 scripts/install-tdjson-artifact.py tdjson-ohos-arm64.zip \
+            ohos/entry/libs/arm64-v8a/libtdjson.so \
+            --member arm64-v8a/libtdjson.so \
+            --mode 0755
+          test -s ohos/entry/libs/arm64-v8a/libtdjson.so
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+
+          manifest = json.loads(
+              Path("scripts/tdjson-manifest.json").read_text(encoding="utf-8")
+          )
+          asset = manifest["assets"]["tdjson-ohos-arm64.zip"]
+          member = asset["members"]["arm64-v8a/libtdjson.so"]
+          installed = Path("ohos/entry/libs/arm64-v8a/libtdjson.so")
+          digest = hashlib.sha256(installed.read_bytes()).hexdigest()
+          if installed.stat().st_size != member["size"] or digest != member["sha256"]:
+              raise SystemExit(
+                  "installed libtdjson.so does not match the pinned manifest entry"
+              )
+          print(
+              "installed libtdjson.so verified against the pinned manifest "
+              f"({digest[:12]}, {member['size']} bytes) from release "
+              f"{asset.get('release_tag', manifest['release_tag'])}"
+          )
+          PY
+
+      # feat/ohos-host adds the tracked ohos/ host project (bundleName
+      # ad.neko.mithka). Until it merges, generate the host with the fork's
+      # own template — it keeps lib/ and only adds ohos/.
+      - name: Build the ohos release hap
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        # The container's default shell is dash; the status capture below
+        # needs bash (PIPESTATUS).
+        shell: bash
+        run: |
+          set -uo pipefail
+          unsigned="ohos/entry/build/default/outputs/default/entry-default-unsigned.hap"
+          log="$(mktemp)"
+          status=0
+          # errexit would kill the script at the pipeline, so the exit status
+          # is captured here and classified below instead: this is the only
+          # way the signing-only tolerance can see a non-zero status at all.
+          flutter build hap --target-platform ohos-arm64 --release \
+            --build-name="${{ needs.prepare.outputs.app_version }}" \
+            --build-number="${{ needs.prepare.outputs.version_code }}" \
+            --dart-define="I_DONT_FUCKING_CARE_ABOUT_TOS=false" \
+            --dart-define="GIT_COMMIT=${{ needs.prepare.outputs.short_sha }}" \
+            --dart-define="CI_BUILD_STAMP=${{ needs.prepare.outputs.build_stamp }}" \
+            --dart-define="SENTRY_DSN=$SENTRY_DSN" 2>&1 | tee "$log" || status=$?
+          status=${PIPESTATUS[0]:-$status}
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+          # Tolerate only a specifically verified signing failure: the build
+          # must have produced the unsigned hap and the log must name the
+          # signing step as the failing part. Compiler, resource, dependency
+          # or packaging failures fail the job instead of shipping an
+          # unverified artifact.
+          signing_failure=0
+          if [ -s "$unsigned" ] && grep -Eqi \
+            'signing|signature|keystore|p12|cer|profile' "$log"; then
+            signing_failure=1
+          fi
+          if [ "$signing_failure" -ne 1 ]; then
+            echo "::error::flutter build hap exited $status without a verified signing-only failure" >&2
+            exit "$status"
+          fi
+          echo "::warning::flutter build hap exited $status (signing-only, unsigned hap produced); verifying the unsigned hap"
+
+      - name: Verify and rename the hap
+        env:
+          ARTIFACT_LABEL: ${{ needs.prepare.outputs.artifact_label }}
+        run: |
+          set -euo pipefail
+          hap="ohos/entry/build/default/outputs/default/entry-default-unsigned.hap"
+          test -s "$hap"
+          python3 scripts/verify_ohos_hap_payload.py "$hap" \
+            --installed ohos/entry/libs/arm64-v8a/libtdjson.so
+          mkdir -p dist
+          cp "$hap" "dist/mithka-${ARTIFACT_LABEL}-ohos-arm64.hap"
+          ls -lh dist
+
+      - name: Upload the ohos hap artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: hap-ohos-arm64-${{ needs.prepare.outputs.release_date }}
+          path: dist/mithka-${{ needs.prepare.outputs.artifact_label }}-ohos-arm64.hap
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    if: ${{ github.event_name != 'workflow_dispatch' || (!inputs.desktop_test_only && !inputs.ohos_test_only) }}
+    # build-ohos is deliberately NOT a hard dependency yet: its assembled
+    # path is still being validated, and a failure there must not block the
+    # established platforms' releases. The ohos hap artifact is simply absent
+    # from the release until the job goes green; flip this to a hard need
+    # once the validation evidence lands.
+    needs: [prepare, build, build-desktop]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_commit || github.sha }}
+          fetch-depth: 0
+
+      - name: Download all release packages
+        uses: actions/download-artifact@v8
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Verify and list artifacts
+        env:
+          ARTIFACT_LABEL: ${{ needs.prepare.outputs.artifact_label }}
+        run: |
+          ls -lhR release-assets
+          apk_count="$(
+            find release-assets -maxdepth 1 -type f -name 'mithka-*.apk' \
+              | wc -l \
+              | tr -d ' '
+          )"
+          if [ "$apk_count" -ne 2 ]; then
+            echo "Expected one published APK per ABI, found $apk_count" >&2
+            exit 1
+          fi
+          for abi in arm64-v8a armeabi-v7a; do
+            apk="release-assets/mithka-${ARTIFACT_LABEL}-android-${abi}.apk"
+            if [ ! -f "$apk" ]; then
+              echo "Missing expected $abi APK: $apk" >&2
+              exit 1
+            fi
+          done
+          for desktop_asset in \
+            '*-windows-x64.zip' \
+            '*-windows-arm64.zip' \
+            '*-windows-x64-setup.exe' \
+            '*-windows-arm64-setup.exe' \
+            '*-macos-arm64.zip' \
+            '*-macos-x64.zip' \
+            '*-linux-x64.tar.gz' \
+            '*-linux-arm64.tar.gz' \
+            '*-linux-x64.AppImage' \
+            '*-linux-arm64.AppImage'; do
+            desktop_asset_count="$(
+              find release-assets -maxdepth 1 -type f -name "$desktop_asset" \
+                | wc -l \
+                | tr -d ' '
+            )"
+            if [ "$desktop_asset_count" -ne 1 ]; then
+              echo "Expected exactly one $desktop_asset package, found $desktop_asset_count" >&2
+              exit 1
+            fi
+          done
+          hap_count="$(
+            find release-assets -maxdepth 1 -type f -name 'mithka-*-ohos-arm64.hap' \
+              | wc -l \
+              | tr -d ' '
+          )"
+          # The optional build-ohos job may be absent; never accept duplicates.
+          if [ "$hap_count" -gt 1 ]; then
+            echo "Expected at most one ohos hap package, found $hap_count" >&2
+            exit 1
+          fi
+          echo "APKs: $apk_count"
+
+      - name: Create release tag
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          STORE_SOURCE_COMMIT: ${{ inputs.source_commit }}
+        run: |
+          set -euo pipefail
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            git fetch origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+            test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$SOURCE_COMMIT"
+            exit 0
+          fi
+          if [ -n "$STORE_SOURCE_COMMIT" ]; then
+            echo 'The store snapshot must already have its canonical version tag.' >&2
+            exit 1
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$RELEASE_TAG" "$SOURCE_COMMIT" -m "Mithka $RELEASE_TAG"
+          git push origin "refs/tags/$RELEASE_TAG"
+
+      - name: Set up Node.js for release notes
+        if: needs.prepare.outputs.prerelease == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      - name: Generate release notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          STORE_SOURCE_COMMIT: ${{ inputs.source_commit }}
+          APP_VERSION: ${{ needs.prepare.outputs.app_version }}
+        run: |
+          if [ -n "$STORE_SOURCE_COMMIT" ]; then
+            python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          version = os.environ['APP_VERSION']
+          notes = json.loads(Path(f'distribution/app-store/release-notes-{version}.json').read_text())
+          Path('release-notes.md').write_text(notes['en-US'] + '\n\n' + notes['zh-Hans'] + '\n\nSource: `' + os.environ['SOURCE_COMMIT'] + '`\n')
+          PY
+            exit 0
+          fi
+          : > release-notes.md
+          if [ "$PRERELEASE" = "true" ]; then
+            previous_tag="$(
+              git tag --list 'v*-nightly.*' --sort=-creatordate \
+                | awk -v current="$RELEASE_TAG" \
+                  '$0 != current && !found { print; found=1 }'
+            )"
+            if [ -n "$previous_tag" ] && \
+              git merge-base --is-ancestor "$previous_tag" "$GITHUB_SHA"; then
+              compare_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${previous_tag}...${RELEASE_TAG}"
+              compare_label="$previous_tag...$RELEASE_TAG"
+            else
+              compare_url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commits/${RELEASE_TAG}"
+              compare_label="$RELEASE_TAG commits"
+            fi
+
+            # The only AI step is the nightly sync's release comparison summary;
+            # publish its notes when they were recorded for this exact commit.
+            COMPARE_LABEL="$compare_label" COMPARE_URL="$compare_url" \
+              node .github/scripts/release-notes.mjs
+          fi
+
+      - name: Remove old Mithka package assets
+        if: inputs.source_commit == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            exit 0
+          fi
+          gh release view "$RELEASE_TAG" --json assets --jq '.assets[].name' \
+            | grep -E '^mithka-.*\.(apk|exe|zip|tar\.gz|AppImage|hap)$' \
+            | while read -r asset; do
+                gh release delete-asset "$RELEASE_TAG" "$asset" --yes
+              done
+
+      - name: Record store package provenance
+        if: inputs.source_commit != ''
+        env:
+          APP_VERSION: ${{ needs.prepare.outputs.app_version }}
+          ANDROID_VERSION_CODE: ${{ needs.prepare.outputs.android_version_code }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os, subprocess
+          from pathlib import Path
+          source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert source == os.environ['SOURCE_COMMIT']
+          files = {path.name: {'sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'size': path.stat().st_size}
+                   for path in sorted(Path('release-assets').iterdir()) if path.is_file()}
+          Path('release-assets/release-manifest.json').write_text(json.dumps({
+              'schema_version': 1, 'source_sha': source, 'version': os.environ['APP_VERSION'],
+              'android_version_code': int(os.environ['ANDROID_VERSION_CODE']),
+              'workflow_run_id': os.environ['GITHUB_RUN_ID'], 'files': files,
+          }, indent=2) + '\n')
+          PY
+
+      - name: Publish to GitHub Release
+        id: github_release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.prepare.outputs.release_tag }}
+          name: ${{ needs.prepare.outputs.release_name }}
+          # The store tag was already verified above. This API field cannot
+          # move that tag; using master avoids requesting workflow-write
+          # permission merely to release an older submitted source.
+          target_commitish: ${{ inputs.source_commit != '' && 'master' || github.sha }}
+          draft: ${{ inputs.source_commit != '' }}
+          overwrite_files: ${{ inputs.source_commit == '' }}
+          prerelease: ${{ needs.prepare.outputs.prerelease }}
+          make_latest: ${{ inputs.source_commit != '' && 'false' || needs.prepare.outputs.make_latest }}
+          body_path: release-notes.md
+          files: release-assets/*
+          fail_on_unmatched_files: true
+
+      - name: Verify and publish the store GitHub release
+        if: inputs.source_commit != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          RELEASE_ID: ${{ steps.github_release.outputs.id }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          from pathlib import Path
+          tag = os.environ['RELEASE_TAG']
+          release_id = os.environ['RELEASE_ID']
+          assert release_id.isdigit()
+          release = json.loads(subprocess.check_output(['gh', 'api', f'repos/iebb/mithka/releases/{release_id}'], text=True))
+          assert release['tag_name'] == tag
+          assets = {asset['name']: asset for asset in release['assets']}
+          manifest = json.loads(Path('release-assets/release-manifest.json').read_text())
+          for name, expected in manifest['files'].items():
+              actual = assets[name]
+              assert actual['size'] == expected['size'] and actual.get('digest') == 'sha256:' + expected['sha256'], name
+          subprocess.run(['gh', 'api', '--method', 'PATCH', f'repos/iebb/mithka/releases/{release_id}', '--input', '-'],
+                         input=json.dumps({'target_commitish': 'master', 'draft': False, 'prerelease': False, 'make_latest': 'true'}), text=True,
+                         check=True, stdout=subprocess.DEVNULL)
+          PY
+
+      - name: Notify Telegram channel
+        if: inputs.source_commit == ''
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CI_CHANNEL: ${{ secrets.TELEGRAM_CI_CHANNEL }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          RELEASE_CHANNEL: ${{ needs.prepare.outputs.release_channel }}
+          RELEASE_DATE: ${{ needs.prepare.outputs.release_date }}
+          RELEASE_URL: ${{ github.server_url }}/${{ github.repository }}/releases/tag/${{ needs.prepare.outputs.release_tag }}
+        run: |
+          test -n "$TELEGRAM_BOT_TOKEN"
+          test -n "$TELEGRAM_CI_CHANNEL"
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          notes = Path("release-notes.md").read_text(encoding="utf-8")
+          summary_lines = []
+          for raw_line in notes.splitlines():
+              line = raw_line.strip()
+              if not line or line == "## Changes":
+                  continue
+              if line.startswith("**Full changelog:**"):
+                  break
+              if line.startswith("### "):
+                  line = f"{line[4:]}:"
+              elif line.startswith("## "):
+                  line = line[3:]
+              elif line.startswith("- "):
+                  line = f"• {line[2:]}"
+              # Telegram receives plain text; drop the release body's Markdown escapes.
+              line = re.sub(r"\\([\\`*_\[\]<>])", r"\1", line)
+              line = re.sub(r"\[([^]]+)]\([^)]+\)", r"\1", line)
+              line = line.replace("**", "").replace("`", "")
+              summary_lines.append(line)
+
+          header = (
+              f"🚀 Mithka {os.environ['RELEASE_CHANNEL']} "
+              f"{os.environ['RELEASE_TAG']} · {os.environ['RELEASE_DATE']}"
+          )
+          footer = f"Downloads: {os.environ['RELEASE_URL']}"
+          summary = "\n".join(summary_lines)
+          if summary:
+              # Telegram accepts at most 4096 characters. Leave extra room for
+              # UTF-16 counting differences around emoji and future labels.
+              available = 3800 - len(header) - len(footer) - len("\n\nSummary:\n\n")
+              if len(summary) > available:
+                  summary = summary[: max(0, available - 1)].rstrip() + "…"
+              message = f"{header}\n\nSummary:\n{summary}\n\n{footer}"
+          else:
+              message = f"{header}\n\n{footer}"
+
+          Path("telegram-message.txt").write_text(message, encoding="utf-8")
+          PY
+          response="$(curl -fsS \
+            --data-urlencode "chat_id=$TELEGRAM_CI_CHANNEL" \
+            --data-urlencode "text@telegram-message.txt" \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage")"
+          # Release CI announcements should stay in the channel history but not
+          # become pinned. If another automation or Telegram-side behavior pins
+          # the just-sent message, unpin that exact message best-effort.
+          message_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("result", {}).get("message_id", ""))' <<< "$response")"
+          if [ -n "$message_id" ]; then
+            curl -fsS \
+              -F "chat_id=$TELEGRAM_CI_CHANNEL" \
+              -F "message_id=$message_id" \
+              "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/unpinChatMessage" \
+              >/dev/null 2>&1 || true
+          fi

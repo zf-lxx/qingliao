@@ -1,0 +1,3060 @@
+//
+//  chat_list_view_model.dart
+//
+//  Drives the 消息 (chat list) screen. Loads the main chat list from TDLib, then
+//  keeps it live by folding in the incremental `update*` events. Ordering:
+//  pinned chats float to the top, then the rest sort by TDLib `order` desc, with
+//  last-message date as the tiebreaker. Port of the Swift `ChatListViewModel`.
+//
+
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+import 'package:mithka/l10n/app_localizations.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../app/performance_metrics.dart';
+import '../communities/community_models.dart';
+import '../notifications/notification_settings_payload.dart';
+import '../notifications/scope_notification_settings.dart';
+import '../settings/hidden_sender_store.dart';
+import '../settings/keyword_blocker.dart';
+import '../tdlib/chat_membership.dart';
+import '../tdlib/json_helpers.dart';
+import '../tdlib/td_client.dart';
+import '../tdlib/td_models.dart';
+import '../tdlib/td_user_index.dart';
+import 'chat_delete_policy.dart';
+import 'chat_list_preview.dart';
+import 'chat_removal_actions.dart';
+import 'local_pin_store.dart';
+
+class ChatFilterOption {
+  const ChatFilterOption({
+    required this.title,
+    this.folderId,
+    this.iconName = 'Custom',
+    this.unreadChatCount = 0,
+    this.hasUnmutedUnread = false,
+  });
+
+  final String title;
+  final int? folderId;
+  final String iconName;
+
+  /// Unread chats inside the folder (a chat counts once, not per message).
+  /// Telegram's own folder badges report chat counts, and muted chats still
+  /// count — muting only decides the badge's colour.
+  final int unreadChatCount;
+
+  /// Whether at least one of those unread chats is unmuted, which is what
+  /// makes Telegram draw the badge in the accent colour instead of grey.
+  final bool hasUnmutedUnread;
+
+  bool get isAll => folderId == null;
+
+  ChatFilterOption withUnread({required int count, required bool unmuted}) =>
+      ChatFilterOption(
+        title: title,
+        folderId: folderId,
+        iconName: iconName,
+        unreadChatCount: count,
+        hasUnmutedUnread: unmuted,
+      );
+}
+
+class _CommunityLookup {
+  const _CommunityLookup({
+    required this.chatId,
+    required this.peerId,
+    required this.isBot,
+  });
+
+  final int chatId;
+  final int peerId;
+  final bool isBot;
+}
+
+typedef ChatListQuery =
+    Future<Map<String, dynamic>> Function(Map<String, dynamic> request);
+typedef ChatMembershipResolver =
+    Future<bool> Function(ChatSummary summary, Map<String, dynamic> raw);
+
+/// The chat list a pin action was started against, with the pin read/write
+/// bound to that exact list. Captured at action start so an async rollback
+/// cannot land in a folder the user only selected afterwards.
+class _PinTarget {
+  _PinTarget({
+    required this.chatList,
+    required this.isPinned,
+    required this.apply,
+  });
+
+  /// The TDLib chat list object (`chatListMain` / `chatListFolder`).
+  final Map<String, dynamic> chatList;
+  final bool Function(ChatSummary chat) isPinned;
+  final void Function(Map<String, dynamic> chatList, int chatId, bool value)
+  apply;
+}
+
+class ChatListViewModel extends ChangeNotifier {
+  ChatListViewModel({
+    @visibleForTesting this._queryForTesting,
+    @visibleForTesting this._membershipForTesting,
+    @visibleForTesting TdClient? clientForTesting,
+    this.accountSlot,
+  }) : _client = clientForTesting ?? TdClient.shared;
+
+  List<ChatSummary> _chats = [];
+  List<ChatSummary> _archived = [];
+  List<ChatSummary> _filtered = [];
+  List<ChatFilterOption> _filters = const [
+    ChatFilterOption(title: AppStringKeys.topicChatAllFilter),
+  ];
+  ChatFilterOption _selectedFilter = const ChatFilterOption(
+    title: AppStringKeys.topicChatAllFilter,
+  );
+  String? notice;
+  bool _initialLoading = true;
+  Timer? _resortTimer;
+  int _pendingResortSignals = 0;
+
+  /// Debounces the badge refresh that in-place summary updates need. Kept apart
+  /// from [_resortTimer] so a burst of them can never cancel a resort that
+  /// something else already owed the list.
+  Timer? _badgeTimer;
+
+  List<ChatSummary> get chats => _chats;
+  List<ChatSummary> get archived => _archived;
+  List<ChatSummary> get filtered => _filtered;
+
+  /// The projection walks every chat in the account while the rest of a build
+  /// is O(visible rows), and it is asked for from inside a LayoutBuilder. It can
+  /// only change when the sort or the community grouping does, and both of those
+  /// run through `_scheduleResort`/`_resort`, which drop the cache. An update
+  /// that only repaints a row changes neither, so it keeps the cache and mutates
+  /// the summaries the cached entries already point at.
+  List<CommunityChatListEntry>? _entriesCache;
+  bool _entriesCacheCommunitiesEnabled = true;
+
+  List<CommunityChatListEntry> chatListEntries({
+    bool communitiesEnabled = true,
+  }) {
+    final cached = _entriesCache;
+    if (cached != null &&
+        _entriesCacheCommunitiesEnabled == communitiesEnabled) {
+      return cached;
+    }
+    final entries = CommunityChatListProjection.build(
+      chats: _chats,
+      communityByChat: _communityByChat,
+      communities: _communities,
+      communitiesEnabled: communitiesEnabled,
+    );
+    _entriesCacheCommunitiesEnabled = communitiesEnabled;
+    _entriesCache = entries;
+    return entries;
+  }
+
+  /// One neighbouring folder's projection, kept beside the selected one so a
+  /// live folder swipe can render the list it is about to reveal. A single slot
+  /// is enough: a gesture peeks at one folder at a time, and the drag re-reads
+  /// it on every frame.
+  int? _peekFolderId;
+  bool _peekCommunitiesEnabled = true;
+  List<CommunityChatListEntry>? _peekEntries;
+
+  /// [chatListEntries] for an arbitrary folder, leaving the selection alone.
+  List<CommunityChatListEntry> chatListEntriesForFolder(
+    int? folderId, {
+    bool communitiesEnabled = true,
+  }) {
+    if (folderId == _selectedFilter.folderId) {
+      return chatListEntries(communitiesEnabled: communitiesEnabled);
+    }
+    final cached = _peekEntries;
+    if (cached != null &&
+        _peekFolderId == folderId &&
+        _peekCommunitiesEnabled == communitiesEnabled) {
+      return cached;
+    }
+    final entries = CommunityChatListProjection.build(
+      chats: chatsForFolder(folderId),
+      communityByChat: _communityByChat,
+      communities: _communities,
+      communitiesEnabled: communitiesEnabled,
+    );
+    _peekFolderId = folderId;
+    _peekCommunitiesEnabled = communitiesEnabled;
+    _peekEntries = entries;
+    return entries;
+  }
+
+  /// The chats [folderId] would show, sorted exactly like [chats].
+  List<ChatSummary> chatsForFolder(int? folderId) =>
+      folderId == _selectedFilter.folderId
+      ? _chats
+      : _projectChats(folderId, _visibleChats());
+
+  /// Whether [chat] is pinned in the folder currently shown to the user (the
+  /// Main list's pin when no folder is selected).
+  bool isPinnedInSelectedList(ChatSummary chat) =>
+      isPinnedInList(chat, _chatListForFolderId(_selectedFilter.folderId));
+
+  /// Whether [chat] is pinned inside [folderId]'s own list, for the read-only
+  /// folder peek rendered while a swipe is in flight.
+  bool isPinnedInFolder(ChatSummary chat, int folderId) =>
+      isPinnedInList(chat, _chatListForFolderId(folderId));
+
+  void _invalidateEntriesCaches() {
+    _entriesCache = null;
+    _peekEntries = null;
+  }
+
+  /// The folder choices the tabs, menu, and rail offer. "All" stays in
+  /// [_filters] for internal fallbacks but is left out here when
+  /// [hideAllFilter] is set and at least two real folders remain: with a
+  /// single folder the switcher would disappear and strand the list on it.
+  List<ChatFilterOption> get filters {
+    if (!_hideAllFilter) return _filters;
+    if (!identical(_visibleFiltersSource, _filters)) {
+      _visibleFiltersSource = _filters;
+      final folders = [
+        for (final filter in _filters)
+          if (!filter.isAll) filter,
+      ];
+      _visibleFilters = folders.length < 2 ? _filters : folders;
+    }
+    return _visibleFilters;
+  }
+
+  List<ChatFilterOption>? _visibleFiltersSource;
+  List<ChatFilterOption> _visibleFilters = const [];
+  bool _hideAllFilter = false;
+
+  bool get hideAllFilter => _hideAllFilter;
+
+  /// Only records the preference; it never notifies, so the view may set it
+  /// during build. Call [selectFirstVisibleFilterIfHidden] after the frame to
+  /// move off a hidden "All" selection.
+  set hideAllFilter(bool value) {
+    if (_hideAllFilter == value) return;
+    _hideAllFilter = value;
+    _visibleFiltersSource = null;
+  }
+
+  /// Whether the selected filter is "All" although "All" is not offered.
+  bool get selectionHiddenByFilterPreference =>
+      _selectedFilter.isAll && !filters.first.isAll;
+
+  void selectFirstVisibleFilterIfHidden() {
+    if (selectionHiddenByFilterPreference) selectFilter(filters.first);
+  }
+
+  ChatFilterOption get selectedFilter => _selectedFilter;
+  bool get isAllFilter => _selectedFilter.isAll;
+  bool get isInitialLoading => _initialLoading && _chats.isEmpty;
+
+  /// Authoritative store keyed by chat id; `chats` is a sorted projection.
+  final Map<int, ChatSummary> _map = {};
+
+  /// Chats Telegram has made available for community browsing even though the
+  /// active account hasn't joined them. They never enter the main chat list.
+  final Map<int, ChatSummary> _communityDirectoryChats = {};
+  final Set<int> _viewableCommunityChatIds = {};
+  final Set<int> _checkingCommunityChatAccess = {};
+  final Map<int, Map<int, int>> _folderOrders = {};
+
+  /// Pin state local to each folder, mirroring [_folderOrders]. A chat pinned
+  /// in a folder is not pinned in the Main list and vice versa, so the two
+  /// projections can never share one per-row flag.
+  final Map<int, Map<int, bool>> _folderPins = {};
+  final Map<int, bool> _joinedChatCache = {};
+  final Map<String, String> _senderNames = {};
+  final Map<String, Set<int>> _pendingSenderTargets = {};
+  final Map<int, String?> _lastSenderKeys = {};
+  final Set<String> _resolvingSenders = {};
+  final Set<int> _resolvingPeers = {};
+  final Set<int> _resolvingForums = {};
+  final Set<int> _resolvingFolders = {};
+  final Map<int, CommunitySummary> _communities = {};
+  final Map<int, int> _communityByChat = {};
+  final Map<int, int> _chatBySupergroup = {};
+  final Map<int, int> _chatByUser = {};
+
+  /// Every chat that fronts a given user — a peer can have both a private and a
+  /// secret chat. Lets `updateUser` touch only its own chats instead of
+  /// rescanning the whole account once per user during session restore.
+  final Map<int, List<int>> _chatsByPeerUser = {};
+  final Set<int> _communityPreferencesLoaded = {};
+  final Set<int> _loadingCommunityCatalogs = {};
+  final Set<int> _queuedCommunityChats = {};
+  final List<_CommunityLookup> _communityLookupQueue = [];
+  int _communityLookupsInFlight = 0;
+
+  final TdClient _client;
+  StreamSubscription? _sub;
+  bool _listening = false;
+  bool _disposed = false;
+  int? _meId;
+  bool _prefetchingMain = false;
+  final Set<String> _loadingChatLists = {};
+  final Map<String, Future<bool>> _chatListLoadOperations = {};
+  final Map<int, Future<void>> _chatLoadOperations = {};
+  final Set<String> _exhaustedChatLists = {};
+  final ChatListQuery? _queryForTesting;
+  final ChatMembershipResolver? _membershipForTesting;
+
+  /// The account this list belongs to, when the caller already knows it.
+  ///
+  /// Chat ids are account-scoped, so follow-up row hydration must stay pinned
+  /// to the slot that produced the list instead of re-resolving the foreground
+  /// account after a switch. Null keeps the foreground resolution.
+  final int? accountSlot;
+  static const _pageSize = 100;
+  static const _initialPageSize = 36;
+  static const _backgroundHydrateLimit = 60;
+  static const _backgroundPrefetchPasses = 1;
+
+  /// A folder read action has no pagination cursor, so it asks for one large
+  /// page rather than the list's scroll-sized one.
+  static const _folderReadLimit = 1000;
+
+  /// Ceiling for the page a bulk read grows to. `getChats` answers from the
+  /// beginning of the list only, so covering the tail means asking for the
+  /// whole list; a list longer than this would stall the drain between two
+  /// requests, which is worse than the read stopping short. Every realistic
+  /// list fits well inside it.
+  static const _folderReadMaxLimit = 100000;
+
+  /// How many folder chats are read back at once. A folder can hold a
+  /// thousand chats and this runs against a live queue, so the reads go out in
+  /// bounded batches instead of one thousand requests at the same instant.
+  static const _folderReadBatch = 16;
+
+  /// Absolute bound on `loadChats` passes in a bulk folder read. The drain
+  /// normally ends earlier: at TDLib's 404, once the reported total is in
+  /// hand, or as soon as a load adds nothing. `loadChats` may load less than
+  /// the requested limit without being done, so only its 404 proves the list
+  /// is exhausted; this cap just keeps a pathological backend bounded.
+  static const _folderLoadMaxPasses = 256;
+
+  /// Bumped by every bulk read and by [dispose]. A run whose generation no
+  /// longer matches stops before its next request, so a newer action (or a
+  /// disposed list) can never be overtaken by an older one still in flight.
+  int _bulkReadGeneration = 0;
+
+  void onAppear() {
+    if (_disposed || _listening) return;
+    _listening = true;
+    _subscribe();
+    // The device-only pin switch is live: turning it on re-derives the rows,
+    // turning it off releases every row it was holding at the top.
+    LocalPinStore.shared.addListener(_handleLocalPinStoreChange);
+    if (LocalPinStore.shared.unlimitedEnabled) {
+      unawaited(_refreshPinCap());
+      _scheduleLocalPinSync();
+    }
+    final slot = accountSlot;
+    final cachedCommunities = slot == null
+        ? _client.latestCommunityUpdates
+        : _client.latestCommunityUpdatesForClient(_client.clientId(slot) ?? 0);
+    for (final update in cachedCommunities) {
+      final community = update.obj('community');
+      if (community != null) _applyCommunity(community);
+    }
+    _loadFilters();
+    _loadChats(_initialPageSize);
+    _deferWarmCaches();
+  }
+
+  CommunitySummary? community(int communityId) => _communities[communityId];
+
+  List<CommunitySummary> get availableCommunities {
+    final communities = _communities.values
+        .where(
+          (community) =>
+              community.haveAccess &&
+              (chatsInCommunity(community.id).isNotEmpty ||
+                  viewableChatsInCommunity(community.id).isNotEmpty),
+        )
+        .toList();
+    communities.sort(
+      (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+    );
+    return communities;
+  }
+
+  List<ChatSummary> chatsInCommunity(int communityId) {
+    final chats = _map.values
+        .where(
+          (chat) =>
+              _communityByChat[chat.id] == communityId &&
+              (_joinedChatCache[chat.id] ?? true),
+        )
+        .toList();
+    chats.sort(_compare);
+    return chats;
+  }
+
+  List<ChatSummary> viewableChatsInCommunity(int communityId) {
+    final chats = _communityDirectoryChats.values
+        .where(
+          (chat) =>
+              _communityByChat[chat.id] == communityId &&
+              _viewableCommunityChatIds.contains(chat.id),
+        )
+        .toList();
+    chats.sort(_compare);
+    return chats;
+  }
+
+  int? communityForChat(int chatId) => _communityByChat[chatId];
+
+  /// The community a chat row links to from its avatar corner, or null when the
+  /// row stands on its own.
+  CommunitySummary? communityBadgeFor(
+    int chatId, {
+    required bool communitiesEnabled,
+  }) => CommunityRowBadge.communityFor(
+    chatId: chatId,
+    communityByChat: _communityByChat,
+    communities: _communities,
+    communitiesEnabled: communitiesEnabled,
+  );
+
+  void setCommunityCollapsed(int communityId, bool collapsed) {
+    final community = _communities[communityId];
+    if (community == null || community.collapsed == collapsed) return;
+    community.collapsed = collapsed;
+    _scheduleResort();
+    unawaited(_saveCommunityCollapsed(communityId, collapsed));
+  }
+
+  /// Called when the current user's id becomes known so we can flag the
+  /// Saved Messages chat (private chat with yourself).
+  set meId(int? value) {
+    if (_disposed) return;
+    if (_meId == value) return;
+    _meId = value;
+    final store = LocalPinStore.shared;
+    // Device-only pins are account-scoped, so the store follows the account
+    // exactly like the list's other per-account state. Another live list may
+    // own the scope already (it re-scoped the shared store to this same
+    // account), in which case its entries are this list's and the store must
+    // not reload or retire its scope.
+    if (store.activeAccountUserId != value) store.setActiveAccountUserId(value);
+    // A different account means different chats, a different pin cap and a
+    // different set of device-only pins; drop this list's bookkeeping.
+    _invalidateLocalPinState();
+    if (value == null) return;
+    for (final s in _map.values) {
+      s.isSavedMessages = s.peerUserId == value;
+    }
+    if (LocalPinStore.shared.unlimitedEnabled) {
+      unawaited(_refreshPinCap());
+      _scheduleLocalPinSync();
+    }
+    _resort();
+  }
+
+  @override
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    _listening = false;
+    // Also strands any bulk read whose requests are still in flight.
+    _bulkReadGeneration++;
+    LocalPinStore.shared.removeListener(_handleLocalPinStoreChange);
+    _sub?.cancel();
+    _sub = null;
+    _resortTimer?.cancel();
+    _resortTimer = null;
+    _badgeTimer?.cancel();
+    _badgeTimer = null;
+    _localPinSyncTimer?.cancel();
+    _localPinSyncTimer = null;
+    _localPinPruneTimer?.cancel();
+    _localPinPruneTimer = null;
+    super.dispose();
+  }
+
+  // MARK: - Loading
+
+  /// The chat list the user is currently looking at: Main when no folder is
+  /// selected, the folder's own list otherwise. Pin toggles and pin reads for
+  /// the visible list must go through here so each list keeps its own state.
+  Map<String, dynamic> get _activeChatList => _selectedFilter.folderId == null
+      ? {'@type': 'chatListMain'}
+      : {'@type': 'chatListFolder', 'chat_folder_id': _selectedFilter.folderId};
+
+  Map<String, dynamic>? _chatListForFolderId(int? folderId) => folderId == null
+      ? null
+      : {'@type': 'chatListFolder', 'chat_folder_id': folderId};
+
+  /// Whether [chat] is pinned in [chatList]'s own list. Null [chatList] means
+  /// the Main list, where [ChatSummary.isPinned] already lives.
+  bool isPinnedInList(ChatSummary chat, Map<String, dynamic>? chatList) {
+    if (chatList == null || chatList.type != 'chatListFolder') {
+      return chat.isPinned;
+    }
+    final folderId = chatList.integer('chat_folder_id');
+    if (folderId == null) return chat.isPinned;
+    return _folderPins[folderId]?[chat.id] ?? false;
+  }
+
+  /// Pin state for the chat list a row action was invoked on, captured when the
+  /// action starts so a later folder switch can never redirect the rollback.
+  _PinTarget _pinTargetForCurrentList() => _PinTarget(
+    chatList: _activeChatList,
+    isPinned: (chat) => isPinnedInList(chat, _activeChatList),
+    apply: _applyPinForList,
+  );
+
+  void _applyPinForList(Map<String, dynamic> chatList, int chatId, bool value) {
+    if (chatList.type != 'chatListFolder') {
+      _mutate(chatId, (s) => s.isPinned = value);
+      return;
+    }
+    final folderId = chatList.integer('chat_folder_id');
+    if (folderId == null) return;
+    final pins = _folderPins.putIfAbsent(folderId, () => {});
+    pins[chatId] = value;
+  }
+
+  void _loadFilters() {
+    // The cached bootstrap update belongs to the foreground account. A pinned
+    // list must read its own account's chat folders, never the foreground's.
+    final slot = accountSlot;
+    final cached = slot == null
+        ? _client.latestChatFoldersUpdate
+        : _client.latestChatFoldersUpdateForClient(_client.clientId(slot) ?? 0);
+    if (cached != null) _applyChatFolders(cached);
+  }
+
+  void _applyChatFolders(Map<String, dynamic> object) {
+    final raw =
+        object.objects('chat_folders') ??
+        object.objects('chat_folder_infos') ??
+        const <Map<String, dynamic>>[];
+    final folders = <ChatFilterOption>[
+      const ChatFilterOption(title: AppStringKeys.topicChatAllFilter),
+    ];
+    for (final folder in raw) {
+      final id = folder.integer('id') ?? folder.integer('chat_folder_id');
+      if (id == null) continue;
+      final title = _folderTitle(folder, id);
+      ChatFilterOption? previous;
+      for (final candidate in _filters) {
+        if (candidate.folderId == id) {
+          previous = candidate;
+          break;
+        }
+      }
+      folders.add(
+        ChatFilterOption(
+          title: title,
+          folderId: id,
+          iconName: folder.obj('icon')?.str('name') ?? 'Custom',
+          unreadChatCount: previous?.unreadChatCount ?? 0,
+          hasUnmutedUnread: previous?.hasUnmutedUnread ?? false,
+        ),
+      );
+    }
+    _filters = folders;
+    if (_selectedFilter.folderId != null &&
+        !_filters.any((f) => f.folderId == _selectedFilter.folderId)) {
+      _selectedFilter = _filters.first;
+      _loadChats(_pageSize);
+      _prefetchMainChats();
+      _resort();
+    }
+    _selectedFilter = _filters.firstWhere(
+      (filter) => filter.folderId == _selectedFilter.folderId,
+      orElse: () => _filters.first,
+    );
+    if (selectionHiddenByFilterPreference) {
+      selectFilter(filters.first);
+    }
+    _refreshFolderUnreadCounts();
+    _notifyIfAlive();
+  }
+
+  String _folderTitle(Map<String, dynamic> folder, int id) =>
+      folder.obj('name')?.obj('text')?.str('text') ??
+      folder.obj('title')?.str('text') ??
+      folder.str('title') ??
+      folder.str('name') ??
+      AppStrings.t(AppStringKeys.chatInfoFolderName, {'value1': id});
+
+  void _ensureFolderOption(int id) {
+    if (_filters.any((f) => f.folderId == id)) return;
+    _filters = [
+      ..._filters,
+      ChatFilterOption(
+        title: AppStrings.t(AppStringKeys.chatInfoFolderName, {'value1': id}),
+        folderId: id,
+      ),
+    ];
+    _notifyIfAlive();
+    if (_resolvingFolders.contains(id)) return;
+    _resolvingFolders.add(id);
+    _client
+        .query({'@type': 'getChatFolder', 'chat_folder_id': id})
+        .then((folder) {
+          if (_disposed) return;
+          _resolvingFolders.remove(id);
+          final option = ChatFilterOption(
+            title: _folderTitle(folder, id),
+            folderId: id,
+            iconName: folder.obj('icon')?.str('name') ?? 'Custom',
+          );
+          _filters = [
+            for (final filter in _filters)
+              filter.folderId == id ? option : filter,
+          ];
+          if (_selectedFilter.folderId == id) {
+            _selectedFilter = option;
+          }
+          _refreshFolderUnreadCounts();
+          _notifyIfAlive();
+        })
+        .catchError((_) {
+          _resolvingFolders.remove(id);
+        });
+  }
+
+  void selectFilter(ChatFilterOption filter) {
+    if (filter.folderId == _selectedFilter.folderId) return;
+    _selectedFilter = filter;
+    _loadChats(_pageSize);
+    if (filter.isAll) {
+      _prefetchMainChats();
+    }
+    _resort();
+  }
+
+  void selectAllFilter() {
+    if (_selectedFilter.isAll) return;
+    _selectedFilter = _filters.first;
+    _loadChats(_pageSize);
+    _prefetchMainChats();
+    _resort();
+  }
+
+  String _chatListKey(Map<String, dynamic> list) =>
+      switch (list.type ?? list['@type']) {
+        'chatListFolder' => 'folder:${list.integer('chat_folder_id') ?? 0}',
+        'chatListArchive' => 'archive',
+        _ => 'main',
+      };
+
+  Future<bool> _loadChatList(Map<String, dynamic> list, int limit) async {
+    if (_disposed) return false;
+    final key = _chatListKey(list);
+    if (_loadingChatLists.contains(key) || _exhaustedChatLists.contains(key)) {
+      return false;
+    }
+    _loadingChatLists.add(key);
+    try {
+      await _chatListQuery({
+        '@type': 'loadChats',
+        'chat_list': list,
+        'limit': limit,
+      });
+      if (_disposed) return false;
+      return true;
+    } catch (error) {
+      if (error is TdError && error.code == 404) {
+        _exhaustedChatLists.add(key);
+      }
+      return false;
+    } finally {
+      _loadingChatLists.remove(key);
+    }
+  }
+
+  void _loadChats(int limit) {
+    _loadAndHydrateChatList(_activeChatList, limit);
+  }
+
+  void _deferWarmCaches() {
+    Future<void>.delayed(const Duration(milliseconds: 1500), () {
+      if (!_listening) return;
+      _loadArchive(_pageSize);
+    });
+    Future<void>.delayed(const Duration(seconds: 5), () {
+      if (!_listening) return;
+      if (_selectedFilter.isAll) _prefetchMainChats();
+    });
+  }
+
+  void _prefetchMainChats() {
+    if (_prefetchingMain || _exhaustedChatLists.contains('main')) return;
+    _prefetchingMain = true;
+    Future<void>(() async {
+      var passes = 0;
+      while (!_exhaustedChatLists.contains('main') &&
+          _listening &&
+          passes < _backgroundPrefetchPasses) {
+        passes += 1;
+        final loaded = await _loadAndHydrateChatList(
+          {'@type': 'chatListMain'},
+          _pageSize,
+          hydrateLimit: _backgroundHydrateLimit,
+        );
+        if (!loaded && !_loadingChatLists.contains('main')) break;
+        await Future<void>.delayed(const Duration(milliseconds: 300));
+      }
+      _prefetchingMain = false;
+    });
+  }
+
+  void _loadArchive(int limit) {
+    _loadAndHydrateChatList({'@type': 'chatListArchive'}, limit);
+  }
+
+  void loadMore() => _loadChats(_pageSize);
+
+  /// Warms [folderId] so a folder swipe reveals a populated list instead of one
+  /// that fills in after the switch has already landed.
+  void prefetchFolder(int? folderId) {
+    if (_disposed) return;
+    _loadAndHydrateChatList(
+      folderId == null
+          ? {'@type': 'chatListMain'}
+          : {'@type': 'chatListFolder', 'chat_folder_id': folderId},
+      _pageSize,
+    );
+  }
+
+  Future<void> refresh() async {
+    if (_disposed) return;
+    _exhaustedChatLists.remove(_chatListKey(_activeChatList));
+    _exhaustedChatLists.remove('archive');
+    _loadFilters();
+    await Future.wait([
+      _loadAndHydrateChatList(_activeChatList, _pageSize),
+      _loadAndHydrateChatList({'@type': 'chatListArchive'}, _pageSize),
+    ]);
+    if (_disposed) return;
+    if (_selectedFilter.isAll) _prefetchMainChats();
+    _resort();
+  }
+
+  Future<bool> _loadAndHydrateChatList(
+    Map<String, dynamic> list,
+    int limit, {
+    int? hydrateLimit,
+  }) {
+    final key = _chatListKey(list);
+    final existing = _chatListLoadOperations[key];
+    if (existing != null) return existing;
+
+    late final Future<bool> tracked;
+    final operation = _performLoadAndHydrateChatList(
+      list,
+      loadLimit: limit,
+      hydrateLimit: hydrateLimit ?? limit,
+    );
+    tracked = operation.whenComplete(() {
+      if (identical(_chatListLoadOperations[key], tracked)) {
+        _chatListLoadOperations.remove(key);
+      }
+    });
+    _chatListLoadOperations[key] = tracked;
+    return tracked;
+  }
+
+  Future<bool> _performLoadAndHydrateChatList(
+    Map<String, dynamic> list, {
+    required int loadLimit,
+    required int hydrateLimit,
+  }) async {
+    final listKey = _chatListKey(list);
+    final isInitialActiveLoad =
+        _initialLoading && listKey == _chatListKey(_activeChatList);
+    // `loadChats` may wait on a reconnect even though TDLib already has a
+    // current local page. Hydrate that page concurrently so launch can paint
+    // real rows immediately, then hydrate once more after loadChats settles.
+    // The per-list operation still stays atomic, so scroll pagination cannot
+    // insert an older getChats snapshot between these two passes.
+    final load = _loadChatList(list, loadLimit);
+    if (isInitialActiveLoad) {
+      await _hydrateChatList(list, limit: hydrateLimit, refreshExisting: true);
+    }
+    final loaded = await load;
+    await _hydrateChatList(
+      list,
+      limit: hydrateLimit,
+      refreshExisting: isInitialActiveLoad,
+    );
+    return loaded;
+  }
+
+  Future<void> _hydrateChatList(
+    Map<String, dynamic> list, {
+    required int limit,
+    bool refreshExisting = false,
+  }) async {
+    if (_disposed) return;
+    final listKey = _chatListKey(list);
+    final isActiveHydration = listKey == _chatListKey(_activeChatList);
+    final shouldRefreshExisting =
+        isActiveHydration && (_initialLoading || refreshExisting);
+    try {
+      final res = await _chatListQuery({
+        '@type': 'getChats',
+        'chat_list': list,
+        'limit': limit,
+      });
+      if (_disposed) return;
+      final ids = res.int64Array('chat_ids') ?? const <int>[];
+      await Future.wait<void>([
+        for (final id in ids)
+          _ensureChatLoaded(id, refresh: shouldRefreshExisting),
+      ]);
+      if (_disposed || listKey != _chatListKey(_activeChatList)) return;
+      if (_initialLoading) {
+        _finishInitialLoadingIfNeeded();
+        _resort();
+      }
+    } catch (_) {
+      if (_disposed || listKey != _chatListKey(_activeChatList)) return;
+      if (_initialLoading) {
+        _finishInitialLoadingIfNeeded();
+        _resort();
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>> _chatListQuery(Map<String, dynamic> request) {
+    final queryForTesting = _queryForTesting;
+    if (queryForTesting != null) return queryForTesting(request);
+    final slot = accountSlot;
+    return slot == null
+        ? _client.query(request)
+        : _client.queryForSlot(request, slot);
+  }
+
+  // MARK: - Row actions (swipe)
+
+  void togglePin(ChatSummary chat) {
+    if (LocalPinStore.shared.unlimitedEnabled) {
+      unawaited(_togglePinUnlimited(chat));
+      return;
+    }
+    _togglePinOnServer(chat);
+  }
+
+  /// Pins [chat] on the device when the server cannot take the pin.
+  ///
+  /// The server pin cap counts the whole account's pinned chats, not the
+  /// visible list, and a chat with no position at all would be refused with a
+  /// cannot-pin error — a device-only pin is the only way those gestures can
+  /// work. Everything else, including unpinning a server pin, stays on the
+  /// server so the list keeps matching Telegram.
+  Future<void> _togglePinUnlimited(ChatSummary chat) async {
+    final store = LocalPinStore.shared;
+    // The gesture is issued for the account the list shows now; both awaited
+    // writes below can span a re-scope of the shared store. A store scoped to
+    // another account (this list's own account not known yet, or replaced)
+    // says nothing about this row, so the gesture stays a plain server pin.
+    if (!_storeIsOwnAccount) {
+      _togglePinOnServer(chat);
+      return;
+    }
+
+    // The device-pin band, its cap and the global device-pin fallback are
+    // Main-list concepts: the cap counts Main's server pins and the fallback
+    // releases rows on Main's order. A folder action through them would
+    // reorder the Main list instead of the folder the user acted on, so a
+    // folder toggle stays a plain server toggle in its own list.
+    if (_selectedFilter.folderId != null) {
+      _togglePinOnServer(chat);
+      return;
+    }
+    final epoch = _pinEpoch;
+    final generation = store.loadGeneration;
+    if (store.isLocallyPinned(chat.id)) {
+      final dropped = await store.unpin(
+        chat.id,
+        expectedGeneration: generation,
+      );
+      if (!_ownsPinPass(epoch, generation)) return;
+      if (!dropped) return;
+      // The store no longer owns the id, so the row has to be released here.
+      // A server position for the chat (if any) is what put it where it was:
+      // the order it carried while device-pinned was this store's band order,
+      // so putting the row back on its own position is the same fallback the
+      // prune pass uses — and the next position update confirms the state.
+      _mutate(chat.id, (s) {
+        s.isPinned = false;
+        s.order = _unpinnedOrderOf(chat.id) ?? s.order;
+      });
+      _resort();
+      return;
+    }
+    final atCap = _pinCap > 0 && _serverPinnedCount() >= _pinCap;
+    final placeOnDevice = !chat.isPinned && (atCap || chat.order <= 0);
+    if (!placeOnDevice) {
+      _togglePinOnServer(chat);
+      return;
+    }
+    final placed = await store.pin(
+      chat.id,
+      serverPinOrder: _localPinSnapshot(chat),
+      pinnedAt: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      expectedGeneration: generation,
+    );
+    if (!_ownsPinPass(epoch, generation)) return;
+    if (!placed) return;
+    _scheduleLocalPinSync();
+    _resort();
+  }
+
+  /// The band base this pin is recorded with.
+  ///
+  /// The band has to sit above every order the list is currently sorting
+  /// above — a pinned chat carries its pin time as its order, which the tapped
+  /// chat's own last-message order can be far below — and it never walks back
+  /// down: the store's largest recorded snapshot keeps today's bands below the
+  /// blocks of pins added later.
+  int _localPinSnapshot(ChatSummary chat) {
+    final store = LocalPinStore.shared;
+    var snapshot = chat.order;
+    for (final s in _map.values) {
+      if (!s.isPinned) continue;
+      if (store.isLocallyPinned(s.id)) continue;
+      if (s.order > snapshot) snapshot = s.order;
+    }
+    if (store.maxServerPinOrder > snapshot) {
+      snapshot = store.maxServerPinOrder;
+    }
+    return snapshot;
+  }
+
+  /// The order a chat carries as its own, with any device-only band order
+  /// taken back off.
+  ///
+  /// While a local pin is active the summary's order is the band order the
+  /// store assigned — the live position only arrives after that. Releasing the
+  /// pin has to put the row back on its own position, and the largest server
+  /// order recorded for it is the best value at hand; `_applyPosition` refines
+  /// it on the next position update. Null when nothing about the chat is
+  /// known, so the caller keeps the current order.
+  int? _unpinnedOrderOf(int id) {
+    // The chat's own last main-list position is the most precise value; it is
+    // also what a device-pinned row's order is restored to.
+    var order = 0;
+    for (final p in _lastPositions[id] ?? const <Map<String, dynamic>>[]) {
+      final candidate = _positiveOrderOfPosition(p);
+      if (candidate != null && candidate > order) order = candidate;
+    }
+    if (order <= 0 && _serverPinnedIds.contains(id)) {
+      order = _highestServerPinOrder();
+    }
+    if (order <= 0) {
+      final entry = LocalPinStore.shared.entryFor(id);
+      order = entry == null || entry.serverPinOrder <= 0
+          ? 0
+          : entry.serverPinOrder;
+    }
+    return order > 0 ? order : null;
+  }
+
+  /// The highest order among the chats the server itself has pinned.
+  int _highestServerPinOrder() {
+    var max = 0;
+    for (final s in _map.values) {
+      if (!_serverPinnedIds.contains(s.id)) continue;
+      if (s.order > max) max = s.order;
+    }
+    return max;
+  }
+
+  void _togglePinOnServer(ChatSummary chat) {
+    final target = _pinTargetForCurrentList();
+    // The toggle reflects the list the user is acting on: a folder row can
+    // disagree with the Main list's chat.isPinned in both directions, and
+    // deriving from Main regresses #275's list-specific state even with the
+    // extra-pin runtime switch off.
+    final newValue = !target.isPinned(chat);
+    final id = chat.id;
+    target.apply(target.chatList, id, newValue);
+    _resort();
+
+    _client
+        .query({
+          '@type': 'toggleChatIsPinned',
+          // Pin in the list the user is looking at — pinning from a folder
+          // filter used to silently mutate the Main list instead.
+          'chat_list': target.chatList,
+          'chat_id': id,
+          'is_pinned': newValue,
+        })
+        .catchError((Object error) async {
+          // Failure: revert and restore the chat's true position from TDLib.
+          target.apply(target.chatList, id, !newValue);
+          try {
+            final raw = await _client.query({
+              '@type': 'getChat',
+              'chat_id': id,
+            });
+            final fresh = TDParse.chat(raw);
+            if (fresh != null) _map[id] = fresh;
+          } catch (_) {}
+          notice = _pinErrorNotice(error);
+          _resort();
+          return <String, dynamic>{};
+        });
+    // A server pin is pinned on every device; in a build with device-only
+    // pins it also has to release a local entry for this chat, which the next
+    // sync does from the position TDLib is about to send.
+    _scheduleLocalPinSync();
+  }
+
+  /// How many chats the account has pinned on the server.
+  ///
+  /// The server cap counts every pinned chat in the account, not only the ones
+  /// the current list shows, so this walks the chat store rather than the
+  /// sorted projection. A stored device-only pin never counts: if the server
+  /// had pinned that chat the sync would have dropped the entry.
+  int _serverPinnedCount() {
+    var count = 0;
+    for (final summary in _map.values) {
+      if (summary.isPinned &&
+          !LocalPinStore.shared.isLocallyPinned(summary.id)) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  // MARK: - Device-only pins
+
+  /// The server's pin cap, read once per account from the
+  /// `pinned_chat_count_max` option.
+  ///
+  /// Before the option update arrives (or when nothing has answered yet) this
+  /// is the server's default cap. A value <= 0 means the server does not cap
+  /// pins at all, and then every pin is a normal server pin.
+  int _pinCap = 5;
+  Timer? _localPinSyncTimer;
+  Timer? _localPinPruneTimer;
+  bool _pinCapRequested = false;
+
+  Future<void> _refreshPinCap() async {
+    if (_disposed || _pinCapRequested) return;
+    _pinCapRequested = true;
+    // The answer belongs to the account this request was issued for. A
+    // delayed reply lands after a re-scope often enough — every list shares
+    // the one store — that writing it straight into `_pinCap` would price the
+    // replacement account's pins with the old account's cap.
+    final epoch = _pinEpoch;
+    final generation = LocalPinStore.shared.loadGeneration;
+    try {
+      final option = await _chatListQuery({
+        '@type': 'getOption',
+        'name': 'pinned_chat_count_max',
+      });
+      if (!_ownsPinPass(epoch, generation)) return;
+      final value = option.integer('value');
+      if (value != null) _pinCap = value;
+    } catch (_) {
+      // Keep the default cap; pins beyond it simply take the local path if
+      // the server refuses them, and the toggle's failure path still applies
+      // when the switch is off.
+    }
+  }
+
+  /// Whether an effect that started under [epoch] (this list's pin
+  /// bookkeeping) and [generation] (the shared store's account scope) still
+  /// belongs to the account it was issued for.
+  ///
+  /// The store is a singleton: another live list can re-scope it without
+  /// touching this model's [meId], so an unchanged [_pinEpoch] alone is not an
+  /// ownership proof. Every asynchronous local-pin path re-checks this before
+  /// it mutates a row, writes a preference or projects state.
+  bool _ownsPinPass(int epoch, int generation) =>
+      !_disposed &&
+      _pinEpoch == epoch &&
+      LocalPinStore.shared.loadGeneration == generation &&
+      _storeIsOwnAccount;
+
+  /// Whether the shared store is scoped to this list's account.
+  ///
+  /// Chat ids are account-scoped by Telegram, so a store holding another
+  /// account's entries says nothing about this list's rows even when the ids
+  /// collide. A list that does not know its own account yet owns nothing.
+  bool get _storeIsOwnAccount {
+    final meId = _meId;
+    return meId != null && LocalPinStore.shared.activeAccountUserId == meId;
+  }
+
+  /// The cap the toggle prices server pins against; tests only.
+  @visibleForTesting
+  int get pinCapForTesting => _pinCap;
+
+  void _invalidateLocalPinState() {
+    _pinEpoch++;
+    _pinCapRequested = false;
+    _localPinSyncTimer?.cancel();
+    _localPinSyncTimer = null;
+    _localPinPruneTimer?.cancel();
+    _localPinPruneTimer = null;
+    _localPinsToDrop.clear();
+    _serverPinnedIds.clear();
+    _lastPositions.clear();
+    _pinCap = 5;
+  }
+
+  /// Bumped whenever the pin bookkeeping is reset (a new account, a fresh
+  /// list). Async passes capture it and stop if it moved under them: their
+  /// chat ids and preference keys belonged to the account they started with.
+  int _pinEpoch = 0;
+
+  /// Drops device-only pins for chats that have authoritatively left the list
+  /// or no longer exist.
+  ///
+  /// The only source is [_localPinsToDrop] — the list-membership updates the
+  /// session received: a chat removed from the main list (archived or deleted)
+  /// or reported gone (`mithkaChatLeft`). There is deliberately no catch-all
+  /// sweep over the store's entries: an entry whose chat this session never
+  /// loaded is indistinguishable from a chat deleted while the device was
+  /// offline, and dropping it would delete a live pin on a partially loaded
+  /// list. Such a dormant entry is invisible (the chat has no summary, so it
+  /// draws no row) and is cleaned up the moment a membership update names the
+  /// id.
+  Future<void> _pruneLocalPins() async {
+    _localPinPruneTimer = null;
+    if (_disposed) return;
+    final store = LocalPinStore.shared;
+    if (!store.unlimitedEnabled) {
+      _localPinsToDrop.clear();
+      return;
+    }
+
+    final dropped = _localPinsToDrop.toList();
+    _localPinsToDrop.clear();
+    // The prune writes to the shared store, so it owns the scope it started
+    // in just like the sync pass does.
+    final epoch = _pinEpoch;
+    final generation = store.loadGeneration;
+    for (final id in dropped) {
+      if (!_ownsPinPass(epoch, generation)) return;
+      await store.unpin(id, expectedGeneration: generation);
+      if (!_ownsPinPass(epoch, generation)) return;
+    }
+
+    // No catch-all sweep; see the doc comment. Dormant entries for chats the
+    // session never learned stay until an authoritative membership update
+    // names them.
+    if (dropped.isEmpty) return;
+    if (!_ownsPinPass(epoch, generation)) return;
+    // A row kept at the top by a pin that no longer exists has to fall back
+    // to the position its own list gave it.
+    for (final id in dropped) {
+      if (!_ownsPinPass(epoch, generation)) return;
+      if (_serverPinnedIds.contains(id)) continue;
+      _mutate(id, (s) {
+        s.isPinned = false;
+        s.order = _unpinnedOrderOf(id) ?? s.order;
+      });
+    }
+    if (!_ownsPinPass(epoch, generation)) return;
+    _resort();
+  }
+
+  /// Applies a change of the device-only pin store.
+  ///
+  /// Turning the switch on makes the stored pins hold their rows; turning it
+  /// off releases every row of the band they were on.
+  void _handleLocalPinStoreChange() {
+    if (_disposed) return;
+    final store = LocalPinStore.shared;
+    if (store.unlimitedEnabled) {
+      _scheduleLocalPinSync();
+      return;
+    }
+    // Every projection must own the account scope it reads: the shared store
+    // belongs to whichever account took it last, so its `pinnedChatIds` while
+    // scoped to another account cannot release this list's rows (ids collide
+    // across accounts). Without this, a re-scoped store's colliding entries
+    // would project a foreign band release onto this list's rows.
+    if (!_storeIsOwnAccount) return;
+    for (final id in store.pinnedChatIds) {
+      if (_serverPinnedIds.contains(id)) continue;
+      _mutate(id, (s) {
+        s.isPinned = false;
+        s.order = _unpinnedOrderOf(id) ?? s.order;
+      });
+    }
+    _resort();
+  }
+
+  /// Chats whose local pin is already known to be obsolete, applied by
+  /// [_pruneLocalPins] on its debounce.
+  final Set<int> _localPinsToDrop = {};
+
+  void _scheduleLocalPinPrune({int? dropped}) {
+    if (_disposed) return;
+    if (!LocalPinStore.shared.unlimitedEnabled) return;
+    if (dropped != null) _localPinsToDrop.add(dropped);
+    if (_localPinPruneTimer != null) return;
+    _localPinPruneTimer = Timer(
+      const Duration(milliseconds: 50),
+      _pruneLocalPins,
+    );
+  }
+
+  /// Recomputes the effective pin state of the visible chats from the store.
+  ///
+  /// A stored local gets `isPinned` with its band order, which puts it above
+  /// every server pin because the band is built from the largest recorded
+  /// server order. A chat the server itself now pins owns its row again, so
+  /// the local entry is dropped — the server pin outlived it. Every step is
+  /// derived from the stored entries, so running this twice for the same state
+  /// changes nothing, and only a changed summary notifies.
+  Future<void> _syncLocalPinState() async {
+    if (_disposed) return;
+    final store = LocalPinStore.shared;
+    if (!store.unlimitedEnabled) return;
+    // One pass, one scope: the store is a singleton shared by every live list,
+    // and another list can re-scope it without `set meId` on this one — so the
+    // store's load generation, not just this model's epoch, decides whether a
+    // later effect belongs to the account this pass started in.
+    final epoch = _pinEpoch;
+    final generation = store.loadGeneration;
+    var changed = false;
+
+    bool ownsPass() => _ownsPinPass(epoch, generation);
+
+    // The server re-pinned a chat that still has a local entry: the server's
+    // pin is the better one, so the entry goes.
+    final adopted = store.pinnedChatIds
+        .where(_serverPinnedIds.contains)
+        .toList();
+    for (final id in adopted) {
+      if (!ownsPass()) return;
+      final dropped = await store.unpin(id, expectedGeneration: generation);
+      if (!ownsPass()) return;
+      // A refused unpin (the entry vanished between the snapshot and the
+      // write) leaves the row alone: nothing about this chat changed.
+      if (!dropped) continue;
+      // The server owns the row now: it keeps sorting on its own position,
+      // which is what the position update that adopted it carried.
+      _mutate(id, (s) => s.order = _unpinnedOrderOf(id) ?? s.order);
+      changed = true;
+    }
+
+    // Every stored pin holds its row at the top of the list. The band is the
+    // order to restore to; a live position that moved past it (a server pin
+    // elsewhere in the list) is never pulled back down — the comparator still
+    // sorts every device-only pin above every server pin.
+    final pinned = store.pinnedChatIds.toList();
+    for (final id in pinned) {
+      if (!ownsPass()) return;
+      final s = _map[id];
+      if (s == null) continue;
+      final band = store.effectiveOrder(id, s.order);
+      final order = band > s.order ? band : s.order;
+      if (!s.isPinned || s.order != order) {
+        s.isPinned = true;
+        s.order = order;
+        changed = true;
+      }
+    }
+
+    // The last gate before the projection: a pass whose scope was retired
+    // while it computed must not resort the replacement account's rows.
+    if (changed && ownsPass()) _scheduleResort();
+  }
+
+  /// Chats whose `chatListMain` position says the server pinned them.
+  ///
+  /// This is what separates the server's own pins from the rows this device
+  /// pins: a position that reports `is_pinned` true means Telegram owns the
+  /// pin, so any local entry for that chat is obsolete.
+  final Set<int> _serverPinnedIds = {};
+
+  /// The last main-list position seen for each chat, in the raw shape TDLib
+  /// sent it, so releasing a device-only pin can put the row back on its own
+  /// order without a refetch.
+  final Map<int, List<Map<String, dynamic>>> _lastPositions = {};
+
+  /// The positive main-list order a raw position carries, if any.
+  static int? _positiveOrderOfPosition(Map<String, dynamic> position) {
+    final list = position.obj('list');
+    if (list?.type != 'chatListMain') return null;
+    final order = position.int64('order');
+    return order != null && order > 0 ? order : null;
+  }
+
+  void _scheduleLocalPinSync() {
+    if (_disposed) return;
+    if (!LocalPinStore.shared.unlimitedEnabled) return;
+    if (_localPinSyncTimer != null) return;
+    // TDLib resolves the pin a moment after our own toggle, and both orderings
+    // land on the same state: the position says pinned and the store drops its
+    // entry, or the two arrive apart and the sync follows the position.
+    _localPinSyncTimer = Timer(
+      const Duration(milliseconds: 50),
+      _runLocalPinSync,
+    );
+  }
+
+  void _runLocalPinSync() {
+    _localPinSyncTimer = null;
+    if (_disposed) return;
+    unawaited(_syncLocalPinState());
+  }
+
+  void markUnread(ChatSummary chat) {
+    _client.send({
+      '@type': 'toggleChatIsMarkedAsUnread',
+      'chat_id': chat.id,
+      'is_marked_as_unread': true,
+    });
+  }
+
+  /// Moves an archived chat back to the main list without deleting history.
+  void unarchive(ChatSummary chat) {
+    _chatListQuery({
+      '@type': 'addChatToList',
+      'chat_id': chat.id,
+      'chat_list': {'@type': 'chatListMain'},
+    }).catchError((Object _) => <String, dynamic>{});
+  }
+
+  /// Moves a main-list chat into the archive without deleting history.
+  ///
+  /// [owner] must be pinned at preview/menu open. A missing or expired owner
+  /// drops the request; otherwise it is dispatched
+  /// through [ChatPreviewOwner.query] (bound to `owner.clientId`).
+  void archive(ChatSummary chat, {required ChatPreviewOwner? owner}) {
+    if (_disposed) return;
+    if (owner == null || !owner.isCurrent) return;
+    final request = <String, dynamic>{
+      '@type': 'addChatToList',
+      'chat_id': chat.id,
+      'chat_list': {'@type': 'chatListArchive'},
+    };
+    final send = owner.query;
+    send(request).catchError((Object _) => <String, dynamic>{});
+  }
+
+  void toggleMute(ChatSummary chat) {
+    final newValue = !chat.isMuted;
+    final id = chat.id;
+    _mutate(id, (summary) => summary.isMuted = newValue);
+    _refreshBadges();
+
+    _client
+        .query({
+          '@type': 'setChatNotificationSettings',
+          'chat_id': id,
+          'notification_settings': inheritedChatNotificationSettings(
+            muteFor: newValue ? 2147483647 : 0,
+          ),
+        })
+        .catchError((Object _) {
+          _mutate(id, (summary) => summary.isMuted = !newValue);
+          notice = AppStrings.t(AppStringKeys.chatDeleteActionsFailed, {
+            'value1': AppStrings.t(
+              newValue ? AppStringKeys.callMute : AppStringKeys.chatUnmute,
+            ),
+          });
+          _refreshBadges();
+          return <String, dynamic>{};
+        });
+  }
+
+  void markRead(ChatSummary chat) => _markRead(chat, refresh: true);
+
+  /// Clears one chat's read state. Read state is not a sort key, so this owes
+  /// the list [_refreshBadges] and nothing else. [refresh] lets
+  /// [markChatsRead] pay for one refresh over the whole batch instead of one per
+  /// chat.
+  void _markRead(ChatSummary chat, {required bool refresh}) {
+    if (chat.unreadCount <= 0 && !chat.isMarkedUnread) return;
+    final previousUnread = chat.unreadCount;
+    final previousMarked = chat.isMarkedUnread;
+    final previousLastReadInboxMessageId = chat.lastReadInboxMessageId;
+    _mutate(chat.id, (s) {
+      s.unreadCount = 0;
+      s.isMarkedUnread = false;
+      if (s.lastMessageId > s.lastReadInboxMessageId) {
+        s.lastReadInboxMessageId = s.lastMessageId;
+      }
+    });
+    if (refresh) _refreshBadges();
+
+    if (previousMarked) {
+      _client.send({
+        '@type': 'toggleChatIsMarkedAsUnread',
+        'chat_id': chat.id,
+        'is_marked_as_unread': false,
+      });
+    }
+    if (previousUnread <= 0) return;
+    _forceReadChat(chat).catchError((_) {
+      _mutate(chat.id, (s) {
+        s.unreadCount = previousUnread;
+        s.isMarkedUnread = previousMarked;
+        s.lastReadInboxMessageId = previousLastReadInboxMessageId;
+      });
+      _refreshBadges();
+    });
+  }
+
+  void markAllRead() {
+    markChatsRead([..._chats, ..._archived]);
+  }
+
+  /// Marks only [chats] read — the archive / filtered assistant badges clear
+  /// their own group, not every chat in the app.
+  void markChatsRead(Iterable<ChatSummary> chats) {
+    final targets = chats
+        .where((chat) => chat.unreadCount > 0 || chat.isMarkedUnread)
+        .toList();
+    if (targets.isEmpty) return;
+    for (final chat in targets) {
+      _markRead(chat, refresh: false);
+    }
+    _refreshBadges();
+  }
+
+  /// Marks every unread chat inside [folderId] read.
+  ///
+  /// A folder that is not the selected one has no summaries in memory, so the
+  /// folder is enumerated through TDLib and each chat's read state and newest
+  /// message id are read back with `getChat`. Read state is not a sort key, so
+  /// the list owes the badges a refresh and nothing else.
+  Future<void> markFolderRead(int folderId) => _markChatListsRead([
+    {'@type': 'chatListFolder', 'chat_folder_id': folderId},
+  ]);
+
+  /// Marks every unread chat of the account read, independent of the folder
+  /// that happens to be selected.
+  ///
+  /// The currently selected list is only a projection: a chat outside it (or
+  /// one this list never loaded) is invisible to [chats] and [archived], so the
+  /// main list and the archive are enumerated through TDLib instead of walked
+  /// in memory.
+  Future<void> markAllChatsRead() => _markChatListsRead(const [
+    {'@type': 'chatListMain'},
+    {'@type': 'chatListArchive'},
+  ]);
+
+  /// A bulk read spans dozens of round trips, so it is pinned to the client it
+  /// started on.
+  ///
+  /// Chat and message ids are account-scoped and `_chatListQuery` resolves the
+  /// foreground client on every call, so an account switch or a disposal
+  /// between two requests used to send the old account's ids as read receipts
+  /// through the replacement account.
+  ({int? clientId, int? slot, ChatListQuery query}) _pinWriteOwner() {
+    final queryForTesting = _queryForTesting;
+    final slot = accountSlot;
+    if (queryForTesting != null) {
+      return (clientId: null, slot: slot, query: queryForTesting);
+    }
+    final client = _client;
+    if (slot == null) {
+      final clientId = client.activeClientId;
+      return (
+        clientId: clientId,
+        slot: null,
+        query: (request) => client.queryTo(request, clientId),
+      );
+    }
+    return (
+      clientId: client.clientId(slot),
+      slot: slot,
+      query: (request) => client.queryForSlot(request, slot),
+    );
+  }
+
+  /// Whether [owner] is still the account (and the client) this run may write
+  /// to: a foreground-pinned run dies with the active client, and a
+  /// slot-pinned one with that slot's client.
+  bool _writeOwnerIsLive(
+    ({int? clientId, int? slot, ChatListQuery query}) owner,
+  ) {
+    if (_disposed) return false;
+    if (_queryForTesting != null) return true;
+    final clientId = owner.clientId;
+    if (clientId == null) return false;
+    final slot = owner.slot;
+    // A foreground-pinned run follows the active client; a slot-pinned one
+    // follows its own slot, because a picker's writes are meant for the source
+    // account even while another slot is in front.
+    return slot == null
+        ? _client.activeClientId == clientId
+        : _client.clientId(slot) == clientId;
+  }
+
+  Future<void> _markChatListsRead(List<Map<String, dynamic>> lists) async {
+    if (_disposed) return;
+    final owner = _pinWriteOwner();
+    final generation = ++_bulkReadGeneration;
+    bool live() =>
+        generation == _bulkReadGeneration && _writeOwnerIsLive(owner);
+    if (!live()) return;
+
+    final ids = <int>[];
+    final seen = <int>{};
+    // `getChats` answers only chats whose position TDLib already loaded, so
+    // the coverage question is "how many of the list's positions are loaded".
+    // `loadChats` may load less than the requested limit without being done —
+    // its 404 is the only proof of exhaustion — so loading and reading
+    // alternate: load, read the whole loaded prefix, and go back for more
+    // until the prefix reaches the reported total, a load adds nothing, or
+    // TDLib says 404. A short read of a still-growing list means "not loaded
+    // yet", never "end of list".
+    for (final list in lists) {
+      final before = ids.length;
+      var limit = _folderReadLimit;
+      var firstPage = true;
+      // This list's coverage, when the backend reports it: how many chats it
+      // holds and how many of them are loaded. TDLib's own `loadChats` and
+      // `getChats` do report `total_count`, so the read page can be sized
+      // exactly; unknown counts fall back to growing the page.
+      var loadedTotal = 0;
+      var loadedPrefix = 0;
+      // Loading is over: TDLib answered 404 (nothing left to load), reported
+      // nothing unloaded, or the request failed. Only the first two prove the
+      // list ended; after a failure the read still covers whatever is loaded,
+      // and the badges that stay behind show what did not get read.
+      var exhausted = false;
+      var noProgressRounds = 0;
+      while (true) {
+        // ---- Load positions until the loaded prefix should cover the page
+        // we are about to read. `loadChats` may load fewer than it was asked
+        // for without reaching the end, so this keeps going until TDLib's 404
+        // or its own "nothing left" report; [_folderLoadMaxPasses] bounds one
+        // round of that, and another round comes around if the read shows
+        // more is still unloaded.
+        if (!exhausted) {
+          var budget = _folderLoadMaxPasses;
+          while (budget-- > 0) {
+            if (!live()) return;
+            final Map<String, dynamic> loaded;
+            try {
+              loaded = await owner.query({
+                '@type': 'loadChats',
+                'chat_list': list,
+                'limit': _folderReadLimit,
+              });
+            } catch (_) {
+              exhausted = true;
+              break;
+            }
+            if (!live()) return;
+            // Counts, when the backend reports them: the list's goal and how
+            // much of it is loaded now. TDLib's own `loadChats` answers a
+            // plain `ok`, so in production these stay unknown and only the
+            // 404 below ends the drain.
+            final total = loaded.integer('total_count');
+            if (total != null && total > loadedTotal) loadedTotal = total;
+            final prefix =
+                loaded.integer('loaded_count') ??
+                loaded.integer('covered_count');
+            if (prefix != null) loadedPrefix = prefix;
+            if (loaded.integer('unloaded_count') == 0) {
+              exhausted = true;
+              break;
+            }
+            // Enough is loaded for the page about to be read, or the whole
+            // list is: no reason to pay another load.
+            if (loadedPrefix > 0 && loadedPrefix - before >= limit) break;
+            if (loadedTotal > 0 && loadedPrefix >= loadedTotal) break;
+          }
+        }
+
+        // ---- Read the loaded prefix whole. `getChats` answers from the
+        // beginning of the list and caps at the requested limit, so the page
+        // grows to the reported total once that is known.
+        if (loadedTotal > limit && loadedTotal <= _folderReadMaxLimit) {
+          limit = loadedTotal;
+        }
+        final page = await _readChatListPage(
+          list,
+          owner.query,
+          limit,
+          live,
+          rethrowFirstFailure: firstPage,
+        );
+        // Null means the read did not produce a page: either the run lost its
+        // account mid-request (stop silently) or a failure struck after the
+        // first page (keep the chats already found).
+        if (page == null) {
+          if (!live()) return;
+          break;
+        }
+        firstPage = false;
+        final pageCovered = page.integer('total_count') ?? 0;
+        if (pageCovered > loadedTotal) loadedTotal = pageCovered;
+        final pageIds = page.int64Array('chat_ids') ?? const <int>[];
+        var added = 0;
+        for (final id in pageIds) {
+          if (seen.add(id)) {
+            ids.add(id);
+            added++;
+          }
+        }
+        final collected = ids.length - before;
+
+        if (loadedTotal > 0) {
+          if (collected >= loadedTotal || collected >= _folderReadMaxLimit) {
+            break;
+          }
+          // The page that first reported the total may have been capped
+          // below it; a bigger read is cheaper than another load round.
+          if (loadedTotal > limit && loadedTotal <= _folderReadMaxLimit) {
+            noProgressRounds = added == 0 ? noProgressRounds + 1 : 0;
+            if (noProgressRounds >= 2) break;
+            continue;
+          }
+          // Loading is over: read what is in hand instead of spinning.
+          // Otherwise another drain round goes looking for the rest.
+          if (exhausted) break;
+          noProgressRounds = added == 0 ? noProgressRounds + 1 : 0;
+          if (noProgressRounds >= 2) break;
+          continue;
+        }
+
+        // No total was ever reported: a short page read after the list was
+        // proven exhausted (TDLib's 404) is the list's own end; a short page
+        // while loading is still in flight may simply have outrun positions
+        // that are still arriving, so it gets another round. One that filled
+        // its limit may have more behind it.
+        if (pageIds.length < limit) {
+          if (exhausted) break;
+          noProgressRounds = added == 0 ? noProgressRounds + 1 : 0;
+          if (noProgressRounds >= 2) break;
+          continue;
+        }
+        if (limit >= _folderReadMaxLimit) break;
+        limit = limit * 2 > _folderReadMaxLimit
+            ? _folderReadMaxLimit
+            : limit * 2;
+      }
+    }
+
+    final raws = <Map<String, dynamic>?>[];
+    for (var start = 0; start < ids.length; start += _folderReadBatch) {
+      final end = start + _folderReadBatch < ids.length
+          ? start + _folderReadBatch
+          : ids.length;
+      final batch = await Future.wait([
+        for (var index = start; index < end; index++)
+          _getChatOrNull(ids[index], owner.query),
+      ]);
+      if (!live()) return;
+      raws.addAll(batch);
+    }
+    final reads = <int, int>{};
+    final marked = <int>[];
+    for (var index = 0; index < ids.length; index++) {
+      final raw = raws[index];
+      if (raw == null) continue;
+      final unread = raw.integer('unread_count') ?? 0;
+      final isMarkedUnread = raw.boolean('is_marked_as_unread') ?? false;
+      if (unread <= 0 && !isMarkedUnread) continue;
+      final id = ids[index];
+      final messageId = raw.obj('last_message')?.int64('id') ?? 0;
+      if (unread > 0 && messageId > 0) reads[id] = messageId;
+      if (isMarkedUnread) marked.add(id);
+      _mutate(id, (chat) {
+        chat.unreadCount = 0;
+        chat.isMarkedUnread = false;
+        if (messageId > chat.lastReadInboxMessageId) {
+          chat.lastReadInboxMessageId = messageId;
+        }
+      });
+    }
+    for (final entry in reads.entries) {
+      // Re-checked before EVERY write: a run that lost its account must not
+      // send this chat's id anywhere, not even once.
+      if (!live()) return;
+      try {
+        await owner.query({
+          '@type': 'viewMessages',
+          'chat_id': entry.key,
+          'message_ids': [entry.value],
+          'force_read': true,
+        });
+      } catch (_) {
+        // One failed chat must not leave the rest of the folder unread.
+      }
+    }
+    for (final id in marked) {
+      if (!live()) return;
+      try {
+        await owner.query({
+          '@type': 'toggleChatIsMarkedAsUnread',
+          'chat_id': id,
+          'is_marked_as_unread': false,
+        });
+      } catch (_) {
+        // The unread messages above were still read.
+      }
+    }
+    if (!live()) return;
+    _refreshBadges();
+  }
+
+  /// Reads one page of a chat list from its beginning.
+  ///
+  /// Null means the run stopped: either its generation or account is gone
+  /// (the caller is already returning), or a failure struck after the first
+  /// page, which keeps the chats already found instead of aborting the whole
+  /// action. [rethrowFirstFailure] makes the very first failure the caller's
+  /// to report, exactly as before.
+  Future<Map<String, dynamic>?> _readChatListPage(
+    Map<String, dynamic> list,
+    ChatListQuery query,
+    int limit,
+    bool Function() live, {
+    required bool rethrowFirstFailure,
+  }) async {
+    if (!live()) return null;
+    final Map<String, dynamic> response;
+    try {
+      response = await query({
+        '@type': 'getChats',
+        'chat_list': list,
+        'limit': limit,
+      });
+    } catch (_) {
+      if (rethrowFirstFailure) rethrow;
+      return null;
+    }
+    return live() ? response : null;
+  }
+
+  Future<Map<String, dynamic>?> _getChatOrNull(
+    int chatId,
+    ChatListQuery query,
+  ) async {
+    try {
+      return await query({'@type': 'getChat', 'chat_id': chatId});
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _forceReadChat(ChatSummary chat) async {
+    var messageId = chat.lastMessageId;
+    if (messageId <= 0) {
+      final raw = await _client.query({'@type': 'getChat', 'chat_id': chat.id});
+      final fresh = TDParse.chat(raw);
+      if (fresh == null) return;
+      messageId = fresh.lastMessageId;
+    }
+    if (messageId <= 0) return;
+    await _client.query({
+      '@type': 'viewMessages',
+      'chat_id': chat.id,
+      'message_ids': [messageId],
+      'force_read': true,
+    });
+  }
+
+  Future<ChatDeleteCapabilities> deleteCapabilities(ChatSummary chat) async {
+    try {
+      final raw = await _client.query({'@type': 'getChat', 'chat_id': chat.id});
+      return chatListDeleteCapabilities(raw);
+    } catch (_) {
+      return const ChatDeleteCapabilities.none();
+    }
+  }
+
+  Future<bool?> resolveIsSavedMessages(ChatSummary chat) async {
+    if (chat.isSavedMessages) return true;
+    if (_meId != null) return chat.peerUserId == _meId;
+    try {
+      final me = await _client.query({'@type': 'getMe'});
+      final userId = me.int64('id');
+      if (userId == null) return null;
+      meId = userId;
+      return chat.peerUserId == userId;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> deleteChat(
+    ChatSummary chat, {
+    ChatDeleteScope scope = ChatDeleteScope.self,
+  }) async {
+    final leavesChat = shouldLeaveBeforeDeletingChat(chat.kind, scope);
+    if (leavesChat) {
+      await leaveChatAndRemoveFromList(
+        chatId: chat.id,
+        query: _client.query,
+        onLeft: () => _client.emitLocalUpdate(chatLeftLocalUpdate(chat.id)),
+      );
+      return;
+    }
+    await _client.query(
+      deleteChatHistoryRequest(chatId: chat.id, scope: scope),
+    );
+  }
+
+  Future<void> clearSavedMessages(ChatSummary chat) async {
+    await _client.query(
+      deleteChatHistoryRequest(
+        chatId: chat.id,
+        scope: ChatDeleteScope.self,
+        removeFromChatList: false,
+      ),
+    );
+    _client.emitLocalUpdate({
+      '@type': 'mithkaChatHistoryCleared',
+      'chat_id': chat.id,
+    });
+  }
+
+  void clearNotice() {
+    if (_disposed) return;
+    notice = null;
+    _notifyIfAlive();
+  }
+
+  // MARK: - Update stream
+
+  void _subscribe() {
+    // A pinned list follows its own slot; `allAccounts` is the only way to
+    // receive that slot's updates while another account is foreground. The
+    // unpinned list keeps the active-account stream it always had.
+    _sub = _client
+        .updatesOfAny(const [
+          'updateNewChat',
+          'updateChatFolders',
+          'updateChatLastMessage',
+          'updateChatPosition',
+          'updateChatAddedToList',
+          'updateChatRemovedFromList',
+          'mithkaChatLeft',
+          'updateChatDraftMessage',
+          'updateChatReadInbox',
+          'updateChatUnreadMentionCount',
+          'updateMessageMentionRead',
+          'updateChatUnreadReactionCount',
+          'updateMessageUnreadReactions',
+          'updateChatIsMarkedAsUnread',
+          'updateChatTitle',
+          'updateChatNotificationSettings',
+          'updateChatPhoto',
+          'updateCommunity',
+          'updateSupergroup',
+          'updateSupergroupFullInfo',
+          'updateUserFullInfo',
+          'updateUser',
+        ], allAccounts: accountSlot != null)
+        .listen(_apply);
+  }
+
+  /// True when [update] was produced by the client this list is pinned to.
+  ///
+  /// Chat and user ids are account-scoped: ingesting the foreground account's
+  /// `updateNewChat` into a slot-7 picker adds a selectable row whose id a
+  /// later draft write resolves against slot 7, and an `updateChatTitle` can
+  /// rename an unrelated row that happens to share the numeric id. Routed
+  /// updates carry the originating `@client_id`; a local update carries none
+  /// and is accepted only while the pinned slot is the active one.
+  bool _belongsToOwner(Map<String, dynamic> update) {
+    final slot = accountSlot;
+    if (slot == null) return true;
+    final owner = _client.clientId(slot);
+    if (owner == null) return false;
+    final source = update.integer('@client_id');
+    if (source == null) return _client.activeClientId == owner;
+    return source == owner;
+  }
+
+  void _apply(Map<String, dynamic> update) {
+    if (_disposed || !_belongsToOwner(update)) return;
+    switch (update.type) {
+      case 'updateNewChat':
+        final chat = update.obj('chat');
+        if (chat == null) return;
+        unawaited(_ingestRawChat(chat, preserveExistingIfNotNewer: true));
+
+      case 'updateChatFolders':
+        _applyChatFolders(update);
+
+      case 'updateChatLastMessage':
+        final id = update.int64('chat_id');
+        if (id == null) return;
+        _applyPositions(id, update.objects('positions'));
+        _mutate(id, (s) {
+          final last = update.obj('last_message');
+          if (last != null) {
+            s.lastMessageId = last.int64('id') ?? s.lastMessageId;
+            s.date = last.integer('date') ?? s.date;
+            s.lastChatMessage = TDParse.message(last);
+            final content = last.obj('content');
+            if (content != null) {
+              s.lastMessage = _previewText(
+                TDParse.messageText(content),
+                chatId: id,
+                senderId: s.lastChatMessage?.senderId,
+              );
+            }
+          } else {
+            s.lastMessage = '';
+            s.lastMessageId = 0;
+            s.date = 0;
+            s.lastChatMessage = null;
+            s.lastSender = null;
+            _lastSenderKeys[id] = null;
+          }
+        });
+        _resolveSenderIfNeeded(id, update.obj('last_message'));
+        _scheduleResort();
+
+      case 'updateChatPosition':
+        final id = update.int64('chat_id');
+        final position = update.obj('position');
+        if (id == null || position == null) return;
+        _applyPosition(id, position);
+        unawaited(_ensureChatLoaded(id));
+        if (LocalPinStore.shared.unlimitedEnabled) _scheduleLocalPinSync();
+        _scheduleResort();
+
+      case 'updateChatAddedToList':
+        final id = update.int64('chat_id');
+        final list = update.obj('chat_list');
+        if (id == null || list == null) return;
+        _joinedChatCache.remove(id);
+        unawaited(_ensureChatLoaded(id));
+        if (list.type == 'chatListFolder') {
+          final folderId = list.integer('chat_folder_id');
+          if (folderId != null) {
+            _folderOrders.putIfAbsent(folderId, () => {})[id] = 1;
+            _mutate(id, (s) => s.folderIds.add(folderId));
+          }
+        }
+        _scheduleResort();
+
+      case 'updateChatRemovedFromList':
+        final id = update.int64('chat_id');
+        final list = update.obj('chat_list');
+        if (id == null || list == null) return;
+        switch (list.type) {
+          case 'chatListMain':
+            _mutate(id, (s) => s.order = 0);
+            _scheduleLocalPinPrune(dropped: id);
+          case 'chatListArchive':
+            _mutate(id, (s) => s.archiveOrder = 0);
+            _scheduleLocalPinPrune(dropped: id);
+          case 'chatListFolder':
+            final folderId = list.integer('chat_folder_id');
+            if (folderId != null) {
+              _folderOrders[folderId]?.remove(id);
+              _folderPins[folderId]?.remove(id);
+              _mutate(id, (s) => s.folderIds.remove(folderId));
+            }
+        }
+        _scheduleResort();
+
+      case 'mithkaChatLeft':
+        final id = update.int64('chat_id');
+        if (id == null) return;
+        _map.remove(id);
+        _scheduleLocalPinPrune(dropped: id);
+        _communityDirectoryChats.remove(id);
+        _viewableCommunityChatIds.remove(id);
+        _checkingCommunityChatAccess.remove(id);
+        _joinedChatCache[id] = false;
+        _lastSenderKeys.remove(id);
+        for (final orders in _folderOrders.values) {
+          orders.remove(id);
+        }
+        for (final pins in _folderPins.values) {
+          pins.remove(id);
+        }
+        _scheduleResort();
+
+      case 'updateChatDraftMessage':
+        final id = update.int64('chat_id');
+        if (id == null) return;
+        _applyPositions(id, update.objects('positions'));
+        _mutate(
+          id,
+          (s) => s.draftText = TDParse.draftText(update.obj('draft_message')),
+        );
+        _scheduleResort();
+
+      case 'updateChatReadInbox':
+        final id = update.int64('chat_id');
+        if (id == null) return;
+        _mutate(id, (s) {
+          final lastReadInboxMessageId = update.int64(
+            'last_read_inbox_message_id',
+          );
+          // A locally emitted read update can overtake an older TDLib snapshot.
+          // Read boundaries never move backwards, so ignore the stale pair
+          // instead of letting its unread count resurrect a cleared badge.
+          if (lastReadInboxMessageId != null &&
+              lastReadInboxMessageId < s.lastReadInboxMessageId) {
+            return;
+          }
+          if (lastReadInboxMessageId != null) {
+            s.lastReadInboxMessageId = lastReadInboxMessageId;
+          }
+          s.unreadCount = update.integer('unread_count') ?? s.unreadCount;
+        });
+        _scheduleBadgeRefresh();
+
+      case 'updateChatUnreadMentionCount':
+      case 'updateMessageMentionRead':
+        final id = update.int64('chat_id');
+        if (id == null) return;
+        _mutate(
+          id,
+          (s) => s.unreadMentionCount =
+              update.integer('unread_mention_count') ?? s.unreadMentionCount,
+        );
+        _scheduleBadgeRefresh();
+
+      case 'updateChatUnreadReactionCount':
+      case 'updateMessageUnreadReactions':
+        final id = update.int64('chat_id');
+        if (id == null) return;
+        _mutate(
+          id,
+          (s) => s.unreadReactionCount =
+              update.integer('unread_reaction_count') ?? s.unreadReactionCount,
+        );
+        _scheduleBadgeRefresh();
+
+      case 'updateChatIsMarkedAsUnread':
+        final id = update.int64('chat_id');
+        if (id == null) return;
+        _mutate(
+          id,
+          (s) =>
+              s.isMarkedUnread = update.boolean('is_marked_as_unread') ?? false,
+        );
+        _scheduleBadgeRefresh();
+
+      case 'updateChatTitle':
+        final id = update.int64('chat_id');
+        if (id == null) return;
+        _mutate(id, (s) => s.title = update.str('title') ?? s.title);
+        _scheduleBadgeRefresh();
+
+      case 'updateChatNotificationSettings':
+        final id = update.int64('chat_id');
+        if (id == null) return;
+        _mutate(id, (s) {
+          final notificationSettings = update.obj('notification_settings');
+          final useDefault =
+              notificationSettings?.boolean('use_default_mute_for') ?? false;
+          final muteFor = useDefault
+              ? ScopeNotificationSettings.shared.getMuteForScope(
+                  ScopeNotificationSettings.shared.scopeTagForKind(s.kind),
+                )
+              : (notificationSettings?.integer('mute_for') ?? 0);
+          s.isMuted = muteFor > 0;
+        });
+        _scheduleBadgeRefresh();
+
+      case 'updateChatPhoto':
+        final id = update.int64('chat_id');
+        if (id == null) return;
+        _mutate(id, (s) => s.photo = TDParse.smallPhoto(update.obj('photo')));
+        _scheduleBadgeRefresh();
+
+      case 'updateCommunity':
+        final community = update.obj('community');
+        if (community == null) return;
+        _applyCommunity(community);
+
+      case 'updateSupergroup':
+        final supergroup = update.obj('supergroup');
+        final supergroupId = supergroup?.int64('id');
+        final chatId = supergroupId == null
+            ? null
+            : _chatBySupergroup[supergroupId];
+        if (chatId == null || supergroup == null) return;
+        final joined = isJoinedMemberStatus(supergroup.obj('status'));
+        _joinedChatCache[chatId] = joined;
+        final needsReclassification =
+            (joined && _communityDirectoryChats.containsKey(chatId)) ||
+            (!joined && _map.containsKey(chatId));
+        if (!needsReclassification) return;
+        _client
+            .query({'@type': 'getChat', 'chat_id': chatId})
+            .then(_ingestRawChat)
+            .catchError((_) {});
+
+      case 'updateSupergroupFullInfo':
+        final supergroupId = update.int64('supergroup_id');
+        final chatId = supergroupId == null
+            ? null
+            : _chatBySupergroup[supergroupId];
+        final fullInfo = update.obj('supergroup_full_info');
+        if (chatId == null || fullInfo == null) return;
+        _applyChatCommunityId(chatId, fullInfo.int64('community_id'));
+
+      case 'updateUserFullInfo':
+        final userId = update.int64('user_id');
+        final chatId = userId == null ? null : _chatByUser[userId];
+        final fullInfo = update.obj('user_full_info');
+        if (chatId == null || fullInfo == null) return;
+        _applyChatCommunityId(chatId, fullInfo.int64('community_id'));
+
+      case 'updateUser':
+        final user = update.obj('user');
+        final id = user?.int64('id');
+        if (user == null || id == null) return;
+        _applyPeerUser(user);
+    }
+  }
+
+  // MARK: - Mutation helpers
+
+  /// Restores [ChatSummary.folderIds] on a summary that has just been parsed
+  /// fresh from TDLib.
+  ///
+  /// A raw chat only carries positions for chat lists TDLib has loaded, so a
+  /// re-ingest would otherwise drop every folder the chat is in — the tags
+  /// appeared and then vanished on the next update. [_folderOrders] is the
+  /// same store [_projectChats] filters on, so the two cannot disagree.
+  void _restoreFolderIds(ChatSummary summary) {
+    for (final entry in _folderOrders.entries) {
+      if ((entry.value[summary.id] ?? 0) > 0) summary.folderIds.add(entry.key);
+    }
+  }
+
+  void _mutate(int id, void Function(ChatSummary) body) {
+    final s = _map[id] ?? _communityDirectoryChats[id];
+    if (s == null) return;
+    body(s);
+  }
+
+  void _applyPositions(int id, List<Map<String, dynamic>>? positions) {
+    if (positions == null) return;
+    for (final position in positions) {
+      _applyPosition(id, position);
+    }
+    // Positions arrive from the raw chat snapshots and the last-message and
+    // draft updates as well as from `updateChatPosition`. A later pass may
+    // re-ingest the raw snapshot of a device-pinned chat, which carries the
+    // position the chat had before the pin; the sync puts the stored pin back
+    // on its band order and is a no-op when nothing moved.
+    if (LocalPinStore.shared.unlimitedEnabled) _scheduleLocalPinSync();
+  }
+
+  void _applyPosition(int id, Map<String, dynamic> position) {
+    final list = position.obj('list');
+    switch (list?.type) {
+      case 'chatListMain':
+        final pinned = position.boolean('is_pinned');
+        if (pinned == true) {
+          _serverPinnedIds.add(id);
+        } else if (pinned == false) {
+          _serverPinnedIds.remove(id);
+        }
+        // Only builds where device-only pins can exist need the raw position.
+        if (LocalPinStore.shared.unlimitedEnabled) {
+          _lastPositions[id] = [position];
+        }
+        _mutate(id, (s) {
+          // A chat this device pins carries its band order until the store
+          // releases it; the live position may only raise it (never pull a
+          // locally pinned row back down between syncs), while rows the store
+          // does not own take the live position verbatim. The shared store
+          // belongs to whichever account scoped it last, so a position that
+          // lands while the store is scoped to another account must not
+          // project that account's band onto this list's rows (ids collide
+          // across accounts).
+          final store = LocalPinStore.shared;
+          final liveOrder = position.int64('order');
+          final isLocal =
+              _storeIsOwnAccount &&
+              store.unlimitedEnabled &&
+              store.isLocallyPinned(id);
+          if (isLocal) {
+            final band = store.effectiveOrder(id, liveOrder ?? s.order);
+            s.order = liveOrder != null && liveOrder > band ? liveOrder : band;
+            s.isPinned = true;
+          } else {
+            s.order = liveOrder ?? s.order;
+            s.isPinned = position.boolean('is_pinned') ?? s.isPinned;
+          }
+        });
+      case 'chatListArchive':
+        _mutate(
+          id,
+          (s) => s.archiveOrder = position.int64('order') ?? s.archiveOrder,
+        );
+      case 'chatListFolder':
+        final folderId = list?.integer('chat_folder_id');
+        if (folderId == null) return;
+        _ensureFolderOption(folderId);
+        final order = position.int64('order') ?? 0;
+        final orders = _folderOrders.putIfAbsent(folderId, () => {});
+        if (order > 0) {
+          orders[id] = order;
+        } else {
+          orders.remove(id);
+        }
+        // Pin state is per folder, exactly like the order above it. A position
+        // without the flag keeps whatever the folder already recorded.
+        final pinned = position.boolean('is_pinned');
+        if (pinned != null) {
+          final pins = _folderPins.putIfAbsent(folderId, () => {});
+          if (order > 0) {
+            pins[id] = pinned;
+          } else {
+            pins.remove(id);
+          }
+        } else if (order <= 0) {
+          _folderPins[folderId]?.remove(id);
+        }
+        _mutate(id, (s) {
+          if (order > 0) {
+            s.folderIds.add(folderId);
+          } else {
+            s.folderIds.remove(folderId);
+          }
+        });
+    }
+  }
+
+  Future<void> _ensureChatLoaded(int id, {bool refresh = false}) {
+    if (_disposed || (!refresh && _map.containsKey(id))) {
+      return Future<void>.value();
+    }
+    final existing = _chatLoadOperations[id];
+    if (existing != null) return existing;
+
+    Future<void> load() async {
+      try {
+        final raw = await _chatListQuery({'@type': 'getChat', 'chat_id': id});
+        await _ingestRawChat(raw);
+      } catch (_) {}
+    }
+
+    late final Future<void> tracked;
+    tracked = load().whenComplete(() {
+      if (identical(_chatLoadOperations[id], tracked)) {
+        _chatLoadOperations.remove(id);
+      }
+    });
+    _chatLoadOperations[id] = tracked;
+    return tracked;
+  }
+
+  /// Folds a raw TDLib chat into the store. The resort is always coalesced:
+  /// session restore delivers one `updateNewChat` per chat, and a full sort
+  /// plus notify per chat lands squarely in the wait for the first chat list.
+  Future<void> _ingestRawChat(
+    Map<String, dynamic> raw, {
+    bool preserveExistingIfNotNewer = false,
+  }) async {
+    if (_disposed) return;
+    final summary = TDParse.chat(raw);
+    if (summary == null) return;
+    final existing = _map[summary.id];
+    if (existing != null) {
+      final recency = _compareChatSnapshotRecency(summary, existing);
+      if (recency < 0 || (preserveExistingIfNotNewer && recency == 0)) {
+        return;
+      }
+      if (recency == 0) {
+        _preserveFresherReadState(summary, existing);
+      }
+    }
+    if (_meId != null) summary.isSavedMessages = summary.peerUserId == _meId;
+    summary.lastMessage = _previewText(
+      summary.lastMessage,
+      chatId: summary.id,
+      senderId: summary.lastChatMessage?.senderId,
+    );
+    _indexCommunityPeer(summary.id, raw);
+    _resolveForumIfNeeded(summary, raw);
+    _resolveCommunityIfNeeded(summary, raw);
+    final cachedJoined = _joinedChatCache[summary.id];
+    if (cachedJoined == false) {
+      _map.remove(summary.id);
+      _communityDirectoryChats[summary.id] = summary;
+      _restoreFolderIds(summary);
+      // After the chat is in a map: the peer resolution can now complete
+      // synchronously off the user cache, and it looks the chat up by id.
+      _resolvePeerIfNeeded(summary);
+      _applyPositions(summary.id, raw.objects('positions'));
+      _resolveSenderIfNeeded(summary.id, raw.obj('last_message'));
+      final communityId = _communityByChat[summary.id];
+      if (communityId != null) {
+        _verifyCommunityChatIsPublic(summary.id, communityId);
+      }
+      _scheduleResort();
+      return;
+    }
+
+    // Publish the TDLib snapshot before the asynchronous membership lookup.
+    // During session restore, live last-message/position updates can arrive
+    // while getSupergroup/getBasicGroup is in flight. Keeping this exact
+    // summary in the map lets those updates mutate it instead of being dropped
+    // and later overwritten by an old startup snapshot.
+    _communityDirectoryChats.remove(summary.id);
+    _viewableCommunityChatIds.remove(summary.id);
+    _checkingCommunityChatAccess.remove(summary.id);
+    _map[summary.id] = summary;
+    _restoreFolderIds(summary);
+    _resolvePeerIfNeeded(summary);
+    _applyPositions(summary.id, raw.objects('positions'));
+    _resolveSenderIfNeeded(summary.id, raw.obj('last_message'));
+    _scheduleResort();
+
+    if (summary.kind != ChatKind.group && summary.kind != ChatKind.channel) {
+      return;
+    }
+    unawaited(_verifyMembershipAfterIngest(summary, raw));
+  }
+
+  Future<void> _verifyMembershipAfterIngest(
+    ChatSummary summary,
+    Map<String, dynamic> raw,
+  ) async {
+    final joined = await _isJoinedSummary(summary, raw);
+    if (_disposed || joined || !identical(_map[summary.id], summary)) return;
+    _map.remove(summary.id);
+    _communityDirectoryChats[summary.id] = summary;
+    final communityId = _communityByChat[summary.id];
+    if (communityId != null) {
+      _verifyCommunityChatIsPublic(summary.id, communityId);
+    }
+    _scheduleResort();
+  }
+
+  void _resolveForumIfNeeded(ChatSummary summary, Map<String, dynamic> raw) {
+    if (summary.isForum) return;
+    final type = raw.obj('type');
+    if (type?.type != 'chatTypeSupergroup') return;
+    final supergroupId = type?.int64('supergroup_id');
+    if (supergroupId == null || !_resolvingForums.add(summary.id)) return;
+    _client
+        .query({'@type': 'getSupergroup', 'supergroup_id': supergroupId})
+        .then((supergroup) {
+          if (_disposed) return;
+          if (supergroup.boolean('is_forum') != true) return;
+          _mutate(summary.id, (s) => s.isForum = true);
+          // Changes how the row draws, not where it sorts.
+          _scheduleBadgeRefresh();
+        })
+        .catchError((_) {})
+        .whenComplete(() => _resolvingForums.remove(summary.id));
+  }
+
+  Future<bool> _isJoinedSummary(
+    ChatSummary summary,
+    Map<String, dynamic> raw,
+  ) async {
+    if (summary.kind != ChatKind.group && summary.kind != ChatKind.channel) {
+      return true;
+    }
+    final cached = _joinedChatCache[summary.id];
+    if (cached != null) return cached;
+    final joined =
+        await (_membershipForTesting?.call(summary, raw) ??
+            isJoinedGroupOrChannelChat(summary.id, chat: raw));
+    _joinedChatCache[summary.id] = joined;
+    return joined;
+  }
+
+  // MARK: - Telegram Communities
+
+  void _applyCommunity(Map<String, dynamic> object) {
+    if (!_listening) return;
+    final id = object.int64('id');
+    if (id == null || id == 0) return;
+    final existing = _communities[id];
+    final community = CommunitySummary.fromTd(
+      object,
+      collapsed: existing?.collapsed ?? false,
+    );
+    if (existing == null) {
+      _communities[id] = community;
+    } else {
+      existing.merge(community);
+    }
+    _scheduleResort();
+    if (community.haveAccess) _loadCommunityCatalog(id);
+    if (_communityPreferencesLoaded.add(id)) {
+      unawaited(_loadCommunityCollapsed(id));
+    }
+  }
+
+  void _loadCommunityCatalog(int communityId) {
+    if (!_loadingCommunityCatalogs.add(communityId)) return;
+    _client
+        .query(communityFullInfoRequest(communityId))
+        .then((result) async {
+          final entries = communityCatalogEntries(result);
+          for (final entry in entries) {
+            if (_disposed) return;
+            final chatId = entry.int64('chat_id');
+            if (chatId == null) continue;
+            try {
+              final raw = await _client.query({
+                '@type': 'getChat',
+                'chat_id': chatId,
+              });
+              await _ingestRawChat(raw);
+              if (_disposed) return;
+              _applyChatCommunityId(chatId, communityId);
+              // Membership resolves after ingestion. Keep the server's grant
+              // even before the chat moves into the non-member directory.
+              if (entry.boolean('can_view_history') == true &&
+                  _viewableCommunityChatIds.add(chatId)) {
+                _scheduleResort();
+              } else if (_communityDirectoryChats.containsKey(chatId)) {
+                _verifyCommunityChatIsPublic(chatId, communityId);
+              }
+            } catch (_) {
+              // A peer can disappear between the catalog response and getChat.
+            }
+          }
+        })
+        .catchError((_) {
+          // Bot API sessions and native libraries older than the upstream
+          // getCommunityFullInfo merge expose no community catalogue.
+        })
+        .whenComplete(() => _loadingCommunityCatalogs.remove(communityId));
+  }
+
+  void _applyChatCommunityId(int chatId, int? communityId) {
+    if (!_listening) return;
+    // Older TDLib builds don't expose this field. A missing field is not the
+    // same as the explicit zero used when a chat is removed from a community.
+    if (communityId == null) return;
+    if (communityId == 0) {
+      final changed = _communityByChat.remove(chatId) != null;
+      _viewableCommunityChatIds.remove(chatId);
+      _checkingCommunityChatAccess.remove(chatId);
+      if (changed) _scheduleResort();
+      return;
+    }
+    final changed = _communityByChat[chatId] != communityId;
+    if (changed) {
+      _communityByChat[chatId] = communityId;
+      _scheduleResort();
+    }
+    if (_communityDirectoryChats.containsKey(chatId)) {
+      _verifyCommunityChatIsPublic(chatId, communityId);
+    }
+  }
+
+  void _verifyCommunityChatIsPublic(int chatId, int communityId) {
+    if (_viewableCommunityChatIds.contains(chatId) ||
+        !_checkingCommunityChatAccess.add(chatId)) {
+      return;
+    }
+    _client
+        .query({'@type': 'getChat', 'chat_id': chatId})
+        .then((chat) async {
+          final type = chat.obj('type');
+          if (type?.type == 'chatTypePrivate') return true;
+          if (type?.type != 'chatTypeSupergroup') return false;
+          final supergroupId = type?.int64('supergroup_id');
+          if (supergroupId == null) return false;
+          final supergroup = await _client.query({
+            '@type': 'getSupergroup',
+            'supergroup_id': supergroupId,
+          });
+          final activeUsernames = supergroup.obj(
+            'usernames',
+          )?['active_usernames'];
+          return activeUsernames is List && activeUsernames.isNotEmpty;
+        })
+        .then((isPublic) {
+          if (_disposed ||
+              _communityByChat[chatId] != communityId ||
+              !_communityDirectoryChats.containsKey(chatId)) {
+            return;
+          }
+          if (isPublic && _viewableCommunityChatIds.add(chatId)) {
+            _scheduleResort();
+          }
+        })
+        .catchError((_) {
+          // Private, hidden, and request-only peers stay out unless the server
+          // explicitly supplied can_view_history in the community catalog.
+        })
+        .whenComplete(() => _checkingCommunityChatAccess.remove(chatId));
+  }
+
+  void _indexCommunityPeer(int chatId, Map<String, dynamic> chat) {
+    final type = chat.obj('type');
+    switch (type?.type) {
+      case 'chatTypeSupergroup':
+        final supergroupId = type?.int64('supergroup_id');
+        if (supergroupId != null) _chatBySupergroup[supergroupId] = chatId;
+      case 'chatTypePrivate':
+        final privateUserId = type?.int64('user_id');
+        if (privateUserId != null) {
+          _chatByUser[privateUserId] = chatId;
+          _indexPeerChat(privateUserId, chatId);
+        }
+      // A secret chat fronts a user too, so peer metadata has to reach it —
+      // but _chatByUser stays the private chat the full-info lookups want.
+      case 'chatTypeSecret':
+        final secretUserId = type?.int64('user_id');
+        if (secretUserId != null) _indexPeerChat(secretUserId, chatId);
+    }
+  }
+
+  void _indexPeerChat(int userId, int chatId) {
+    final chats = _chatsByPeerUser.putIfAbsent(userId, () => <int>[]);
+    if (!chats.contains(chatId)) chats.add(chatId);
+  }
+
+  void _resolveCommunityIfNeeded(
+    ChatSummary summary,
+    Map<String, dynamic> chat,
+  ) {
+    final type = chat.obj('type');
+    if (type?.type != 'chatTypeSupergroup') return;
+    final supergroupId = type?.int64('supergroup_id');
+    if (supergroupId == null) return;
+    _queueCommunityLookup(
+      _CommunityLookup(chatId: summary.id, peerId: supergroupId, isBot: false),
+    );
+  }
+
+  void _resolveBotCommunityIfNeeded(int userId, Map<String, dynamic> user) {
+    if (user.obj('type')?.type != 'userTypeBot') return;
+    final chatId = _chatByUser[userId];
+    if (chatId == null) return;
+    _queueCommunityLookup(
+      _CommunityLookup(chatId: chatId, peerId: userId, isBot: true),
+    );
+  }
+
+  void _queueCommunityLookup(_CommunityLookup lookup) {
+    if (!_queuedCommunityChats.add(lookup.chatId)) return;
+    _communityLookupQueue.add(lookup);
+    _pumpCommunityLookups();
+  }
+
+  void _pumpCommunityLookups() {
+    if (!_listening) return;
+    while (_communityLookupsInFlight < 3 && _communityLookupQueue.isNotEmpty) {
+      final lookup = _communityLookupQueue.removeAt(0);
+      _communityLookupsInFlight++;
+      unawaited(
+        _performCommunityLookup(lookup).whenComplete(() {
+          _communityLookupsInFlight--;
+          _pumpCommunityLookups();
+        }),
+      );
+    }
+  }
+
+  Future<void> _performCommunityLookup(_CommunityLookup lookup) async {
+    try {
+      final fullInfo = await _client.query(
+        lookup.isBot
+            ? {'@type': 'getUserFullInfo', 'user_id': lookup.peerId}
+            : {
+                '@type': 'getSupergroupFullInfo',
+                'supergroup_id': lookup.peerId,
+              },
+      );
+      _applyChatCommunityId(lookup.chatId, fullInfo.int64('community_id'));
+    } catch (_) {
+      // Community metadata is additive. A failed lookup must never prevent the
+      // underlying chat from appearing in the normal chat list.
+    }
+  }
+
+  String _communityCollapsedKey(int communityId) =>
+      'mithka.community.${_client.activeSlot}.$communityId.collapsed';
+
+  Future<void> _loadCommunityCollapsed(int communityId) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!_listening) return;
+    final stored = prefs.getBool(_communityCollapsedKey(communityId));
+    final community = _communities[communityId];
+    if (stored == null || community == null || community.collapsed == stored) {
+      return;
+    }
+    community.collapsed = stored;
+    _scheduleResort();
+  }
+
+  Future<void> _saveCommunityCollapsed(int communityId, bool collapsed) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_communityCollapsedKey(communityId), collapsed);
+  }
+
+  String _previewText(String text, {int? chatId, int? senderId}) {
+    final hidden =
+        chatId != null && HiddenSenderStore.shared.hides(senderId, chatId);
+    return hidden || KeywordBlocker.shared.matches(text)
+        ? AppStringKeys.chatListBlockedPlaceholder
+        : text;
+  }
+
+  // MARK: - Sorting
+
+  void _resort() {
+    final stopwatch = Stopwatch()..start();
+    final coalescedUpdates = _pendingResortSignals > 0
+        ? _pendingResortSignals
+        : 1;
+    _pendingResortSignals = 0;
+    _resortTimer?.cancel();
+    _resortTimer = null;
+    if (_disposed) return;
+    final all = _visibleChats();
+    _filtered = const [];
+    final visible = all;
+    _archived = visible.where((c) => c.archiveOrder > 0).toList()
+      ..sort(
+        (a, b) => a.archiveOrder != b.archiveOrder
+            ? b.archiveOrder.compareTo(a.archiveOrder)
+            : b.date.compareTo(a.date),
+      );
+    _chats = _projectChats(_selectedFilter.folderId, visible);
+    _refreshFolderUnreadCounts();
+    _invalidateEntriesCaches();
+    stopwatch.stop();
+    AppPerformanceMetrics.chatListResorted(
+      elapsed: stopwatch.elapsed,
+      chatCount: all.length,
+      coalescedUpdates: coalescedUpdates,
+      folderSelected: _selectedFilter.folderId != null,
+    );
+    _notifyIfAlive();
+  }
+
+  List<ChatSummary> _visibleChats() =>
+      _map.values.where((c) => _joinedChatCache[c.id] ?? true).toList();
+
+  /// Recomputes each folder's unread-chat badge from the chat store.
+  ///
+  /// Telegram's folder badge is a count of unread *chats*, not messages: a
+  /// chat with 50 unread messages still contributes 1. A muted chat counts
+  /// towards the number but not towards [ChatFilterOption.hasUnmutedUnread],
+  /// which is what decides the badge's colour. Native positive folder
+  /// positions and joined-chat visibility are authoritative, exactly as in
+  /// `_projectChats`; independently reapplying folder rules would disagree
+  /// with the visible list while metadata or positions are being refreshed.
+  void _refreshFolderUnreadCounts() {
+    var changed = false;
+    final updated = <ChatFilterOption>[];
+    for (final filter in _filters) {
+      final folderId = filter.folderId;
+      if (folderId == null) {
+        updated.add(filter);
+        continue;
+      }
+      var count = 0;
+      var unmuted = false;
+      final orders = _folderOrders[folderId];
+      if (orders != null) {
+        for (final entry in orders.entries) {
+          final chatId = entry.key;
+          final chat = _map[chatId];
+          if (chat == null ||
+              entry.value <= 0 ||
+              _joinedChatCache[chatId] == false) {
+            continue;
+          }
+          if (!(chat.unreadCount > 0 || chat.isMarkedUnread)) continue;
+          count++;
+          if (!chat.isMuted) unmuted = true;
+        }
+      }
+      if (count != filter.unreadChatCount ||
+          unmuted != filter.hasUnmutedUnread) {
+        changed = true;
+        updated.add(filter.withUnread(count: count, unmuted: unmuted));
+      } else {
+        updated.add(filter);
+      }
+    }
+    if (!changed) return;
+    _filters = updated;
+    final selectedId = _selectedFilter.folderId;
+    if (selectedId != null) {
+      for (final filter in _filters) {
+        if (filter.folderId == selectedId) {
+          _selectedFilter = filter;
+          break;
+        }
+      }
+    }
+  }
+
+  List<ChatSummary> _projectChats(int? folderId, List<ChatSummary> visible) {
+    if (folderId == null) {
+      return visible.where((c) => c.order > 0).toList()..sort(_compare);
+    }
+    final folderOrders = _folderOrders[folderId] ?? const {};
+    final folderPins = _folderPins[folderId] ?? const {};
+    bool pinnedInFolder(ChatSummary chat) => folderPins[chat.id] ?? false;
+    return visible.where((c) => (folderOrders[c.id] ?? 0) > 0).toList()
+      ..sort((a, b) {
+        final ap = pinnedInFolder(a);
+        final bp = pinnedInFolder(b);
+        if (ap != bp) return ap ? -1 : 1;
+        final ao = folderOrders[a.id] ?? 0;
+        final bo = folderOrders[b.id] ?? 0;
+        if (ao != bo) return bo.compareTo(ao);
+        if (a.date != b.date) return b.date.compareTo(a.date);
+        return b.id.compareTo(a.id);
+      });
+  }
+
+  void _scheduleResort() {
+    if (_disposed) return;
+    // Community grouping (collapse, access, membership) is mutated in place by
+    // callers that then schedule a resort, so drop the projection here too.
+    _invalidateEntriesCaches();
+    _pendingResortSignals++;
+    // A resort recomputes the folder badges as well, so a badge refresh still
+    // waiting on its debounce is redundant.
+    _badgeTimer?.cancel();
+    _badgeTimer = null;
+    if (_resortTimer != null) return;
+    // TDLib can deliver many dependent updates in one burst. A 50 ms window
+    // keeps the list responsive while avoiding a full sort/rebuild per frame.
+    _resortTimer = Timer(const Duration(milliseconds: 50), _resort);
+  }
+
+  /// Debounces the refresh owed by an update that mutates summaries in place
+  /// without changing the sort.
+  ///
+  /// Read state, mute state, titles and photos are not sort keys — [_compare]
+  /// orders by pin, TDLib position and last-message date — and none of them can
+  /// change folder membership or community grouping, which is what
+  /// [_projectChats] and the cached projection are built from. The summaries are
+  /// mutated in place and both the projection and [_entriesCache] hold
+  /// references to them, so the sorted window and its caches stay valid. Of
+  /// everything [_resort] rebuilds, only the folder badges derive from any of
+  /// it, and [_refreshFolderUnreadCounts] is a no-op when nothing unread moved.
+  ///
+  /// Routing these updates through [_scheduleResort] instead dropped every cache
+  /// and re-sorted the whole account to repaint a row. Closing a conversation
+  /// that still had unread messages emits `updateChatReadInbox` while the pop
+  /// transition is running, so that resort landed mid-animation and changed no
+  /// position at all.
+  void _scheduleBadgeRefresh() {
+    if (_disposed) return;
+    // A resort already pending rebuilds the badges too, and it still has to run
+    // because something else moved the list.
+    if (_resortTimer != null) return;
+    if (_badgeTimer != null) return;
+    _badgeTimer = Timer(const Duration(milliseconds: 50), _refreshBadges);
+  }
+
+  /// Recomputes the folder badges and republishes the list, leaving the sort and
+  /// the entry caches alone. Also the synchronous half of
+  /// [_scheduleBadgeRefresh], for the paths a user is watching.
+  void _refreshBadges() {
+    _badgeTimer?.cancel();
+    _badgeTimer = null;
+    if (_disposed) return;
+    _refreshFolderUnreadCounts();
+    _notifyIfAlive();
+  }
+
+  @visibleForTesting
+  void scheduleResortForTesting() => _scheduleResort();
+
+  @visibleForTesting
+  void seedChatForTesting(ChatSummary chat) {
+    _map[chat.id] = chat;
+    final userId = chat.peerUserId;
+    if (userId != null) _indexPeerChat(userId, chat.id);
+  }
+
+  @visibleForTesting
+  void applyUpdateForTesting(Map<String, dynamic> update) => _apply(update);
+
+  @visibleForTesting
+  Future<void> ingestRawChatForTesting(Map<String, dynamic> raw) =>
+      _ingestRawChat(raw);
+
+  void _notifyIfAlive() {
+    if (!_disposed) notifyListeners();
+  }
+
+  void _finishInitialLoadingIfNeeded() {
+    _initialLoading = false;
+  }
+
+  static int _compareChatSnapshotRecency(
+    ChatSummary candidate,
+    ChatSummary existing,
+  ) {
+    if (candidate.date != existing.date) {
+      return candidate.date.compareTo(existing.date);
+    }
+    return candidate.lastMessageId.compareTo(existing.lastMessageId);
+  }
+
+  /// A `getChat` requested by the community catalogue can finish after the
+  /// chat has already been marked read. For the same last-message snapshot,
+  /// the furthest read boundary is authoritative; at an equal boundary the
+  /// smaller unread count reflects more read progress. A genuinely newer last
+  /// message bypasses this merge and is free to add unread messages normally.
+  static void _preserveFresherReadState(
+    ChatSummary candidate,
+    ChatSummary existing,
+  ) {
+    final existingIsFresher =
+        existing.lastReadInboxMessageId > candidate.lastReadInboxMessageId ||
+        (existing.lastReadInboxMessageId == candidate.lastReadInboxMessageId &&
+            existing.unreadCount < candidate.unreadCount);
+    if (!existingIsFresher) return;
+    candidate.lastReadInboxMessageId = existing.lastReadInboxMessageId;
+    candidate.unreadCount = existing.unreadCount;
+  }
+
+  int _compare(ChatSummary a, ChatSummary b) {
+    if (a.isPinned != b.isPinned) return a.isPinned ? -1 : 1;
+    // Within the pinned group the band of device-only pins — orders the local
+    // store assigned — sorts above every server pin. The band is built from
+    // the highest recorded server order, so it already outranks them, and the
+    // clamp is the belt-and-braces for a band that was restored against a list
+    // whose server pins have since moved past it: the stored pin is the newest
+    // gesture on this device and must stay on top. The store never assigns a
+    // band while its switch is off, so an inert build compares exactly as
+    // before.
+    //
+    // Owner-bound: the comparator reads the shared store through this list's
+    // own account scope only. Simultaneous models with colliding chat ids
+    // used to sort A's rows by B's local pins.
+    if (a.isPinned && b.isPinned && _storeIsOwnAccount) {
+      final store = LocalPinStore.shared;
+      final aLocal = store.isLocallyPinned(a.id);
+      final bLocal = store.isLocallyPinned(b.id);
+      if (aLocal != bLocal) return aLocal ? -1 : 1;
+    }
+    if (a.order != b.order) return b.order.compareTo(a.order);
+    if (a.date != b.date) return b.date.compareTo(a.date);
+    return b.id.compareTo(a.id);
+  }
+
+  // MARK: - Chat-list peer display metadata (private chats)
+
+  void _resolvePeerIfNeeded(ChatSummary summary) {
+    final userId = summary.peerUserId;
+    if (userId == null || _resolvingPeers.contains(userId)) return;
+    // TDLib emits updateUser before it exposes a user id, and TdUserIndex has
+    // been observing since process start — so the peer is normally already
+    // cached and the getUser is one round trip per private chat for nothing.
+    // Both the cache key and the lookup follow this model's account: a picker
+    // kept open for its launching account must not describe slot-7 peers with
+    // slot-0 data.
+    final slot = accountSlot ?? _client.activeSlot;
+    final cached = TdUserIndex.shared.userFor(slot, userId);
+    if (cached != null) {
+      _applyPeerUser(cached);
+      return;
+    }
+    _resolvingPeers.add(userId);
+    _chatListQuery({'@type': 'getUser', 'user_id': userId})
+        .then((user) {
+          _resolvingPeers.remove(userId);
+          _applyPeerUser(user);
+        })
+        .catchError((_) {
+          _resolvingPeers.remove(userId);
+        });
+  }
+
+  void _applyPeerUser(Map<String, dynamic> user) {
+    final userId = user.int64('id');
+    if (userId == null) return;
+    var changed = false;
+    final isBot = TDParse.isBotUser(user);
+    final supportsBotTopics = TDParse.botUserHasTopics(user);
+    final isPremium = user.boolean('is_premium') ?? false;
+    final isContact = user.boolean('is_contact') ?? false;
+    final phoneNumber = user.str('phone_number');
+    final accent = user.integer('accent_color_id') ?? -1;
+    final status = TDParse.emojiStatusCustomEmojiId(user.obj('emoji_status'));
+    for (final chatId in _chatsByPeerUser[userId] ?? const <int>[]) {
+      final chat = _map[chatId] ?? _communityDirectoryChats[chatId];
+      if (chat == null) continue;
+      final nextKind = isBot
+          ? ChatKind.bot
+          : chat.kind == ChatKind.bot
+          ? ChatKind.privateChat
+          : chat.kind;
+      if (chat.peerIsPremium == isPremium &&
+          chat.peerIsContact == isContact &&
+          chat.peerPhoneNumber == phoneNumber &&
+          chat.peerAccentColorId == accent &&
+          chat.peerEmojiStatusId == status &&
+          chat.kind == nextKind &&
+          chat.supportsBotTopics == supportsBotTopics) {
+        continue;
+      }
+      chat.peerIsPremium = isPremium;
+      chat.peerIsContact = isContact;
+      chat.peerPhoneNumber = phoneNumber;
+      chat.peerAccentColorId = accent;
+      chat.peerEmojiStatusId = status;
+      chat.kind = nextKind;
+      chat.supportsBotTopics = supportsBotTopics;
+      changed = true;
+    }
+    _resolveBotCommunityIfNeeded(userId, user);
+    if (changed) _scheduleResort();
+  }
+
+  // MARK: - Last-message sender resolution (groups & channels)
+
+  void _resolveSenderIfNeeded(int id, Map<String, dynamic>? lastMessage) {
+    final summary = _map[id] ?? _communityDirectoryChats[id];
+    if (summary == null) return;
+    if (summary.kind != ChatKind.group && summary.kind != ChatKind.channel) {
+      return;
+    }
+    if (summary.kind == ChatKind.group &&
+        lastMessage?.boolean('is_outgoing') == true) {
+      _lastSenderKeys[id] = 'self';
+      _setLastSender(AppStrings.t(AppStringKeys.chatMeLabel), id);
+      return;
+    }
+    final sender = lastMessage?.obj('sender_id');
+    if (sender == null) {
+      _lastSenderKeys[id] = null;
+      _setLastSender(null, id);
+      return;
+    }
+
+    switch (sender.type) {
+      case 'messageSenderUser':
+        final userId = sender.int64('user_id');
+        if (userId == null) return;
+        final key = _senderKey('user', userId);
+        _lastSenderKeys[id] = key;
+        final name = _senderNames[key];
+        if (name != null) {
+          _setLastSender(name, id);
+        } else {
+          _setLastSender(null, id);
+          _resolveUserName(userId, id, key);
+        }
+      case 'messageSenderChat':
+        final senderChatId = sender.int64('chat_id');
+        if (senderChatId == null) return;
+        if (senderChatId == id) {
+          _lastSenderKeys[id] = null;
+          _setLastSender(null, id);
+          return;
+        }
+        final key = _senderKey('chat', senderChatId);
+        _lastSenderKeys[id] = key;
+        final name = _senderNames[key];
+        if (name != null) {
+          _setLastSender(name, id);
+        } else {
+          _setLastSender(null, id);
+          _resolveChatTitle(senderChatId, id, key);
+        }
+      default:
+        _lastSenderKeys[id] = null;
+        _setLastSender(null, id);
+    }
+  }
+
+  void _setLastSender(String? name, int id) =>
+      _mutate(id, (s) => s.lastSender = name);
+
+  String _senderKey(String type, int id) => '$type:$id';
+
+  void _resolveUserName(int userId, int id, String key) {
+    _pendingSenderTargets.putIfAbsent(key, () => <int>{}).add(id);
+    if (_resolvingSenders.contains(key)) return;
+    _resolvingSenders.add(key);
+    _client
+        .query({'@type': 'getUser', 'user_id': userId})
+        .then((user) {
+          _resolvingSenders.remove(key);
+          final name = TDParse.userName(user);
+          _senderNames[key] = name;
+          final targets = _pendingSenderTargets.remove(key) ?? {id};
+          for (final chatId in targets) {
+            if (_lastSenderKeys[chatId] != key) continue;
+            _setLastSender(name, chatId);
+          }
+          // A sender name is display-only: no sort key or grouping reads it.
+          _scheduleBadgeRefresh();
+        })
+        .catchError((_) {
+          _resolvingSenders.remove(key);
+          _pendingSenderTargets.remove(key);
+        });
+  }
+
+  void _resolveChatTitle(int senderChatId, int id, String key) {
+    _pendingSenderTargets.putIfAbsent(key, () => <int>{}).add(id);
+    if (_resolvingSenders.contains(key)) return;
+    _resolvingSenders.add(key);
+    _client
+        .query({'@type': 'getChat', 'chat_id': senderChatId})
+        .then((chat) {
+          _resolvingSenders.remove(key);
+          final title = chat.str('title');
+          if (title == null) {
+            _pendingSenderTargets.remove(key);
+            return;
+          }
+          _senderNames[key] = title;
+          final targets = _pendingSenderTargets.remove(key) ?? {id};
+          for (final chatId in targets) {
+            if (_lastSenderKeys[chatId] != key) continue;
+            _setLastSender(title, chatId);
+          }
+          _scheduleBadgeRefresh();
+        })
+        .catchError((_) {
+          _resolvingSenders.remove(key);
+          _pendingSenderTargets.remove(key);
+        });
+  }
+
+  String _pinErrorNotice(Object error) {
+    final message = error is TdError ? error.message : error.toString();
+    final text = message.trim();
+    final normalized = text.toLowerCase().replaceAll('_', ' ');
+    final hitPinned =
+        normalized.contains('pin') ||
+        normalized.contains('pinned') ||
+        normalized.contains(AppStringKeys.chatInfoPin);
+    final hitLimit =
+        normalized.contains('limit') ||
+        normalized.contains('too many') ||
+        normalized.contains('too much') ||
+        normalized.contains('many') ||
+        normalized.contains('much') ||
+        normalized.contains(AppStringKeys.chatInfoPinLimit);
+    if (hitPinned && hitLimit) {
+      // This path also handles folder limits and runs before the Main pin
+      // cap is known. Keep its generic notice; the settings explanation owns
+      // the Main-specific limit and its formatting arguments.
+      return AppStringKeys.chatInfoPinLimitReachedError;
+    }
+    return text.isEmpty
+        ? AppStringKeys.chatInfoPinFailed
+        : AppStrings.t(AppStringKeys.chatInfoPinFailedWithReason, {
+            'value1': text,
+          });
+  }
+}

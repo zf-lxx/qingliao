@@ -1,0 +1,2781 @@
+//
+//  main_tab_view.dart
+//
+//  Tab shell: 消息 / optional 频道、联系人、动态, plus the left-sliding "我" profile drawer
+//  overlaid above the tab bar. The bottom tab bar is either a custom flat bar
+//  ("classic", default) or an optional liquid glass bar. Port of
+//  the Swift `MainTabView`.
+//
+
+import 'dart:async';
+import 'dart:math' as math;
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart' show CustomSemanticsAction;
+import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+import '../auth/account_store.dart';
+import '../auth/auth_manager.dart';
+import '../channels/topic_channels_view.dart';
+import '../channels/topic_list_host.dart';
+import '../chat/chat_info_view.dart';
+import '../chat/chat_members_view.dart';
+import '../chat/chat_picker_view.dart';
+import '../chat/chat_view.dart';
+import '../chat/desktop_chat_context_pane.dart';
+import '../chat/media_send_preview_view.dart';
+import '../chat/music_player_controller.dart';
+import '../chat/outgoing_attachment.dart';
+import '../chat/pangu_spacing.dart';
+import '../chats/archived_chats_view.dart';
+import '../chats/chat_list_view.dart';
+import '../communities/community_view.dart';
+import '../components/app_icons.dart';
+import '../components/app_interactive_surface.dart';
+import '../components/drawer_controller.dart' as dc;
+import '../components/ui_components.dart';
+import '../contacts/contacts_view.dart';
+import '../l10n/app_locale_controller.dart';
+import '../l10n/app_localizations.dart';
+import '../moments/moments_view.dart';
+import '../platform/android_share_intent.dart';
+import '../profile/profile_view.dart';
+import '../settings/desktop_hotkey_controller.dart';
+import '../tdlib/json_helpers.dart';
+import '../tdlib/td_client.dart';
+import '../tdlib/td_models.dart';
+import '../tdlib/td_requests.dart';
+import '../theme/app_motion.dart';
+import '../theme/app_theme.dart';
+import '../theme/telegram_cloud_theme.dart';
+import '../theme/theme_controller.dart';
+import '../update/update_checker.dart';
+import 'account_picker_sheet.dart';
+import 'adaptive_split_layout.dart';
+import 'app_navigator.dart';
+import 'bottom_bar_layout.dart';
+import 'chat_deep_link_controller.dart';
+import 'chat_pane.dart';
+import 'desktop_chat_window.dart';
+import 'desktop_navigation_rail.dart';
+import 'desktop_utility_window.dart';
+import 'detail_content_reveal.dart';
+import 'horizontal_safe_viewport.dart';
+import 'liquid_glass_bottom_bar.dart' show LiquidGlassBottomBar;
+import 'native_glass_surface.dart';
+import 'native_tab_bar.dart';
+import 'primary_chat_launcher.dart';
+import 'top_corner_cluster.dart';
+import 'unread_badge_model.dart';
+
+@visibleForTesting
+bool desktopChatKindUsesContextPane(ChatKind? kind) =>
+    kind == ChatKind.group || kind == ChatKind.channel;
+
+/// Per-tab navigator keys for one shell instance.
+///
+/// Owned by each [_MainRootViewState]: simultaneous shells (the split root
+/// plus a desktop chat window, or an account-keyed replacement shell) each
+/// keep their own keys, so a replacement shell can never retain the old
+/// Navigator subtree and two live shells can never collide over key
+/// ownership. Tests reach a shell's own keys through the instance-scoped
+/// [MainTabView.keysHost] / [MainSplitRootView.keysHost] hook.
+@visibleForTesting
+List<GlobalKey<NavigatorState>> createTabNavigatorKeys() =>
+    List.generate(4, (_) => GlobalKey<NavigatorState>());
+
+/// Receives the per-shell navigator keys a shell state owns; an
+/// instance-scoped testing hook, invoked exactly once per mounted shell.
+typedef TabNavigatorKeysHost =
+    void Function(List<GlobalKey<NavigatorState>> keys);
+
+class MainTabView extends StatefulWidget {
+  const MainTabView({super.key, this.keysHost});
+
+  @visibleForTesting
+  final TabNavigatorKeysHost? keysHost;
+
+  @override
+  State<MainTabView> createState() => _MainTabViewState();
+}
+
+class MainSplitRootView extends StatefulWidget {
+  const MainSplitRootView({super.key, this.keysHost});
+
+  @visibleForTesting
+  final TabNavigatorKeysHost? keysHost;
+
+  @override
+  State<MainSplitRootView> createState() => _MainSplitRootViewState();
+}
+
+class _MainTabViewState extends _MainRootViewState<MainTabView> {
+  @override
+  bool get checkForUpdates => true;
+}
+
+class _MainSplitRootViewState extends _MainRootViewState<MainSplitRootView> {}
+
+abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
+  static const _desktopSidebarWidthKey = 'mithka.desktopSplitSidebarWidth.v1';
+
+  bool get checkForUpdates => false;
+
+  int _selection = 0;
+  late final dc.TabBarVisibility _tabBar = dc.TabBarVisibility();
+  late final UnreadBadgeModel _unread = UnreadBadgeModel()..start();
+  late final ChatListController _chatListController = ChatListController();
+  late final ChatViewExitController _messageChatExitController =
+      ChatViewExitController();
+  late final ChatRevealLatestController _messageRevealLatestController =
+      ChatRevealLatestController();
+  ChatListSelection? _selectedMessageChat;
+  final _chatPaneController = ChatPaneController();
+  CommunityListSelection? _selectedMessageCommunity;
+  ArchivedChatListSelection? _selectedArchivedChats;
+
+  /// Whether the trailing group context pane is open. One value serves every
+  /// chat of the session: closing the pane in one conversation hides it in all
+  /// of them, and the header toggle restores it everywhere at once.
+  bool _contextPaneShown = true;
+  Widget? _selectedChannelDetail;
+  Widget? _selectedContactDetail;
+  Widget? _selectedMomentDetail;
+  ChatDeepLinkController? _chatDeepLinks;
+  AccountStore? _observedAccounts;
+  int? _observedAccountSlot;
+  // Held in a notifier so a divider drag moves two pane widths instead of
+  // rebuilding the rail, the chat list and the conversation per pointer move.
+  final _splitSidebarWidth = ValueNotifier<double?>(null);
+  late final TopicListHost _topicListHost = TopicListHost();
+  bool _desktopListPaneVisible = true;
+  bool? _wasUsingSplitSelection;
+  DesktopHotkeyRegistration? _newChatHotkeyRegistration;
+  final _androidShareIntent = AndroidShareIntentController.shared;
+  bool _presentingAndroidShare = false;
+
+  @override
+  void initState() {
+    super.initState();
+    switch (widget) {
+      case final MainTabView tab:
+        tab.keysHost?.call(_navKeys);
+      case final MainSplitRootView split:
+        split.keysHost?.call(_navKeys);
+    }
+    if (_androidShareIntent.supported) {
+      _androidShareIntent.addListener(_handleAndroidShareIntentChanged);
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        unawaited(_androidShareIntent.start());
+        unawaited(_presentPendingAndroidShare());
+      });
+    }
+    if (isDesktopTargetPlatform()) {
+      unawaited(_restoreDesktopSidebarWidth());
+      _newChatHotkeyRegistration = DesktopHotkeyRegistry.instance.register(
+        DesktopHotkeyAction.newChat,
+        () => _runChatListHotkey(_chatListController.openNewChat),
+      );
+    }
+    // Check GitHub Releases once per launch for a newer build this platform
+    // can install: an APK on Android, the desktop package on Windows/Linux.
+    if (checkForUpdates) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) UpdateChecker.maybePrompt(context);
+      });
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_synchronizeInstalledCloudThemes());
+    });
+  }
+
+  Future<void> _restoreDesktopSidebarWidth() async {
+    final prefs = await SharedPreferences.getInstance();
+    final savedWidth = prefs.getDouble(_desktopSidebarWidthKey);
+    if (!mounted || savedWidth == null) return;
+    _splitSidebarWidth.value = savedWidth;
+  }
+
+  Future<void> _persistDesktopSidebarWidth() async {
+    if (!isDesktopTargetPlatform()) return;
+    final width = _splitSidebarWidth.value;
+    if (width == null) return;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setDouble(_desktopSidebarWidthKey, width);
+  }
+
+  Future<void> _synchronizeInstalledCloudThemes() async {
+    final controller = context.read<ThemeController>();
+    final cacheScope = controller.installedCloudThemeCacheScope;
+    final cacheRevision = controller.installedCloudThemeRevision;
+    final themes = await TelegramCloudThemeService().loadInstalled(
+      fallback: controller.installedCloudThemes,
+    );
+    if (!mounted) return;
+    final currentController = context.read<ThemeController>();
+    if (!identical(currentController, controller)) {
+      // Desktop Settings can replace its controller without changing the
+      // account scope. Never update the disposed instance; refresh the live
+      // replacement instead.
+      unawaited(_synchronizeInstalledCloudThemes());
+      return;
+    }
+    if (controller.installedCloudThemeCacheScope != cacheScope ||
+        controller.installedCloudThemeRevision != cacheRevision) {
+      return;
+    }
+    controller.synchronizeInstalledCloudThemes(themes);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final usesSplitSelection = _usesSplitSelection(context);
+    if (_wasUsingSplitSelection == true && !usesSplitSelection) {
+      _messageChatExitController.prepareExit();
+      _selectedArchivedChats = null;
+    }
+    _wasUsingSplitSelection = usesSplitSelection;
+    final accounts = context.read<AccountStore>();
+    if (!identical(_observedAccounts, accounts)) {
+      _observedAccounts?.removeListener(_handleAccountStoreChanged);
+      _observedAccounts = accounts;
+      _observedAccountSlot = accounts.activeSlot;
+      accounts.addListener(_handleAccountStoreChanged);
+    }
+    final controller = context.read<ChatDeepLinkController>();
+    if (identical(_chatDeepLinks, controller)) return;
+    _chatDeepLinks?.removeListener(_handlePendingChatDeepLink);
+    _chatDeepLinks = controller..addListener(_handlePendingChatDeepLink);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _handlePendingChatDeepLink();
+    });
+  }
+
+  @override
+  void dispose() {
+    _newChatHotkeyRegistration?.dispose();
+    _observedAccounts?.removeListener(_handleAccountStoreChanged);
+    _chatDeepLinks?.removeListener(_handlePendingChatDeepLink);
+    _androidShareIntent.removeListener(_handleAndroidShareIntentChanged);
+    _chatListController.dispose();
+    _unread.dispose();
+    _tabBar.dispose();
+    _topicListHost.dispose();
+    _splitSidebarWidth.dispose();
+    super.dispose();
+  }
+
+  void _handleAndroidShareIntentChanged() {
+    if (!mounted || !_androidShareIntent.hasPending) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_presentPendingAndroidShare());
+    });
+  }
+
+  Future<void> _presentPendingAndroidShare() async {
+    if (!mounted || !_androidShareIntent.supported || _presentingAndroidShare) {
+      return;
+    }
+    final payload = _androidShareIntent.takePending();
+    if (payload == null) return;
+    _presentingAndroidShare = true;
+    final copiedPaths = <String>[];
+    try {
+      final sharedFiles = await _androidShareIntent.copyFiles(payload.uris);
+      copiedPaths.addAll(sharedFiles.map((file) => file.path));
+      if (!mounted) return;
+      if (sharedFiles.isEmpty && payload.text.trim().isEmpty) return;
+
+      final picked = await Navigator.of(context, rootNavigator: true)
+          .push<ChatSummary>(
+            MaterialPageRoute(
+              builder: (_) =>
+                  const ChatPickerView(title: AppStringKeys.topicChatShare),
+            ),
+          );
+      if (!mounted || picked == null) return;
+
+      if (sharedFiles.isEmpty) {
+        await TdClient.shared.query(
+          setTextChatDraftRequest(
+            chatId: picked.id,
+            formattedText: {'@type': 'formattedText', 'text': payload.text},
+            date: DateTime.now().millisecondsSinceEpoch ~/ 1000,
+          ),
+        );
+        if (!mounted) return;
+        await openChatFromCurrentWindow(
+          context,
+          chatId: picked.id,
+          title: picked.title,
+        );
+        return;
+      }
+
+      final attachments = [
+        for (final file in sharedFiles)
+          OutgoingAttachment(
+            path: file.path,
+            kind: file.attachmentKind,
+            fileName: file.fileName,
+          ),
+      ];
+      final preview = await Navigator.of(context, rootNavigator: true)
+          .push<MediaSendPreviewResult>(
+            MaterialPageRoute(
+              fullscreenDialog: true,
+              builder: (_) => MediaSendPreviewView(
+                attachments: attachments,
+                initialCaption: payload.text,
+              ),
+            ),
+          );
+      if (!mounted || preview == null || preview.attachments.isEmpty) return;
+      // Read the switch before the await below: the caption is plain text, so
+      // 盘古之白 has no entities to move.
+      final spaceCaption = context.read<ThemeController>().panguOnSend;
+      final resolved = await resolveAttachmentListDimensions(
+        preview.attachments,
+      );
+      final spacedCaption = spaceCaption
+          ? PanguSpacing.transformUnannotated(preview.caption).text
+          : preview.caption;
+      final requests = buildAttachmentSendRequests(
+        chatId: picked.id,
+        attachments: resolved,
+        caption: spacedCaption,
+        sendConfiguration: preview.sendConfiguration,
+      );
+      for (final request in requests) {
+        await TdClient.shared.query(request);
+      }
+      if (!mounted) return;
+      await openChatFromCurrentWindow(
+        context,
+        chatId: picked.id,
+        title: picked.title,
+      );
+    } finally {
+      await _androidShareIntent.deleteFiles(copiedPaths);
+      _presentingAndroidShare = false;
+      if (mounted && _androidShareIntent.hasPending) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) unawaited(_presentPendingAndroidShare());
+        });
+      }
+    }
+  }
+
+  void _runChatListHotkey(VoidCallback action) {
+    if (!mounted) return;
+    // Reading MediaQuery from this state would re-register a window-size
+    // dependency on the root element, which the shell keeps off it.
+    if (usesDesktopShellLayout(Size.zero) && !_desktopListPaneVisible) {
+      _clearTabletDetail(0);
+    }
+    if (_selection != 0) setState(() => _selection = 0);
+    action();
+  }
+
+  void _handleAccountStoreChanged() {
+    final accounts = _observedAccounts;
+    if (accounts == null || accounts.activeSlot == _observedAccountSlot) return;
+    _messageChatExitController.prepareExit();
+    _observedAccountSlot = accounts.activeSlot;
+  }
+
+  void _toggleContextPane() =>
+      setState(() => _contextPaneShown = !_contextPaneShown);
+
+  final List<GlobalKey<NavigatorState>> _navKeys = createTabNavigatorKeys();
+
+  /// The navigator keys owned by this shell, for tests that need to push or
+  /// inspect a tab's nested route stack.
+  @visibleForTesting
+  List<GlobalKey<NavigatorState>> get tabNavigatorKeys => _navKeys;
+
+  static const _allTabs = [
+    _MainTabItem(0, AppStringKeys.tabMessages, HeroAppIcons.solidMessage),
+    _MainTabItem(
+      1,
+      AppStringKeys.tabChannels,
+      HeroAppIcons.hashtag,
+      selectedIcon: HeroAppIcons.solidHashtag,
+    ),
+    _MainTabItem(
+      2,
+      AppStringKeys.tabContacts,
+      HeroAppIcons.users,
+      selectedIcon: HeroAppIcons.solidUsers,
+    ),
+    _MainTabItem(
+      3,
+      AppStringKeys.tabMoments,
+      HeroAppIcons.circleNotch,
+      selectedIcon: HeroAppIcons.solidCircleNotch,
+    ),
+  ];
+
+  List<_MainTabItem> _visibleTabs(
+    ThemeController theme, {
+    required bool isBotApi,
+  }) {
+    if (isBotApi) return [_allTabs[0]];
+    return [
+      _allTabs[0],
+      if (theme.showChannelsTab) _allTabs[1],
+      if (theme.showContactsTab) _allTabs[2],
+      if (theme.showMomentsTab) _allTabs[3],
+    ];
+  }
+
+  Widget _root(int i) => switch (i) {
+    0 => ChatListView(controller: _chatListController),
+    1 => const TopicChannelsView(),
+    2 => const ContactsView(),
+    _ => const MomentsView(),
+  };
+
+  Future<bool> _onWillPop() async {
+    if (_usesSplitSelection(context)) {
+      if (_chatPaneController.pop()) return false;
+      switch (_selection) {
+        case 0:
+          if (_selectedArchivedChats != null) {
+            setState(() => _selectedArchivedChats = null);
+            return false;
+          }
+          if (_selectedMessageChat != null) {
+            _messageChatExitController.prepareExit();
+            setState(() => _selectedMessageChat = null);
+            return false;
+          }
+          if (_selectedMessageCommunity != null) {
+            setState(() => _selectedMessageCommunity = null);
+            return false;
+          }
+        case 1:
+          if (_selectedChannelDetail != null) {
+            setState(() => _selectedChannelDetail = null);
+            return false;
+          }
+        case 2:
+          if (_selectedContactDetail != null) {
+            setState(() => _selectedContactDetail = null);
+            return false;
+          }
+        case 3:
+          if (_selectedMomentDetail != null) {
+            setState(() => _selectedMomentDetail = null);
+            return false;
+          }
+      }
+    }
+    final nav = _navKeys[_selection].currentState;
+    if (nav != null && nav.canPop()) {
+      nav.pop();
+      return false;
+    }
+    return true;
+  }
+
+  void _select(int i) {
+    final theme = context.read<ThemeController>();
+    final tabs = _visibleTabs(
+      theme,
+      isBotApi: context.read<AccountStore>().activeIsBotApi,
+    );
+    if (i < 0 || i >= tabs.length) return;
+    final tabIndex = tabs[i].index;
+    final shouldToggleMessages = tabIndex == 0;
+    if (tabIndex == _selection) {
+      // Tapping the active tab pops to its root.
+      if (_usesSplitSelection(context) &&
+          tabIndex == 0 &&
+          _selectedArchivedChats != null) {
+        setState(() => _selectedArchivedChats = null);
+        return;
+      }
+      _navKeys[tabIndex].currentState?.popUntil((r) => r.isFirst);
+      if (_usesSplitSelection(context)) _clearTabletDetail(tabIndex);
+      if (shouldToggleMessages) _toggleMessagesListTarget(theme);
+      return;
+    }
+    if (_usesSplitSelection(context) && _selection == 0) {
+      _messageChatExitController.prepareExit();
+    }
+    setState(() => _selection = tabIndex);
+    if (shouldToggleMessages) _toggleMessagesListTarget(theme);
+  }
+
+  void _toggleMessagesListTarget(ThemeController theme) {
+    _chatListController.toggleFirstUnreadOrTop(
+      mayHaveUnread: _unread.countFor(theme.unreadBadgeMode) > 0,
+    );
+  }
+
+  void _handlePendingChatDeepLink() {
+    if (!mounted) return;
+    final request = _chatDeepLinks?.consumePending();
+    if (request == null) return;
+    unawaited(_openMessageDeepLink(request));
+  }
+
+  Future<void> _openMessageDeepLink(ChatDeepLinkRequest request) async {
+    final accounts = context.read<AccountStore>();
+    final requestedSlot = resolveDeepLinkAccountSlot(
+      requestedSlot: request.accountSlot,
+      requestedUserId: request.accountUserId,
+      activeSlot: accounts.activeSlot,
+      accounts: [
+        for (final account in accounts.summaries)
+          (slot: account.slot, userId: account.userId),
+      ],
+    );
+    // The request names no account. Most come from the active session (a
+    // search result, a profile, the music bar), so the chat opens there when
+    // the active account has it. Otherwise ask which account to use, marking
+    // the ones that have it; a notification goes straight to that account.
+    // (A link naming an account that is not signed in has nothing to offer.)
+    if (requestedSlot == null &&
+        request.accountSlot == null &&
+        request.accountUserId == null &&
+        accounts.summaries.length > 1) {
+      final activeSlot = accounts.activeSlot;
+      final slots = [for (final account in accounts.summaries) account.slot];
+      final withChat = await _slotsWithChat(request.chatId, slots, activeSlot);
+      // The account changed while the probe ran; the request predates it.
+      if (!mounted || accounts.activeSlot != activeSlot) return;
+      final int? slot;
+      if (withChat.contains(activeSlot)) {
+        slot = activeSlot;
+      } else if (request.fromNotification && withChat.isNotEmpty) {
+        slot = withChat.first;
+      } else {
+        slot = await showAccountPickerDialog(
+          context,
+          accounts: accounts.summaries,
+          activeSlot: activeSlot,
+          slotsWithChat: withChat.toSet(),
+        );
+      }
+      if (!mounted || slot == null) return;
+      await _openMessageDeepLink(request.scopedToAccountSlot(slot));
+      return;
+    }
+    if (requestedSlot == null) return;
+    if (requestedSlot != accounts.activeSlot) {
+      accounts.switchTo(requestedSlot, context.read<AuthManager>());
+      final controller = _chatDeepLinks;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final replay = request.scopedToAccountSlot(requestedSlot);
+        // A conversation from another account cannot remain a valid back
+        // destination after the account-keyed app subtree is rebuilt, so the
+        // replay intentionally uses the default replacement policy.
+        controller?.openChat(
+          chatId: replay.chatId,
+          title: replay.title,
+          messageId: replay.messageId,
+          accountUserId: replay.accountUserId,
+          accountSlot: replay.accountSlot,
+        );
+      });
+      return;
+    }
+    if (_usesSplitSelection(context)) {
+      final nextSelection = ChatListSelection(
+        chatId: request.chatId,
+        title: request.title,
+        initialMessageId: request.messageId,
+      );
+      setState(() => _selection = 0);
+      _showMessageChat(nextSelection);
+      return;
+    }
+
+    setState(() => _selection = 0);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final navigator = Navigator.of(context, rootNavigator: true);
+      if (!request.preserveChatStack) {
+        navigator.popUntil((route) => route.isFirst);
+      }
+      navigator.push(
+        AppChatPageRoute(
+          builder: (_) => ChatView(
+            chatId: request.chatId,
+            title: request.title,
+            initialMessageId: request.messageId,
+          ),
+        ),
+      );
+    });
+  }
+
+  /// The slots, in [slots] order, whose account has [chatId].
+  ///
+  /// `getChat` is answered from the account's local database, so it only
+  /// succeeds for chats that account has seen. The active account is asked
+  /// first; when it has the chat the others are not asked at all.
+  static Future<List<int>> _slotsWithChat(
+    int chatId,
+    List<int> slots,
+    int activeSlot,
+  ) async {
+    Future<bool> hasChat(int slot) async {
+      try {
+        final chat = await TdClient.shared.queryForSlot(
+          {'@type': 'getChat', 'chat_id': chatId},
+          slot,
+          timeout: const Duration(seconds: 3),
+        );
+        return chat.type == 'chat';
+      } catch (_) {
+        return false;
+      }
+    }
+
+    if (slots.contains(activeSlot) && await hasChat(activeSlot)) {
+      return [activeSlot];
+    }
+    final others = [
+      for (final slot in slots)
+        if (slot != activeSlot) slot,
+    ];
+    final found = await Future.wait(others.map(hasChat));
+    return [
+      for (var i = 0; i < others.length; i++)
+        if (found[i]) others[i],
+    ];
+  }
+
+  void _openDesktopUtility(
+    DesktopUtilityWindowKind kind,
+    String title, {
+    int? chatId,
+    int? userId,
+    String? initialSettingsCategoryId,
+  }) {
+    final accounts = context.read<AccountStore>();
+    unawaited(
+      DesktopUtilityWindowService.instance.open(
+        DesktopUtilityWindowArguments(
+          kind: kind,
+          accountSlot: accounts.activeSlot,
+          accountUserId: accounts.activeUserId,
+          chatId: chatId,
+          userId: userId,
+          initialSettingsCategoryId: initialSettingsCategoryId,
+          title: title,
+          localeTag: Localizations.localeOf(context).toLanguageTag(),
+          dark: Theme.of(context).brightness == Brightness.dark,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openDesktopSavedMessages() async {
+    final accounts = context.read<AccountStore>();
+    var userId = accounts.activeUserId;
+    try {
+      if (userId == null || userId <= 0) {
+        final me = await TdClient.shared.query({'@type': 'getMe'});
+        userId = me.int64('id');
+      }
+      if (userId == null || userId <= 0) return;
+      final chat = await TdClient.shared.query({
+        '@type': 'createPrivateChat',
+        'user_id': userId,
+        'force': false,
+      });
+      final chatId = chat.int64('id') ?? userId;
+      if (!mounted) return;
+      _openDesktopUtility(
+        DesktopUtilityWindowKind.savedMessages,
+        AppStrings.t(AppStringKeys.savedMessages),
+        chatId: chatId,
+      );
+    } catch (_) {
+      if (!mounted || userId == null || userId <= 0) return;
+      _openDesktopUtility(
+        DesktopUtilityWindowKind.savedMessages,
+        AppStrings.t(AppStringKeys.savedMessages),
+        chatId: userId,
+      );
+    }
+  }
+
+  void _clearTabletDetail(int tabIndex) {
+    switch (tabIndex) {
+      case 0:
+        if (_selectedMessageChat != null || _selectedMessageCommunity != null) {
+          _messageChatExitController.prepareExit();
+          setState(() {
+            _selectedMessageChat = null;
+            _selectedMessageCommunity = null;
+          });
+        }
+      case 1:
+        if (_selectedChannelDetail != null) {
+          setState(() => _selectedChannelDetail = null);
+        }
+      case 2:
+        if (_selectedContactDetail != null) {
+          setState(() => _selectedContactDetail = null);
+        }
+      case 3:
+        if (_selectedMomentDetail != null) {
+          setState(() => _selectedMomentDetail = null);
+        }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider.value(value: _tabBar),
+        ChangeNotifierProvider.value(value: _unread),
+        ChangeNotifierProvider.value(value: _topicListHost),
+      ],
+      // Material ancestor so the tab content (bare Containers) gets a proper
+      // DefaultTextStyle instead of the debug red/yellow-underline fallback.
+      child: Material(
+        type: MaterialType.transparency,
+        child: PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, _) async {
+            if (!didPop && await _onWillPop()) {
+              await SystemNavigator.pop();
+            }
+          },
+          child: _rootStack(),
+        ),
+      ),
+    );
+  }
+
+  Widget _rootStack() {
+    return Stack(children: [_classicTabs(), _drawerOverlay()]);
+  }
+
+  // MARK: - Per-tab navigators
+
+  Widget _tabNavigator(int i) {
+    return _TabNavigator(
+      navigatorKey: _navKeys[i],
+      tabIndex: i,
+      visibility: _tabBar,
+      root: _root(i),
+    );
+  }
+
+  int _visibleSelection(List<_MainTabItem> tabs) {
+    final index = tabs.indexWhere((tab) => tab.index == _selection);
+    return index < 0 ? tabs.length - 1 : index;
+  }
+
+  Widget _stack(List<_MainTabItem> tabs) => _LazyTabStack(
+    selection: _visibleSelection(tabs),
+    items: tabs,
+    builder: (tab) => _tabNavigator(tab.index),
+  );
+
+  // MARK: - Classic (flat) tab bar
+
+  Widget _classicTabs() {
+    final theme = context.watch<ThemeController>();
+    final isBotApi = context.watch<AccountStore>().activeIsBotApi;
+    if (!theme.communitiesEnabled && _selectedMessageCommunity != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted ||
+            context.read<ThemeController>().communitiesEnabled ||
+            _selectedMessageCommunity == null) {
+          return;
+        }
+        setState(() => _selectedMessageCommunity = null);
+      });
+    }
+    final tabs = _visibleTabs(theme, isBotApi: isBotApi);
+    if (!tabs.any((tab) => tab.index == _selection)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _selection = tabs.last.index);
+      });
+    }
+    final selection = _visibleSelection(tabs);
+    final activeTabIndex = tabs[selection].index;
+    if (_usesDesktopShell()) {
+      return _desktopSplitTabs(tabs, selection, activeTabIndex);
+    }
+    final showSplitPanes =
+        _usesTabletSplit(context) && !_hasCompactNavigationStack;
+    if (showSplitPanes || _retainsCompactDetail) {
+      return _tabletSplitTabs(
+        tabs,
+        selection,
+        activeTabIndex,
+        compact: !showSplitPanes,
+      );
+    }
+    return AnimatedBuilder(
+      animation: _tabBar,
+      builder: (context, _) {
+        // A route opened on the outer display stays mounted while opening
+        // the device. Adopt the split shell after returning to the tab root.
+        if (_usesTabletSplit(context) && !_hasCompactNavigationStack) {
+          return _tabletSplitTabs(tabs, selection, activeTabIndex);
+        }
+        final showTabBar = _tabBar.depth(activeTabIndex) == 0;
+        final bottomBar = showTabBar
+            ? AnimatedBuilder(
+                animation: _unread,
+                builder: (context, _) => _MainBottomBar(
+                  chatListController: _chatListController,
+                  selection: selection,
+                  onSelect: _select,
+                  items: tabs,
+                  reserveBottomInset: true,
+                  onClearUnread: _chatListController.markAllRead,
+                  unread: _unread.countFor(theme.unreadBadgeMode),
+                ),
+              )
+            : const SizedBox.shrink();
+        return BottomBarLayout(
+          overlay: theme.liquidGlassBottomBar && showTabBar,
+          body: _musicAwareContent(_stack(tabs)),
+          footer: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _fixedMusicPlayer(safeBottom: !showTabBar),
+              if (!theme.liquidGlassBottomBar && !AppMotion.isReduced(context))
+                AnimatedSize(
+                  duration: AppMotion.responsive,
+                  curve: AppMotion.standard,
+                  alignment: Alignment.bottomCenter,
+                  child: bottomBar,
+                )
+              else
+                bottomBar,
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _fixedMusicPlayer({required bool safeBottom}) {
+    return AnimatedBuilder(
+      animation: MusicPlayerController.shared,
+      builder: (context, _) {
+        final player = MusicPlayerController.shared;
+        final content =
+            player.isVisible &&
+                !player.collapsed &&
+                !player.hasEmbeddedPlayerHost
+            ? GlobalMusicPlayerBar(
+                bottomPadding: safeBottom
+                    ? MediaQuery.paddingOf(context).bottom.clamp(0, 12)
+                    : 0,
+              )
+            : const SizedBox.shrink();
+        if (AppMotion.isReduced(context)) return content;
+        return AnimatedSize(
+          duration: AppMotion.duration(context, AppMotion.responsive),
+          curve: AppMotion.standard,
+          child: content,
+        );
+      },
+    );
+  }
+
+  Widget _musicAwareContent(Widget child, {bool reserveForShellPlayer = true}) {
+    // The split shell docks the player in its list column instead of a
+    // window-wide strip, so the pane keeps its own bottom inset and needs no
+    // media query juggling.
+    if (!reserveForShellPlayer) return child;
+    return AnimatedBuilder(
+      animation: MusicPlayerController.shared,
+      child: child,
+      builder: (context, child) {
+        final player = MusicPlayerController.shared;
+        if (!reserveForShellPlayer ||
+            !player.isVisible ||
+            player.collapsed ||
+            player.hasEmbeddedPlayerHost) {
+          return child!;
+        }
+        return MediaQuery.removePadding(
+          context: context,
+          removeBottom: true,
+          child: child!,
+        );
+      },
+    );
+  }
+
+  Widget _desktopSplitTabs(
+    List<_MainTabItem> tabs,
+    int selection,
+    int activeTabIndex,
+  ) {
+    final theme = context.watch<ThemeController>();
+    final appLocale = context.watch<AppLocaleController>();
+    final accounts = context.watch<AccountStore>();
+    final isBotApi = accounts.activeIsBotApi;
+    final messageSelection = activeTabIndex == 0 ? _selectedMessageChat : null;
+    final selectedChat = desktopChatKindUsesContextPane(messageSelection?.kind)
+        ? messageSelection
+        : null;
+    final infoPaneRequested = _contextPaneShown;
+    // Built once per shell rebuild and handed to the geometry builder below by
+    // identity, so a resize frame or a divider drag never reconstructs it.
+    final contextPane = selectedChat == null
+        ? null
+        : KeyedSubtree(
+            key: ValueKey('desktop-chat-context-pane-${selectedChat.chatId}'),
+            child: DesktopChatContextPane(
+              chatId: selectedChat.chatId,
+              title: selectedChat.title,
+              onOpenMembers: () =>
+                  unawaited(_openDesktopChatMembers(selectedChat)),
+              onOpenMember: _openDesktopChatMember,
+            ),
+          );
+    final onOpenFullInfo = messageSelection == null
+        ? null
+        : () => unawaited(_openDesktopFullChatInfo(messageSelection));
+    final destinations = [
+      for (final tab in tabs)
+        DesktopNavigationDestination(
+          label: tab.label.l10n(context),
+          icon: tab.icon,
+        ),
+    ];
+    final fileLabel = AppStrings.t(AppStringKeys.topicPostContentFile);
+    final stickerFinderLabel = AppStrings.t(
+      AppStringKeys.chatStickerPacksFinderTitle,
+    );
+    final applicationMenuPrimaryActions = [
+      if (!isBotApi)
+        DesktopNavigationAction(
+          id: 'calls',
+          label: AppStrings.t(AppStringKeys.callsTitle),
+          icon: HeroAppIcons.phone,
+          onTap: () => _openDesktopUtility(
+            DesktopUtilityWindowKind.calls,
+            AppStrings.t(AppStringKeys.callsTitle),
+          ),
+        ),
+      if (!isBotApi)
+        DesktopNavigationAction(
+          id: 'saved-messages',
+          label: AppStrings.t(AppStringKeys.savedMessages),
+          icon: HeroAppIcons.thumbtack,
+          onTap: () => unawaited(_openDesktopSavedMessages()),
+        ),
+      DesktopNavigationAction(
+        id: 'files',
+        label: fileLabel,
+        icon: HeroAppIcons.folder,
+        onTap: () =>
+            _openDesktopUtility(DesktopUtilityWindowKind.files, fileLabel),
+      ),
+      if (!isBotApi)
+        DesktopNavigationAction(
+          id: 'sticker-finder',
+          label: stickerFinderLabel,
+          icon: HeroAppIcons.faceSmile,
+          onTap: () => _openDesktopUtility(
+            DesktopUtilityWindowKind.stickerFinder,
+            stickerFinderLabel,
+          ),
+        ),
+    ];
+    // Recomputed on each rail rebuild, so a Premium change (bought, lapsed)
+    // reaches the menu without a list captured in build() going stale.
+    List<DesktopNavigationAction> applicationMenuActions() => [
+      if (!isBotApi)
+        DesktopNavigationAction(
+          id: 'profile',
+          label: AppStrings.t(AppStringKeys.editProfileTitle),
+          icon: HeroAppIcons.solidCircleUser,
+          onTap: () => _openDesktopUtility(
+            DesktopUtilityWindowKind.editProfile,
+            AppStrings.t(AppStringKeys.editProfileTitle),
+          ),
+        ),
+      // Business tools need Telegram Premium; without it the screen is only a
+      // wall of locked rows, so it does not earn a place in the menu. The
+      // account's cached Premium flag decides it from the first frame, so
+      // the rows below never shift when the account answers.
+      if (!isBotApi && accounts.activeIsPremium)
+        DesktopNavigationAction(
+          id: 'business-profile',
+          label: AppStrings.t(AppStringKeys.businessSettingsTitle),
+          icon: HeroAppIcons.venue,
+          onTap: () => _openDesktopUtility(
+            DesktopUtilityWindowKind.businessProfile,
+            AppStrings.t(AppStringKeys.businessSettingsTitle),
+          ),
+        ),
+      DesktopNavigationAction(
+        id: 'settings',
+        label: AppStrings.t(AppStringKeys.profileSettings),
+        icon: HeroAppIcons.gear,
+        onTap: () => _openDesktopUtility(
+          DesktopUtilityWindowKind.settings,
+          AppStrings.t(AppStringKeys.profileSettings),
+        ),
+      ),
+    ];
+    final selectedLocaleKey = AppLocalizations.localeKeyFor(
+      appLocale.locale ?? Localizations.localeOf(context),
+    );
+    final languageOptions = [
+      for (final option in AppLocaleController.options)
+        DesktopMenuChoice(
+          id: option.tag,
+          label: option.label.l10n(context),
+          selected:
+              AppLocalizations.localeKeyFor(option.locale) == selectedLocaleKey,
+          onTap: () => unawaited(() async {
+            appLocale.locale = option.locale;
+            await DesktopChatWindowService.instance.notifyPresentationChanged();
+          }()),
+        ),
+    ];
+    // Quick theme switching, so a look can be changed without walking into
+    // Settings › Appearance › Theme. It applies to the brightness on screen —
+    // switching a dark theme while in light mode would change nothing visible.
+    final themeBrightness = Theme.of(context).brightness;
+    final activeCloudTheme = theme.cloudThemeFor(themeBrightness);
+    final themeOptions = [
+      DesktopMenuChoice(
+        id: 'default',
+        label: AppStrings.t(AppStringKeys.globalThemeDefault),
+        selected: activeCloudTheme == null,
+        onTap: () => theme.clearCloudTheme(themeBrightness),
+      ),
+      for (final cloudTheme in theme.installedCloudThemes)
+        DesktopMenuChoice(
+          id: cloudTheme.slug,
+          label: cloudTheme.displayTitle,
+          selected: cloudTheme.slug == activeCloudTheme?.slug,
+          onTap: () =>
+              theme.installCloudTheme(cloudTheme, brightness: themeBrightness),
+        ),
+    ];
+    final rail = AnimatedBuilder(
+      animation: Listenable.merge([_unread, _chatListController.sideFolders]),
+      builder: (context, _) => DesktopNavigationRail(
+        destinations: destinations,
+        folders: activeTabIndex == 0
+            ? _chatListController.sideFolders.value
+            : null,
+        selection: selection,
+        onSelect: _select,
+        unread: _unread.countFor(theme.unreadBadgeMode),
+        onClearUnread: _chatListController.markAllRead,
+        accounts: accounts.summaries,
+        activeAccountSlot: accounts.activeSlot,
+        onSelectAccount: (slot) =>
+            accounts.switchTo(slot, context.read<AuthManager>()),
+        onAddAccount: () => accounts.addAccount(context.read<AuthManager>()),
+        switchAccountLabel: AppStrings.t(AppStringKeys.loginSwitchAccount),
+        addAccountLabel: AppStrings.t(AppStringKeys.profileAddAccount),
+        themeToggleLabel: AppStrings.t(
+          Theme.of(context).brightness == Brightness.dark
+              ? AppStringKeys.themeModeLight
+              : AppStringKeys.themeModeDark,
+        ),
+        darkMode: Theme.of(context).brightness == Brightness.dark,
+        onToggleThemeMode: () =>
+            theme.toggleDayNight(Theme.of(context).brightness),
+        showAccountPhone: !theme.hideSidebarPhone,
+        applicationMenuLabel: AppStrings.t(AppStringKeys.chatMenu),
+        languageMenuLabel: AppStrings.t(AppStringKeys.languageMithkaLanguage),
+        languageOptions: languageOptions,
+        themeMenuLabel: AppStrings.t(AppStringKeys.appearanceTheme),
+        themeOptions: themeOptions,
+        applicationMenuPrimaryActions: applicationMenuPrimaryActions,
+        applicationMenuActions: applicationMenuActions(),
+      ),
+    );
+    final sidebarPane = _LazyTabStack(
+      selection: selection,
+      items: tabs,
+      builder: (tab) => _tabletSidebarRoot(tab.index, desktopSidebar: true),
+    );
+    final sidebarOnlyPane = _musicAwareContent(
+      _LazyTabStack(
+        selection: selection,
+        items: tabs,
+        builder: (tab) => _tabletSidebarRoot(tab.index, desktopSidebar: true),
+      ),
+    );
+    final hasDesktopDetail = _hasSelectedDesktopDetail(activeTabIndex);
+    Widget? memoizedConversation;
+    bool? memoizedBackButton;
+    bool? memoizedShowInfoPane;
+    bool? memoizedCanToggleInfoPane;
+    // The conversation pane keeps its widget identity across resize and drag
+    // frames — a fresh ChatView rebuilds every visible bubble — and is only
+    // reconstructed when the geometry flags it was built with actually flip.
+    Widget conversationPane({
+      required bool showBackButton,
+      required bool showInfoPane,
+      required bool canToggleInfoPane,
+    }) {
+      final cached = memoizedConversation;
+      if (cached != null &&
+          memoizedBackButton == showBackButton &&
+          memoizedShowInfoPane == showInfoPane &&
+          memoizedCanToggleInfoPane == canToggleInfoPane) {
+        return cached;
+      }
+      memoizedBackButton = showBackButton;
+      memoizedShowInfoPane = showInfoPane;
+      memoizedCanToggleInfoPane = canToggleInfoPane;
+      return memoizedConversation = _musicAwareContent(
+        _animatedTabletDetailPane(
+          activeTabIndex,
+          showMessageBackButton: showBackButton,
+          onMessageOpenFullInfo: onOpenFullInfo,
+          onMessageOpenUserProfile: _openDesktopUserProfile,
+          onMessageInfoPressed: canToggleInfoPane ? _toggleContextPane : null,
+          messageTrailingPane: showInfoPane ? contextPane : null,
+          messageTrailingPaneWidth: desktopInfoPaneWidth,
+        ),
+      );
+    }
+
+    return AnimatedBuilder(
+      animation: _tabBar,
+      builder: (context, _) => Column(
+        children: [
+          Expanded(
+            child: MusicPlayerShellScope(
+              child: ValueListenableBuilder<double?>(
+                valueListenable: _splitSidebarWidth,
+                builder: (context, requestedWidth, _) {
+                  // The window size is read here, not in the root build, so a
+                  // resize frame rebuilds these two pane widths instead of the
+                  // whole shell.
+                  final size = MediaQuery.sizeOf(context);
+                  final contentWidth = size.width - desktopNavigationRailWidth;
+                  final geometry = resolveDesktopShellGeometry(
+                    totalWidth: size.width,
+                    requestedSidebarWidth:
+                        requestedWidth ??
+                        defaultSplitSidebarWidth(contentWidth),
+                    infoPaneRequested: infoPaneRequested,
+                  );
+                  _desktopListPaneVisible = geometry.showListPane;
+                  final canToggleInfoPane =
+                      geometry.showListPane &&
+                      selectedChat != null &&
+                      canShowDesktopInfoPane(
+                        totalWidth: size.width,
+                        sidebarWidth: geometry.sidebarWidth,
+                      );
+                  final contextPaneExtent = geometry.showInfoPane
+                      ? desktopInfoPaneHandleWidth + desktopInfoPaneWidth
+                      : 0.0;
+                  return Stack(
+                    children: [
+                      Row(
+                        children: [
+                          rail,
+                          if (geometry.showListPane)
+                            SizedBox(
+                              key: const ValueKey('desktop-list-pane'),
+                              width: geometry.sidebarWidth,
+                              child: _sidebarWithTopicList(
+                                context,
+                                sidebarPane,
+                                overlayVisible: geometry.showListPane,
+                              ),
+                            ),
+                          SizedBox(
+                            key: const ValueKey('desktop-conversation-pane'),
+                            width:
+                                geometry.conversationWidth + contextPaneExtent,
+                            child: TopicListPlacementScope(
+                              placement:
+                                  geometry.showListPane && activeTabIndex == 0
+                                  ? TopicListPlacement.sidebar
+                                  : TopicListPlacement.inline,
+                              child: geometry.showListPane || hasDesktopDetail
+                                  ? conversationPane(
+                                      showBackButton:
+                                          desktopDetailNeedsBackButton(
+                                            geometry,
+                                          ),
+                                      showInfoPane: geometry.showInfoPane,
+                                      canToggleInfoPane: canToggleInfoPane,
+                                    )
+                                  : sidebarOnlyPane,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (geometry.showListPane)
+                        Positioned(
+                          left:
+                              desktopNavigationRailWidth +
+                              geometry.sidebarWidth -
+                              splitResizeHandleWidth / 2,
+                          top: 0,
+                          bottom: 0,
+                          child: _splitResizeHandle(
+                            totalWidth: contentWidth,
+                            sidebarWidth: geometry.sidebarWidth,
+                          ),
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+          _fixedMusicPlayer(safeBottom: true),
+        ],
+      ),
+    );
+  }
+
+  bool _hasSelectedDesktopDetail(int activeTabIndex) =>
+      switch (activeTabIndex) {
+        0 => _selectedMessageChat != null || _selectedMessageCommunity != null,
+        1 => _selectedChannelDetail != null,
+        2 => _selectedContactDetail != null,
+        _ => _selectedMomentDetail != null,
+      };
+
+  /// Telegram iOS paints a forum's topic list over the chat list column
+  /// instead of carving a rail out of the conversation pane.
+  Widget _sidebarWithTopicList(
+    BuildContext context,
+    Widget sidebar, {
+    required bool overlayVisible,
+  }) {
+    if (!overlayVisible) return sidebar;
+    final host = context.watch<TopicListHost>();
+    if (host.attachment == null || host.listHidden) return sidebar;
+    return Stack(
+      children: [
+        sidebar,
+        Positioned.fill(child: ForumTopicListPane(host: host)),
+      ],
+    );
+  }
+
+  Widget _tabletSplitTabs(
+    List<_MainTabItem> tabs,
+    int selection,
+    int activeTabIndex, {
+    bool compact = false,
+  }) {
+    final theme = context.watch<ThemeController>();
+    final size = MediaQuery.sizeOf(context);
+    return ValueListenableBuilder<double?>(
+      valueListenable: _splitSidebarWidth,
+      builder: (context, requestedWidth, _) {
+        final sidebarWidth = constrainSplitSidebarWidth(
+          requestedWidth:
+              requestedWidth ?? defaultSplitSidebarWidth(size.width),
+          totalWidth: size.width,
+        );
+        final messageSelection = activeTabIndex == 0
+            ? _selectedMessageChat
+            : null;
+        final selectedChat =
+            desktopChatKindUsesContextPane(messageSelection?.kind)
+            ? messageSelection
+            : null;
+        final canToggleInfoPane =
+            !compact &&
+            selectedChat != null &&
+            size.width >=
+                sidebarWidth +
+                    splitDetailMinWidth +
+                    desktopInfoPaneHandleWidth +
+                    desktopInfoPaneWidth;
+        final showInfoPane = canToggleInfoPane && _contextPaneShown;
+        final contextPane = showInfoPane
+            ? KeyedSubtree(
+                key: ValueKey(
+                  'tablet-chat-context-pane-${selectedChat.chatId}',
+                ),
+                child: DesktopChatContextPane(
+                  chatId: selectedChat.chatId,
+                  title: selectedChat.title,
+                  onOpenMembers: () =>
+                      unawaited(_openDesktopChatMembers(selectedChat)),
+                  onOpenMember: _openDesktopChatMember,
+                ),
+              )
+            : null;
+        return AnimatedBuilder(
+          animation: _tabBar,
+          builder: (context, _) => Column(
+            children: [
+              Expanded(
+                child: MusicPlayerShellScope(
+                  child: Stack(
+                    children: [
+                      Row(
+                        children: [
+                          SizedBox(
+                            key: const ValueKey('tablet-list-pane'),
+                            width: compact ? 0 : sidebarWidth,
+                            child: TopClusterPane(
+                              enabled: !compact,
+                              child: Offstage(
+                                offstage: compact,
+                                child: OverflowBox(
+                                  minWidth: sidebarWidth,
+                                  maxWidth: sidebarWidth,
+                                  child: _sidebarWithTopicList(
+                                    context,
+                                    BottomBarLayout(
+                                      overlay: theme.liquidGlassBottomBar,
+                                      body: _LazyTabStack(
+                                        selection: selection,
+                                        items: tabs,
+                                        builder: (tab) =>
+                                            _tabletSidebarRoot(tab.index),
+                                      ),
+                                      footer: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          if (!compact)
+                                            const MusicMiniPlayerDock(),
+                                          AnimatedBuilder(
+                                            animation: _unread,
+                                            builder: (context, _) =>
+                                                _MainBottomBar(
+                                                  chatListController:
+                                                      _chatListController,
+                                                  selection: selection,
+                                                  onSelect: _select,
+                                                  items: tabs,
+                                                  reserveBottomInset: false,
+                                                  onClearUnread:
+                                                      _chatListController
+                                                          .markAllRead,
+                                                  unread: _unread.countFor(
+                                                    theme.unreadBadgeMode,
+                                                  ),
+                                                ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    overlayVisible: !compact,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: TopClusterPane(
+                              enabled: !compact,
+                              child: _musicAwareContent(
+                                TopicListPlacementScope(
+                                  placement: compact || activeTabIndex != 0
+                                      ? TopicListPlacement.inline
+                                      : TopicListPlacement.sidebar,
+                                  child: _animatedTabletDetailPane(
+                                    activeTabIndex,
+                                    showMessageBackButton: compact,
+                                    onMessageInfoPressed: canToggleInfoPane
+                                        ? _toggleContextPane
+                                        : null,
+                                    messageTrailingPane: contextPane,
+                                    messageTrailingPaneWidth:
+                                        desktopInfoPaneWidth,
+                                  ),
+                                ),
+                                reserveForShellPlayer: compact,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (!compact)
+                        Positioned(
+                          left: sidebarWidth - splitResizeHandleWidth / 2,
+                          top: 0,
+                          bottom: 0,
+                          child: _splitResizeHandle(
+                            totalWidth: size.width,
+                            sidebarWidth: sidebarWidth,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              if (compact) _fixedMusicPlayer(safeBottom: true),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _splitResizeHandle({
+    required double totalWidth,
+    required double sidebarWidth,
+  }) {
+    return _SplitResizeHandle(
+      onDragStart: () {
+        _splitSidebarWidth.value = sidebarWidth;
+      },
+      onDragUpdate: (delta) {
+        final current = _splitSidebarWidth.value ?? sidebarWidth;
+        _splitSidebarWidth.value = constrainSplitSidebarWidth(
+          requestedWidth: current + delta,
+          totalWidth: totalWidth,
+        );
+      },
+      onDragEnd: () => unawaited(_persistDesktopSidebarWidth()),
+    );
+  }
+
+  Widget _tabletSidebarRoot(int tabIndex, {bool desktopSidebar = false}) {
+    final communitiesEnabled = context
+        .watch<ThemeController>()
+        .communitiesEnabled;
+    return switch (tabIndex) {
+      0 => _tabletMessagesSidebar(
+        communitiesEnabled,
+        desktopSidebar: desktopSidebar,
+      ),
+      1 => TopicChannelsView(
+        desktopSidebar: desktopSidebar,
+        onOpenDetail: (detail) {
+          setState(() => _selectedChannelDetail = detail);
+        },
+      ),
+      2 => ContactsView(
+        desktopSidebar: desktopSidebar,
+        onOpenDetail: (detail) {
+          setState(() => _selectedContactDetail = detail);
+        },
+      ),
+      _ => MomentsView(
+        desktopSidebar: desktopSidebar,
+        onOpenDetail: (detail) {
+          setState(() => _selectedMomentDetail = detail);
+        },
+      ),
+    };
+  }
+
+  Widget _tabletMessagesSidebar(
+    bool communitiesEnabled, {
+    bool desktopSidebar = false,
+  }) {
+    final archivedSelection = _selectedArchivedChats;
+    return IndexedStack(
+      index: archivedSelection == null ? 0 : 1,
+      children: [
+        TickerMode(
+          enabled: archivedSelection == null,
+          child: ChatListView(
+            desktopSidebar: desktopSidebar,
+            controller: _chatListController,
+            selectedChatId: _selectedMessageChat?.chatId,
+            selectedCommunityId: communitiesEnabled
+                ? _selectedMessageCommunity?.community.id
+                : null,
+            onChatSelected: _showMessageChat,
+            onCommunitySelected: (community) {
+              if (!communitiesEnabled) return;
+              _messageChatExitController.prepareExit();
+              setState(() {
+                _selectedMessageChat = null;
+                _selectedMessageCommunity = community;
+              });
+            },
+            onOpenArchived: (selection) {
+              setState(() => _selectedArchivedChats = selection);
+            },
+          ),
+        ),
+        if (archivedSelection == null)
+          const SizedBox.shrink()
+        else
+          LiveArchivedChatsView(
+            updates: archivedSelection.updates,
+            chatsProvider: archivedSelection.chatsProvider,
+            selectedChatId: _selectedMessageChat?.chatId,
+            onClearUnread: archivedSelection.onClearUnread,
+            onUnarchive: archivedSelection.onUnarchive,
+            onBack: () => setState(() => _selectedArchivedChats = null),
+            onChatSelected: (chat) {
+              _showMessageChat(ChatListSelection.fromChat(chat));
+            },
+          ),
+      ],
+    );
+  }
+
+  Widget _tabletDetailPane(
+    int activeTabIndex, {
+    bool showMessageBackButton = false,
+    VoidCallback? onMessageInfoPressed,
+    VoidCallback? onMessageOpenFullInfo,
+    void Function(int userId, String name)? onMessageOpenUserProfile,
+    Widget? messageTrailingPane,
+    double messageTrailingPaneWidth = 0,
+  }) => switch (activeTabIndex) {
+    0 => _messageDetailPane(
+      showBackButton: showMessageBackButton,
+      onInfoPressed: onMessageInfoPressed,
+      onOpenFullInfo: onMessageOpenFullInfo,
+      onOpenUserProfile: onMessageOpenUserProfile,
+      trailingPane: messageTrailingPane,
+      trailingPaneWidth: messageTrailingPaneWidth,
+    ),
+    1 =>
+      _selectedChannelDetail ??
+          const _SplitEmptyPane(
+            icon: HeroAppIcons.hashtag,
+            title: AppStringKeys.tabSelectChannelContent,
+          ),
+    2 =>
+      _selectedContactDetail ??
+          const _SplitEmptyPane(
+            icon: HeroAppIcons.users,
+            title: AppStringKeys.tabSelectContact,
+          ),
+    _ =>
+      _selectedMomentDetail ??
+          ChannelMomentsView(
+            isRootTab: true,
+            title: AppStringKeys.tabFriendMoments,
+            onOpenDetail: (detail) {
+              setState(() => _selectedMomentDetail = detail);
+            },
+          ),
+  };
+
+  Widget _animatedTabletDetailPane(
+    int activeTabIndex, {
+    bool showMessageBackButton = false,
+    VoidCallback? onMessageInfoPressed,
+    VoidCallback? onMessageOpenFullInfo,
+    void Function(int userId, String name)? onMessageOpenUserProfile,
+    Widget? messageTrailingPane,
+    double messageTrailingPaneWidth = 0,
+  }) {
+    final detail = _tabletDetailPane(
+      activeTabIndex,
+      showMessageBackButton: showMessageBackButton,
+      onMessageInfoPressed: onMessageInfoPressed,
+      onMessageOpenFullInfo: onMessageOpenFullInfo,
+      onMessageOpenUserProfile: onMessageOpenUserProfile,
+      messageTrailingPane: messageTrailingPane,
+      messageTrailingPaneWidth: messageTrailingPaneWidth,
+    );
+    final motionKey = switch (activeTabIndex) {
+      0 when _selectedMessageCommunity != null => ValueKey(
+        'tablet-message-community-${_selectedMessageCommunity!.community.id}',
+      ),
+      0 when _selectedMessageChat != null => ValueKey(
+        'tablet-message-chat-${_selectedMessageChat!.chatId}-'
+        '${_selectedMessageChat!.supportsTopics}-'
+        '${_selectedMessageChat!.initialMessageId ?? 0}-'
+        '${_selectedMessageChat!.forumTopicId ?? 0}-'
+        '${_selectedMessageChat!.composerFocusRequestId}',
+      ),
+      0 => const ValueKey('tablet-message-empty'),
+      1 when _selectedChannelDetail != null => ObjectKey(
+        _selectedChannelDetail!,
+      ),
+      1 => const ValueKey('tablet-channel-empty'),
+      2 when _selectedContactDetail != null => ObjectKey(
+        _selectedContactDetail!,
+      ),
+      2 => const ValueKey('tablet-contact-empty'),
+      _ when _selectedMomentDetail != null => ObjectKey(_selectedMomentDetail!),
+      _ => const ValueKey('tablet-moments-root'),
+    };
+    return DetailContentReveal(
+      motionKey: motionKey,
+      child: ChatPane(
+        key: ValueKey(('chat-pane', motionKey)),
+        controller: _chatPaneController,
+        child: detail,
+      ),
+    );
+  }
+
+  Widget _messageDetailPane({
+    bool showBackButton = false,
+    VoidCallback? onInfoPressed,
+    VoidCallback? onOpenFullInfo,
+    void Function(int userId, String name)? onOpenUserProfile,
+    Widget? trailingPane,
+    double trailingPaneWidth = 0,
+  }) {
+    final selectedCommunity =
+        context.watch<ThemeController>().communitiesEnabled
+        ? _selectedMessageCommunity
+        : null;
+    if (selectedCommunity != null) {
+      return KeyedSubtree(
+        key: ValueKey('message-community-${selectedCommunity.community.id}'),
+        child: CommunityView(
+          community: selectedCommunity.community,
+          chats: selectedCommunity.chats,
+          viewableChats: selectedCommunity.viewableChats,
+          updates: selectedCommunity.updates,
+          chatsProvider: selectedCommunity.chatsProvider,
+          viewableChatsProvider: selectedCommunity.viewableChatsProvider,
+          onCollapsedChanged: selectedCommunity.onCollapsedChanged,
+          showBackButton: showBackButton,
+          onBack: showBackButton
+              ? () => setState(() => _selectedMessageCommunity = null)
+              : null,
+          onChatSelected: (chat) {
+            _showMessageChat(ChatListSelection.fromChat(chat));
+          },
+        ),
+      );
+    }
+    final selected = _selectedMessageChat;
+    if (selected == null) return const _MessageEmptyPane();
+    final chat = selected.chat;
+    const headerHeight =
+        AppMetric.headerAvatarSize + (AppSpacing.md + AppSpacing.xxs) * 2;
+    final headerColor = context.colors.chatBackground;
+    return KeyedSubtree(
+      key: ValueKey(
+        'message-detail-${selected.chatId}-${selected.supportsTopics}-'
+        '${selected.initialMessageId ?? 0}-${selected.forumTopicId ?? 0}-'
+        '${selected.composerFocusRequestId}',
+      ),
+      child: ChatView(
+        chatId: selected.chatId,
+        title: selected.title,
+        seedMessage: chat?.lastChatMessage,
+        initialMessageId: selected.initialMessageId,
+        forumTopicId: selected.forumTopicId,
+        showBackButton: showBackButton,
+        headerHeight: headerHeight,
+        headerColor: headerColor,
+        showHeaderDivider: false,
+        trailingPane: trailingPane,
+        trailingPaneWidth: trailingPaneWidth,
+        requestComposerFocusOnReady: selected.composerFocusRequestId != 0,
+        exitController: _messageChatExitController,
+        revealLatestController: _messageRevealLatestController,
+        onChatKindResolved: (kind) =>
+            _handleSelectedChatKindResolved(selected.chatId, kind),
+        onInfoPressed: onInfoPressed,
+        onOpenFullInfo: onOpenFullInfo,
+        onOpenUserProfile: onOpenUserProfile,
+        onOpenTopicTranscript: (topicId) =>
+            _openSelectedChatTopic(selected.chatId, topicId),
+        onBack: () => setState(() => _selectedMessageChat = null),
+      ),
+    );
+  }
+
+  Future<void> _openDesktopFullChatInfo(ChatListSelection selected) async {
+    _openDesktopUtility(
+      DesktopUtilityWindowKind.chatInfo,
+      selected.title,
+      chatId: selected.chatId,
+    );
+  }
+
+  Future<void> _openDesktopChatMembers(ChatListSelection selected) async {
+    await Navigator.of(context, rootNavigator: true).push<void>(
+      AppPageRoute<void>(
+        pageBuilder: (_, _, _) =>
+            ChatMembersView(chatId: selected.chatId, title: selected.title),
+      ),
+    );
+  }
+
+  void _openDesktopChatMember(ChatMember member) {
+    _openDesktopUserProfile(member.id, member.name);
+  }
+
+  void _openDesktopUserProfile(int userId, String name) {
+    _openDesktopUtility(
+      DesktopUtilityWindowKind.userProfile,
+      name,
+      userId: userId,
+    );
+  }
+
+  /// Shows [next] in the split pane, or — when it is the conversation already
+  /// on screen — asks that transcript for its newest message.
+  ///
+  /// Without this, tapping the open conversation in the list rebuilt an equal
+  /// selection: nothing moved, so the tap did nothing at all. The reader's
+  /// expectation is a jump to the latest message, which is also what the
+  /// return-to-latest arrow does.
+  void _showMessageChat(ChatListSelection next) {
+    final current = _selectedMessageChat;
+    // A jump target always means "go to that message", so only a plain
+    // request for the conversation already on screen is read as "show me the
+    // newest message".
+    if (current != null &&
+        next.initialMessageId == null &&
+        current.showsSameTranscript(next)) {
+      _messageRevealLatestController.revealLatest();
+      return;
+    }
+    _prepareMessageChatReplacement(next);
+    setState(() {
+      _selectedMessageCommunity = null;
+      _selectedMessageChat = next;
+    });
+  }
+
+  void _prepareMessageChatReplacement(ChatListSelection? nextSelection) {
+    final current = _selectedMessageChat;
+    if (current == null ||
+        (nextSelection != null &&
+            current.chatId == nextSelection.chatId &&
+            current.supportsTopics == nextSelection.supportsTopics &&
+            current.initialMessageId == nextSelection.initialMessageId &&
+            current.forumTopicId == nextSelection.forumTopicId &&
+            current.composerFocusRequestId ==
+                nextSelection.composerFocusRequestId)) {
+      return;
+    }
+    _messageChatExitController.prepareExit();
+  }
+
+  /// Swaps the selected chat to one of its topics (or back to the whole chat)
+  /// through the shell, so the transcript keeps the live info pane, back
+  /// button and other shell-owned wiring.
+  void _openSelectedChatTopic(int chatId, int? topicId) {
+    final current = _selectedMessageChat;
+    if (current == null ||
+        current.chatId != chatId ||
+        current.forumTopicId == topicId) {
+      return;
+    }
+    final next = current.withForumTopic(topicId);
+    _prepareMessageChatReplacement(next);
+    setState(() => _selectedMessageChat = next);
+  }
+
+  void _handleSelectedChatKindResolved(int chatId, ChatKind kind) {
+    final current = _selectedMessageChat;
+    if (current == null || current.chatId != chatId || current.kind == kind) {
+      return;
+    }
+    setState(() => _selectedMessageChat = current.withResolvedKind(kind));
+  }
+
+  bool _usesTabletSplit(BuildContext context) {
+    return usesAdaptiveSplitLayout(MediaQuery.sizeOf(context));
+  }
+
+  // `usesDesktopShellLayout` ignores the size it is handed, so reading
+  // MediaQuery here would only tie the root element to the window size and
+  // rebuild the entire shell on every frame of a resize drag.
+  bool _usesDesktopShell() => usesDesktopShellLayout(Size.zero);
+
+  bool _usesSplitSelection(BuildContext context) {
+    // Same reason: on desktop the answer is platform-only, and this is also
+    // called from didChangeDependencies, where a size dependency would stick to
+    // the root element for the life of the app.
+    if (usesDesktopShellLayout(Size.zero)) return true;
+    if (_hasCompactNavigationStack) return false;
+    return _retainsCompactDetail ||
+        usesSplitSelectionLayout(MediaQuery.sizeOf(context));
+  }
+
+  // Closing a foldable display must keep the active detail (and its nested
+  // navigator) mounted. Back returns to the compact tab navigator normally.
+  bool get _retainsCompactDetail =>
+      !kIsWeb &&
+      defaultTargetPlatform == TargetPlatform.iOS &&
+      _selection == 0 &&
+      (_selectedMessageChat != null || _selectedMessageCommunity != null);
+
+  bool get _hasCompactNavigationStack =>
+      _navKeys[_selection].currentState != null &&
+      _tabBar.depth(_selection) > 0;
+
+  // MARK: - Drawer overlay (the "我" profile drawer)
+
+  Widget _drawerOverlay() =>
+      _ProfileDrawerOverlay(controller: context.read<dc.DrawerController>());
+}
+
+/// The draggable split divider.
+///
+/// It owns its hover state so growing the line from 1px to 2px on mouse-over
+/// does not setState the shell, which rebuilds both panes.
+class _SplitResizeHandle extends StatefulWidget {
+  const _SplitResizeHandle({
+    required this.onDragStart,
+    required this.onDragUpdate,
+    required this.onDragEnd,
+  });
+
+  final VoidCallback onDragStart;
+  final ValueChanged<double> onDragUpdate;
+  final VoidCallback onDragEnd;
+
+  @override
+  State<_SplitResizeHandle> createState() => _SplitResizeHandleState();
+}
+
+class _SplitResizeHandleState extends State<_SplitResizeHandle> {
+  bool _hovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final dividerColor = _hovered
+        ? AppTheme.brand.withValues(alpha: 0.78)
+        : context.colors.divider;
+    return Semantics(
+      label: AppStrings.t(AppStringKeys.mainTabResizeSidebar),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.resizeColumn,
+        onEnter: (_) {
+          if (!_hovered) setState(() => _hovered = true);
+        },
+        onExit: (_) {
+          if (_hovered) setState(() => _hovered = false);
+        },
+        child: GestureDetector(
+          key: const ValueKey('main-split-resize-handle'),
+          behavior: HitTestBehavior.opaque,
+          onHorizontalDragStart: (_) => widget.onDragStart(),
+          onHorizontalDragUpdate: (details) =>
+              widget.onDragUpdate(details.delta.dx),
+          onHorizontalDragEnd: (_) => widget.onDragEnd(),
+          child: SizedBox(
+            width: splitResizeHandleWidth,
+            child: Center(
+              child: AnimatedContainer(
+                duration: AppMotion.duration(context, AppMotion.quick),
+                curve: AppMotion.standard,
+                width: _hovered ? 2 : 1,
+                color: dividerColor,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ProfileDrawerOverlay extends StatefulWidget {
+  const _ProfileDrawerOverlay({required this.controller});
+
+  final dc.DrawerController controller;
+
+  @override
+  State<_ProfileDrawerOverlay> createState() => _ProfileDrawerOverlayState();
+}
+
+class _ProfileDrawerOverlayState extends State<_ProfileDrawerOverlay>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  void _rebuild() => setState(() {});
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: AppMotion.deliberate,
+      reverseDuration: AppMotion.responsive,
+      value: widget.controller.isOpen ? 1 : 0,
+    )..addListener(_rebuild);
+    widget.controller.addListener(_sync);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _controller.duration = AppMotion.duration(context, AppMotion.deliberate);
+    _controller.reverseDuration = AppMotion.duration(
+      context,
+      AppMotion.responsive,
+    );
+    _sync();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ProfileDrawerOverlay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.controller, widget.controller)) return;
+    oldWidget.controller.removeListener(_sync);
+    widget.controller.addListener(_sync);
+    _sync();
+  }
+
+  void _sync() {
+    if (AppMotion.isReduced(context)) {
+      _controller.value = widget.controller.isOpen ? 1 : 0;
+    } else if (widget.controller.isOpen) {
+      _controller.forward();
+    } else {
+      _controller.reverse();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_sync);
+    _controller
+      ..removeListener(_rebuild)
+      ..dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final width = math.min(MediaQuery.sizeOf(context).width * 0.88, 420.0);
+    final progress = AppMotion.emphasized.transform(_controller.value);
+    return IgnorePointer(
+      ignoring: _controller.isDismissed,
+      child: ExcludeSemantics(
+        excluding: _controller.isDismissed,
+        child: Stack(
+          children: [
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: widget.controller.close,
+                child: ColoredBox(
+                  color: Colors.black.withValues(alpha: 0.35 * progress),
+                ),
+              ),
+            ),
+            Positioned(
+              left: -width * (1 - progress),
+              top: 0,
+              bottom: 0,
+              width: width,
+              child: Material(
+                color: context.colors.groupedBackground,
+                child: const ProfileView(),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MessageEmptyPane extends StatelessWidget {
+  const _MessageEmptyPane();
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return ColoredBox(
+      color: c.groupedBackground,
+      child: Center(
+        child: Opacity(
+          opacity: 0.08,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Image.asset('assets/penguin.png', width: 92, height: 92),
+              const SizedBox(width: 18),
+              Text(
+                'Mithka',
+                style: TextStyle(
+                  fontSize: 64,
+                  fontWeight: FontWeight.w600,
+                  color: c.textTertiary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SplitEmptyPane extends StatelessWidget {
+  const _SplitEmptyPane({required this.icon, required this.title});
+
+  final AppIconData icon;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return ColoredBox(
+      color: c.groupedBackground,
+      child: Center(
+        child: Opacity(
+          opacity: 0.18,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              AppIcon(icon, size: 56, color: c.textTertiary),
+              const SizedBox(height: 14),
+              Text(
+                title.l10n(context),
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w600,
+                  color: c.textTertiary,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MainTabItem {
+  const _MainTabItem(
+    this.index,
+    this.label,
+    this.icon, {
+    AppIconData? selectedIcon,
+  }) : selectedIcon = selectedIcon ?? icon;
+
+  final int index;
+  final String label;
+  final AppIconData icon;
+  final AppIconData selectedIcon;
+}
+
+class _LazyTabStack extends StatefulWidget {
+  const _LazyTabStack({
+    required this.selection,
+    required this.items,
+    required this.builder,
+  });
+
+  final int selection;
+  final List<_MainTabItem> items;
+  final Widget Function(_MainTabItem tab) builder;
+
+  @override
+  State<_LazyTabStack> createState() => _LazyTabStackState();
+}
+
+class _LazyTabStackState extends State<_LazyTabStack>
+    with SingleTickerProviderStateMixin {
+  final Set<int> _builtTabIndexes = {};
+  late final AnimationController _transition;
+  int? _departingTabIndex;
+  double _direction = 1;
+  int _transitionGeneration = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _transition = AnimationController(
+      vsync: this,
+      duration: AppMotion.deliberate,
+      value: 1,
+    );
+    _rememberSelection();
+  }
+
+  @override
+  void didUpdateWidget(covariant _LazyTabStack oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final oldPosition = _selectedPosition(oldWidget);
+    final oldTabIndex = oldWidget.items.isEmpty
+        ? null
+        : oldWidget.items[oldPosition].index;
+    _builtTabIndexes.removeWhere(
+      (index) => !widget.items.any((tab) => tab.index == index),
+    );
+    _rememberSelection();
+    if (widget.items.isEmpty) return;
+    final nextPosition = _selectedPosition(widget);
+    final nextTabIndex = widget.items[nextPosition].index;
+    if (oldTabIndex == null || oldTabIndex == nextTabIndex) return;
+
+    _direction = nextPosition >= oldPosition ? 1 : -1;
+    _departingTabIndex = widget.items.any((tab) => tab.index == oldTabIndex)
+        ? oldTabIndex
+        : null;
+    _transition.duration = AppMotion.duration(context, AppMotion.deliberate);
+    final generation = ++_transitionGeneration;
+    if (_transition.duration == Duration.zero) {
+      _transition.value = 1;
+      _departingTabIndex = null;
+      return;
+    }
+    _transition.forward(from: 0).whenComplete(() {
+      if (!mounted || generation != _transitionGeneration) return;
+      setState(() => _departingTabIndex = null);
+    });
+  }
+
+  int _selectedPosition(_LazyTabStack source) => source.items.isEmpty
+      ? 0
+      : source.selection.clamp(0, source.items.length - 1).toInt();
+
+  void _rememberSelection() {
+    if (widget.items.isEmpty) return;
+    final selectedIndex = _selectedPosition(widget);
+    final selected = widget.items[selectedIndex];
+    _builtTabIndexes.add(selected.index);
+  }
+
+  @override
+  void dispose() {
+    _transition.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.items.isEmpty) return const SizedBox.expand();
+    final selectedPosition = _selectedPosition(widget);
+    final selectedTabIndex = widget.items[selectedPosition].index;
+    final desktopInPlace = AppMotion.usesInPlaceDesktopNavigation(context);
+    return ColoredBox(
+      color: context.colors.background,
+      child: ClipRect(
+        child: AnimatedBuilder(
+          animation: _transition,
+          builder: (context, _) {
+            final progress = AppMotion.standard.transform(_transition.value);
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                for (final tab in widget.items)
+                  _animatedTab(
+                    tab: tab,
+                    selectedTabIndex: selectedTabIndex,
+                    progress: progress,
+                    desktopInPlace: desktopInPlace,
+                  ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _animatedTab({
+    required _MainTabItem tab,
+    required int selectedTabIndex,
+    required double progress,
+    required bool desktopInPlace,
+  }) {
+    final selected = tab.index == selectedTabIndex;
+    final departing = tab.index == _departingTabIndex;
+    final visible = selected || departing;
+    // The incoming page stays fully opaque: RenderOpacity short-circuits at
+    // alpha 255, so only the departing page pushes a full-viewport saveLayer
+    // for the length of the switch instead of both.
+    final opacity = selected ? 1.0 : 1 - progress;
+    final offset = desktopInPlace
+        ? 0.0
+        : selected
+        ? _direction * 20 * (1 - progress)
+        : -_direction * 10 * progress;
+    final scale = desktopInPlace
+        ? 1.0
+        : selected
+        ? 0.995 + 0.005 * progress
+        : 1 - 0.005 * progress;
+
+    return Offstage(
+      offstage: !visible,
+      child: ExcludeSemantics(
+        excluding: !selected,
+        child: IgnorePointer(
+          ignoring: !selected,
+          child: TickerMode(
+            enabled: selected,
+            child: Opacity(
+              opacity: opacity.clamp(0.0, 1.0),
+              child: Transform.translate(
+                key: ValueKey('main-tab-translation-${tab.index}'),
+                offset: Offset(offset, 0),
+                child: Transform.scale(
+                  key: ValueKey('main-tab-scale-${tab.index}'),
+                  scale: scale,
+                  child: KeyedSubtree(
+                    key: ValueKey('main-tab-${tab.index}'),
+                    child: _builtTabIndexes.contains(tab.index)
+                        ? widget.builder(tab)
+                        : const SizedBox.expand(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Hosts one tab's navigation stack so pushes stay within the tab.
+class _TabNavigator extends StatefulWidget {
+  const _TabNavigator({
+    required this.navigatorKey,
+    required this.tabIndex,
+    required this.visibility,
+    required this.root,
+  });
+  final GlobalKey<NavigatorState> navigatorKey;
+  final int tabIndex;
+  final dc.TabBarVisibility visibility;
+  final Widget root;
+
+  @override
+  State<_TabNavigator> createState() => _TabNavigatorState();
+}
+
+class _TabNavigatorState extends State<_TabNavigator> {
+  // Keep the observer's route stack across window-size rebuilds, but create
+  // a fresh stack when this navigator is replaced by the split shell.
+  late final _observer = dc.TabDepthObserver(
+    widget.tabIndex,
+    widget.visibility,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return Navigator(
+      key: widget.navigatorKey,
+      observers: [_observer],
+      onGenerateRoute: (settings) =>
+          MaterialPageRoute(builder: (_) => widget.root, settings: settings),
+    );
+  }
+}
+
+/// Height above the window's bottom edge that the system home indicator
+/// occupies: the pill is ~5pt tall and sits ~8pt up, so its top edge is
+/// ~13pt above the edge, plus 1pt of breathing room.
+const double kHomeIndicatorClearance = 14;
+
+/// The bottom clearance the bar must keep for system UI.
+///
+/// On iOS, use the reported bottom inset to detect a home indicator. The
+/// indicator itself is a ~5pt pill sitting ~8pt above the edge, so its top
+/// edge is ~13pt up; that — not the platform's whole safe area, which also
+/// covers the gesture band the bar does not use — is what the bar's content
+/// must clear, plus 1pt of breathing room. Other platforms retain the full
+/// reported safe area: Android's navigation buttons can occupy that space.
+double homeIndicatorBarClearance(BuildContext context) {
+  final reported = MediaQuery.paddingOf(context).bottom;
+  if (reported <= 0) return 0;
+  if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return reported;
+  return math.min(reported, kHomeIndicatorClearance);
+}
+
+/// Focused tests exercise the real production bar without booting chat pages.
+@visibleForTesting
+Widget mainBottomBarForTesting({
+  required int selection,
+  required ValueChanged<int> onSelect,
+  required VoidCallback onClearUnread,
+  int unread = 0,
+  bool reserveBottomInset = true,
+}) => _MainBottomBar(
+  selection: selection,
+  onSelect: onSelect,
+  onClearUnread: onClearUnread,
+  items: _MainRootViewState._allTabs,
+  unread: unread,
+  reserveBottomInset: reserveBottomInset,
+);
+
+/// Shared tab controls with an optional glass surface.
+class _MainBottomBar extends StatelessWidget {
+  const _MainBottomBar({
+    required this.selection,
+    required this.onSelect,
+    required this.onClearUnread,
+    required this.items,
+    required this.unread,
+    required this.reserveBottomInset,
+    this.chatListController,
+  });
+  final int selection;
+  final ValueChanged<int> onSelect;
+  final VoidCallback onClearUnread;
+  final List<_MainTabItem> items;
+  final int unread;
+  final ChatListController? chatListController;
+
+  /// Whether the bar keeps clearance for the system home indicator.
+  ///
+  /// True only in the compact shell, which docks the bar against the window
+  /// edge under the indicator; the clearance is then [homeIndicatorBarClearance]
+  /// and the tabs fill the whole bar. Docked in the split shell's column the
+  /// bar keeps none of it: the bar does not span the window and the indicator
+  /// sits over the detail pane, not over this column.
+  final bool reserveBottomInset;
+
+  /// Label size the classic bar is laid out around. The icon block above it
+  /// keeps its size at every text scale, so only this line's growth is added
+  /// to the bar. The glass bar draws no label at all and always grows by zero.
+  static const double _labelSize = 11;
+
+  /// Line box of the label relative to its font size.
+  static const double _labelLineHeight = 1.3;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    // The icons and their badges keep their size, so the bar only has to grow
+    // by what the labels underneath them gain from the text scale.
+    final theme = context.watch<ThemeController>();
+    final glass = theme.liquidGlassBottomBar;
+    final sideGeometry = SideNavigationGeometry.of(context);
+    const sideItemHeight = SideNavigationGeometry.itemExtent;
+    if (!kIsWeb &&
+        defaultTargetPlatform == TargetPlatform.iOS &&
+        sideGeometry?.fits(items.length, sideItemHeight) == true) {
+      return SideNavigationPortal(
+        fillSide: true,
+        visible:
+            (ModalRoute.isCurrentOf(context) ?? true) &&
+            !context.watch<dc.DrawerController>().isOpen,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          child: Column(
+            key: const ValueKey('side-tab-bar'),
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (chatListController != null && items[selection].index == 0)
+                Expanded(
+                  child: ValueListenableBuilder<Widget?>(
+                    valueListenable: chatListController!.sideFolders,
+                    builder: (_, folders, _) =>
+                        folders ?? const SizedBox.shrink(),
+                  ),
+                )
+              else
+                const Spacer(),
+              const SizedBox(height: 12),
+              for (var i = 0; i < items.length; i++)
+                AppInteractiveSurface(
+                  key: ValueKey('side-tab-${items[i].index}'),
+                  semanticLabel: items[i].label.l10n(context),
+                  selected: selection == i,
+                  borderRadius: BorderRadius.circular(AppRadius.control),
+                  onTap: () => onSelect(i),
+                  child: Container(
+                    height: sideItemHeight,
+                    width: double.infinity,
+                    decoration: BoxDecoration(
+                      color: selection == i
+                          ? c.linkBlue.withValues(alpha: 0.10)
+                          : null,
+                      borderRadius: BorderRadius.circular(AppRadius.control),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 32,
+                          height: 28,
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            alignment: Alignment.center,
+                            children: [
+                              AppIcon(
+                                items[i].icon,
+                                size: 24,
+                                color: selection == i
+                                    ? c.linkBlue
+                                    : c.textTertiary,
+                              ),
+                              if (i == 0 && unread > 0)
+                                Positioned(
+                                  right: -12,
+                                  top: -4,
+                                  child: UnreadBadge(
+                                    count: unread,
+                                    onClear: onClearUnread,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+    // The glass row contains only centered icons and reserves no label height;
+    // the classic bar keeps growing with the scaled label line.
+    final labelGrowth = glass
+        ? 0.0
+        : math.max(
+            0.0,
+            (MediaQuery.textScalerOf(context).scale(_labelSize) - _labelSize) *
+                _labelLineHeight,
+          );
+    // Only the compact shell reserves the home indicator's own height; the
+    // split shell leaves the window edge to its column, so the row keeps the
+    // bar's whole box.
+    final bottomInset = reserveBottomInset
+        ? homeIndicatorBarClearance(context)
+        : 0.0;
+
+    // The reserved clearance belongs to every tab, not to the container: each
+    // tab fills the bar's whole box, so its press surface, ripple, and hover
+    // tint run from the divider to the window edge and no strip under the
+    // buttons is left painted-but-unowned. The content is centred in that box,
+    // which leaves the label a deliberate margin above the window edge instead
+    // of a band that belongs to nobody. The glass hosts pass 0 — their capsules
+    // carry the inset themselves.
+    final controlsHeight = 62 + labelGrowth;
+    Widget controlsWithBottomInset(double inset) => SizedBox(
+      height: controlsHeight + inset,
+      child: Row(
+        children: [
+          for (var i = 0; i < items.length; i++)
+            Expanded(
+              child: Semantics(
+                customSemanticsActions: items[i].index == 0
+                    ? {
+                        CustomSemanticsAction(
+                          label: AppStringKeys.chatFolderManagementMarkAllRead
+                              .l10n(context),
+                        ): _guardedTabRead(
+                          context,
+                        ),
+                      }
+                    : null,
+                child: AppInteractiveSurface(
+                  key: ValueKey('bottom-tab-${items[i].index}'),
+                  // The icon-only glass slot and selection share a full capsule,
+                  // concentric with the outer surface across its 5pt inset.
+                  // Classic icon + label tabs retain their square press surface.
+                  borderRadius: glass
+                      ? BorderRadius.circular((controlsHeight + inset) / 2)
+                      : BorderRadius.zero,
+                  semanticLabel: items[i].label.l10n(context),
+                  selected: selection == i,
+                  onTap: () => onSelect(i),
+                  onLongPress: items[i].index == 0
+                      ? () => _showTabReadMenu(context, items[i])
+                      : null,
+                  onSecondaryTap: items[i].index == 0
+                      ? () => _showTabReadMenu(context, items[i])
+                      : null,
+                  child: Padding(
+                    // iOS centres content above its compact indicator clearance.
+                    // Android system buttons occupy the whole reported inset;
+                    // retain the prior content padding while tabs still fill it.
+                    padding: EdgeInsets.only(
+                      bottom:
+                          !kIsWeb && defaultTargetPlatform == TargetPlatform.iOS
+                          ? 0
+                          : inset,
+                    ),
+                    child: Center(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: AppSpacing.xxs,
+                        ),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            SizedBox(
+                              width: 36,
+                              height: 28,
+                              child: Stack(
+                                clipBehavior: Clip.none,
+                                alignment: Alignment.center,
+                                children: [
+                                  TweenAnimationBuilder<double>(
+                                    duration: AppMotion.duration(
+                                      context,
+                                      AppMotion.responsive,
+                                    ),
+                                    curve: AppMotion.standard,
+                                    tween: Tween<double>(
+                                      end: selection == i ? 1 : 0,
+                                    ),
+                                    builder: (context, value, child) =>
+                                        Transform.translate(
+                                          offset: Offset(0, -value),
+                                          child: Transform.scale(
+                                            scale: 1 + value * 0.08,
+                                            child: AppIcon(
+                                              glass && selection == i
+                                                  ? items[i].selectedIcon
+                                                  : items[i].icon,
+                                              size: 24,
+                                              color: Color.lerp(
+                                                glass
+                                                    ? c.textPrimary
+                                                    : c.textTertiary,
+                                                AppTheme.brand,
+                                                value,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                  ),
+                                  if (i == 0 && unread > 0)
+                                    Positioned(
+                                      right: -14,
+                                      top: -2,
+                                      child: UnreadBadge(
+                                        count: unread,
+                                        onClear: onClearUnread,
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            // The glass row is icon-only: the label line and its
+                            // gutter are dropped, and the icon stays centred in
+                            // the slot. Every other target keeps the classic
+                            // icon + label column untouched.
+                            if (!glass) ...[
+                              const SizedBox(height: 2),
+                              AnimatedDefaultTextStyle(
+                                duration: AppMotion.duration(
+                                  context,
+                                  AppMotion.responsive,
+                                ),
+                                curve: AppMotion.standard,
+                                style: TextStyle(
+                                  fontSize: _labelSize,
+                                  fontWeight: selection == i
+                                      ? FontWeight.w600
+                                      : FontWeight.w400,
+                                  color: selection == i
+                                      ? AppTheme.brand
+                                      : c.textTertiary,
+                                ),
+                                // A wrapped label would outgrow the bar; the tab
+                                // is identified by its icon either way.
+                                child: Text(
+                                  items[i].label.l10n(context),
+                                  textAlign: TextAlign.center,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+    final controls = controlsWithBottomInset(0.0);
+    if (glass) {
+      // iOS 26+ uses the actual contained UIKit tab controller. No Flutter
+      // controls/selected pill paint above it. Older iOS keeps its existing
+      // generic-material + Flutter controls fallback; other targets unchanged.
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
+        // A platform view has no insets of its own, so the host repeats the
+        // exact containment chain the Flutter glass bar applies: the surface
+        // stops at the bottom safe area instead of reaching under the home
+        // indicator, and the shared lateral/top/capsule margins keep the row
+        // inside the stadium at the same rect either host draws it at.
+        final fallback = SafeArea(
+          top: false,
+          minimum: const EdgeInsets.only(bottom: 10),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
+            child: NativeGlassSurface(
+              selection: selection,
+              itemCount: items.length,
+              child: Padding(padding: const EdgeInsets.all(5), child: controls),
+            ),
+          ),
+        );
+        return SafeArea(
+          top: false,
+          bottom: false,
+          child: NativeTabBar(
+            items: [
+              for (final item in items)
+                NativeTabBarItem(
+                  id: item.index,
+                  label: item.label.l10n(context),
+                  icon: item.icon,
+                  selectedIcon: item.selectedIcon,
+                  unread: item.index == 0 ? unread : 0,
+                  onMarkAllRead: item.index == 0
+                      ? _guardedTabRead(context)
+                      : null,
+                ),
+            ],
+            selectedId: items[selection].index,
+            onSelect: (id) {
+              final position = items.indexWhere((item) => item.index == id);
+              if (position >= 0) onSelect(position);
+            },
+            reserveBottomInset: reserveBottomInset,
+            dark: c.navBar.computeLuminance() < 0.5,
+            tint: c.linkBlue,
+            markAllReadLabel: AppStringKeys.chatFolderManagementMarkAllRead
+                .l10n(context),
+            actionScope:
+                '${context.watch<AccountStore>().activeSlot}:'
+                '${TdClient.shared.activeClientId}:'
+                '${ModalRoute.of(context)?.hashCode}:'
+                '${ModalRoute.isCurrentOf(context)}',
+            fallback: fallback,
+          ),
+        );
+      }
+      return LiquidGlassBottomBar(
+        selection: selection,
+        itemCount: items.length,
+        child: controls,
+      );
+    }
+    return Container(
+      key: const ValueKey('classic-bottom-bar'),
+      decoration: BoxDecoration(
+        color: c.navBar,
+        border: Border(top: BorderSide(color: c.divider, width: 0.5)),
+      ),
+      child: controlsWithBottomInset(bottomInset),
+    );
+  }
+
+  VoidCallback _guardedTabRead(BuildContext context) {
+    final slot = TdClient.shared.activeSlot;
+    final client = TdClient.shared.activeClientId;
+    final accounts = context.read<AccountStore>();
+    final accountSlot = accounts.activeSlot;
+    final route = ModalRoute.of(context);
+    var used = false;
+    return () {
+      if (used ||
+          !context.mounted ||
+          TdClient.shared.activeSlot != slot ||
+          TdClient.shared.activeClientId != client ||
+          accounts.activeSlot != accountSlot ||
+          route?.isCurrent == false) {
+        return;
+      }
+      used = true;
+      // Existing callback: existing chat+archive scope and optimistic/error
+      // handling. Visual (unmuted/filtered) badge zero is NOT eligibility proof.
+      onClearUnread();
+    };
+  }
+
+  void _showTabReadMenu(BuildContext context, _MainTabItem item) {
+    final performRead = _guardedTabRead(context);
+    final accounts = context.read<AccountStore>();
+    final slot = accounts.activeSlot;
+    final client = TdClient.shared.activeClientId;
+    final navigator = Navigator.of(context);
+    ModalRoute<void>? menuRoute;
+    var requested = false;
+    void dismissIfAccountChanged() {
+      if (accounts.activeSlot == slot &&
+          TdClient.shared.activeClientId == client) {
+        return;
+      }
+      final route = menuRoute;
+      if (route?.isActive == true) navigator.removeRoute(route!);
+    }
+
+    accounts.addListener(dismissIfAccountChanged);
+    unawaited(
+      showAppModalSheet<void>(
+        context: context,
+        backgroundColor: Colors.transparent,
+        builder: (sheetContext) {
+          menuRoute = ModalRoute.of<void>(sheetContext);
+          if (ModalRoute.isCurrentOf(sheetContext) == false &&
+              !requested &&
+              menuRoute?.animation?.status != AnimationStatus.reverse) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              final route = menuRoute;
+              if (route?.isActive == true) navigator.removeRoute(route!);
+            });
+          }
+          return SafeArea(
+            child: Container(
+              key: const ValueKey('tab-read-menu'),
+              margin: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+              decoration: BoxDecoration(
+                color: sheetContext.colors.card,
+                borderRadius: BorderRadius.circular(AppRadius.lg),
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(item.label.l10n(context)),
+                  ),
+                  AppInteractiveSurface(
+                    key: const ValueKey('tab-mark-all-read'),
+                    semanticLabel: AppStringKeys.chatFolderManagementMarkAllRead
+                        .l10n(context),
+                    onTap: () {
+                      requested = true;
+                      Navigator.of(sheetContext).pop();
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Row(
+                        children: [
+                          const AppIcon(HeroAppIcons.circleCheck, size: 24),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              AppStringKeys.chatFolderManagementMarkAllRead
+                                  .l10n(context),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ).whenComplete(() {
+        accounts.removeListener(dismissIfAccountChanged);
+        if (requested) performRead();
+      }),
+    );
+  }
+}

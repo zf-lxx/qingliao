@@ -1,0 +1,2221 @@
+//
+//  profile_detail_view.dart
+//
+//  A user's profile page (个人资料), reached by tapping a contact: a blurred
+//  profile-photo cover with the avatar overlapping the bottom-left, name beside
+//  it, compact detail rows, and a fixed bottom bar (音视频通话 / 发消息).
+//
+
+import 'dart:async';
+import 'dart:math' as math;
+import 'dart:ui' as ui;
+
+import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
+import 'package:mithka/l10n/app_localizations.dart';
+import 'package:provider/provider.dart';
+
+import '../app/desktop_image_preview_window.dart';
+import '../app/ipad_window_chrome.dart';
+import '../app/primary_chat_launcher.dart';
+import '../call/call_manager.dart';
+import '../chat/audio_search_view.dart';
+import '../chat/chat_first_contact_info.dart';
+import '../chat/chat_search_view.dart';
+import '../chat/chat_wallpaper.dart';
+import '../chat/custom_emoji.dart';
+import '../chat/full_image_viewer.dart';
+import '../chat/link_handler.dart';
+import '../chat/music_player_controller.dart';
+import '../chat/secret_chat_service.dart';
+import '../chat/sticker_item.dart';
+import '../chat/sticker_preview.dart';
+import '../chat/telegram_rich_text.dart';
+import '../components/app_confirm_dialog.dart';
+import '../components/app_icons.dart';
+import '../components/confirm_dialog.dart';
+import '../components/photo_avatar.dart';
+import '../components/toast.dart';
+import '../components/ui_components.dart';
+import '../components/vip_badge.dart';
+import '../moments/story_management_view.dart';
+import '../moments/story_viewer_view.dart';
+import '../platform/adaptive_platform.dart';
+import '../settings/blocked_user_service.dart';
+import '../settings/edit_profile_view.dart';
+import '../tdlib/json_helpers.dart';
+import '../tdlib/td_client.dart';
+import '../tdlib/td_models.dart';
+import '../theme/app_motion.dart';
+import '../theme/app_theme.dart';
+import '../theme/theme_controller.dart';
+import 'profile_contact_management_view.dart';
+import 'profile_contact_service.dart';
+import 'profile_gifts.dart';
+import 'profile_identity_summary.dart';
+import 'profile_link.dart';
+import 'profile_username_pill.dart';
+import 'registration_date_estimate.dart';
+
+@visibleForTesting
+bool profileFeaturedPhotosUseDesktopWindow(
+  TargetPlatform platform, {
+  bool isWeb = kIsWeb,
+  bool hasProfileActions = false,
+  bool hasAnimation = false,
+}) =>
+    !isWeb &&
+    !hasProfileActions &&
+    // The preview window renders still files only, so a gallery that carries a
+    // motion variant opens in the in-app viewer instead, where it can play.
+    !hasAnimation &&
+    isDesktopTargetPlatform(platform);
+
+class ProfileDetailView extends StatefulWidget {
+  const ProfileDetailView({
+    super.key,
+    required this.userId,
+    this.name = '',
+    this.showBackButton = true,
+  });
+  final int userId;
+  final String name;
+  final bool showBackButton;
+
+  @override
+  State<ProfileDetailView> createState() => _ProfileDetailViewState();
+}
+
+class _ProfileDetailViewState extends State<ProfileDetailView> {
+  String _name = '';
+  List<String> _usernames = const [];
+  String _phone = '';
+  String _bio = '';
+  List<MessageTextEntity> _bioEntities = const [];
+  TdFileRef? _photo;
+  bool _isOnline = false;
+  bool _isPremium = false;
+  int _emojiStatusId = 0;
+  String _statusText = '';
+  int? _chatId;
+  List<_FeaturedProfilePhoto> _photos = []; // 精选照片 — profile-photo history
+  String _birthday = '';
+  String _location = '';
+  String _businessHours = '';
+  int _giftCount = 0;
+  List<StickerItem> _gifts = const [];
+  List<int> _postStoryIds = const [];
+  List<int> _archivedStoryIds = const [];
+  String _musicTitle = '';
+  ChatMessage? _musicMessage;
+  bool _musicPressed = false;
+  bool _hideIdentity = false;
+  bool _isMe = false;
+  bool _isContact = true;
+  bool _isBlocked = false;
+  String _firstName = '';
+  String _lastName = '';
+  String _rawPhone = '';
+  bool _isBot = false;
+  bool _isDeleted = false;
+  bool _isRegularUser = false;
+  bool _hasLoadedUser = false;
+  bool _isCreatingSecretChat = false;
+  ChatFirstContactInfo? _accountInfo; // Telegram's own registration month
+  final ChatWallpaperController _wallpaperController =
+      ChatWallpaperController.shared;
+
+  @override
+  void initState() {
+    super.initState();
+    _wallpaperController.addListener(_onWallpaperChanged);
+    _name = widget.name;
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _wallpaperController.removeListener(_onWallpaperChanged);
+    super.dispose();
+  }
+
+  void _onWallpaperChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _load() async {
+    try {
+      final me = await TdClient.shared.query({'@type': 'getMe'});
+      if (mounted) {
+        setState(() {
+          _isMe = me.int64('id') == widget.userId;
+          if (_isMe) _musicTitle = _defaultOwnMusicTitle;
+        });
+      }
+    } catch (_) {}
+    try {
+      final user = await TdClient.shared.query({
+        '@type': 'getUser',
+        'user_id': widget.userId,
+      });
+      if (mounted) {
+        setState(() {
+          _name = TDParse.userName(user);
+          _firstName = user.str('first_name') ?? '';
+          _lastName = user.str('last_name') ?? '';
+          _usernames = TDParse.activeUsernames(user);
+          _rawPhone = user.str('phone_number') ?? '';
+          _phone = TDParse.formatPhone(_rawPhone);
+          _photo = TDParse.smallPhoto(user.obj('profile_photo'));
+          _isOnline = TDParse.isUserOnline(user);
+          _isPremium = user.boolean('is_premium') ?? false;
+          _isContact = _isMe || (user.boolean('is_contact') ?? false);
+          _isBot = user.obj('type')?.type == 'userTypeBot';
+          _isDeleted = TDParse.isDeletedUser(user);
+          _isRegularUser = user.obj('type')?.type == 'userTypeRegular';
+          _hasLoadedUser = true;
+          _emojiStatusId = TDParse.emojiStatusCustomEmojiId(
+            user.obj('emoji_status'),
+          );
+          _statusText = TDParse.userStatus(user);
+        });
+      }
+    } catch (_) {}
+    try {
+      final full = await TdClient.shared.query({
+        '@type': 'getUserFullInfo',
+        'user_id': widget.userId,
+      });
+      if (mounted) {
+        final business = full.obj('business_info');
+        final giftCount = full.integer('gift_count') ?? 0;
+        setState(() {
+          _bio = full.obj('bio')?.str('text') ?? '';
+          _bioEntities = TDParse.textEntities(full.obj('bio'));
+          _birthday = _formatBirthday(full.obj('birthdate'));
+          _location = business?.obj('location')?.str('address') ?? '';
+          _businessHours = _formatBusinessHours(
+            business?.obj('local_opening_hours') ??
+                business?.obj('opening_hours'),
+          );
+          _giftCount = giftCount;
+          _musicTitle = _isMe
+              ? _defaultOwnMusicTitle
+              : _extractMusicTitle(full, _bio);
+        });
+        if (giftCount > 0) unawaited(_loadGifts());
+        await _resolveMusicCandidate(_musicTitle);
+      }
+    } catch (_) {}
+    try {
+      final res = await TdClient.shared.query({
+        '@type': 'getUserProfilePhotos',
+        'user_id': widget.userId,
+        'offset': 0,
+        'limit': 12,
+      });
+      final raw = res.objects('photos') ?? const <Map<String, dynamic>>[];
+      final photos = <_FeaturedProfilePhoto>[];
+      for (final p in raw) {
+        final id = p.int64('id') ?? 0;
+        final sizes = p.objects('sizes') ?? const <Map<String, dynamic>>[];
+        if (id == 0 || sizes.isEmpty) continue;
+        final best = sizes.reduce(
+          (a, b) =>
+              (a.integer('width') ?? 0) >= (b.integer('width') ?? 0) ? a : b,
+        );
+        final ref = TDParse.fileRef(best.obj('photo'));
+        if (ref != null) {
+          photos.add(
+            _FeaturedProfilePhoto(
+              id: id,
+              file: ref,
+              animation: _featuredPhotoAnimationFile(p),
+            ),
+          );
+        }
+      }
+      if (mounted) setState(() => _photos = photos);
+    } catch (_) {}
+    try {
+      final chat = await TdClient.shared.query({
+        '@type': 'createPrivateChat',
+        'user_id': widget.userId,
+        'force': false,
+      });
+      final chatId = chat.int64('id');
+      // Telegram only attaches account_info to the action bar of a private chat
+      // it considers worth a second look, so this is a bonus: the registration
+      // row falls back to the user-ID estimate when it is absent. A month
+      // Telegram did report stays true after the bar goes away — becoming a
+      // contact removes it — so the last known value is kept.
+      final accountInfo = ChatFirstContactInfo.fromActionBar(
+        chat.obj('action_bar'),
+      );
+      if (!mounted) return;
+      setState(() {
+        _accountInfo = accountInfo ?? _accountInfo;
+        if (chatId != null) _chatId = chatId;
+      });
+      if (chatId == null) return;
+      unawaited(_wallpaperController.load(chatId));
+      unawaited(_loadStoryCollections(chatId));
+    } catch (_) {}
+  }
+
+  Future<void> _loadGifts() async {
+    try {
+      final response = await TdClient.shared.query({
+        '@type': 'getReceivedGifts',
+        'business_connection_id': '',
+        'owner_id': {'@type': 'messageSenderUser', 'user_id': widget.userId},
+        'collection_id': 0,
+        'exclude_unsaved': true,
+        'exclude_saved': false,
+        'exclude_unlimited': false,
+        'exclude_upgradable': false,
+        'exclude_non_upgradable': false,
+        'exclude_upgraded': false,
+        'exclude_without_colors': false,
+        'exclude_hosted': false,
+        'sort_by_price': false,
+        'offset': '',
+        'limit': 12,
+      });
+      final gifts = parseReceivedGiftStickers(response);
+      if (!mounted) return;
+      setState(() {
+        _giftCount = response.integer('total_count') ?? _giftCount;
+        _gifts = gifts;
+      });
+    } catch (_) {}
+  }
+
+  // MARK: - Actions
+
+  void _call(bool isVideo) {
+    final started = context.read<CallManager>().startCall(
+      widget.userId,
+      isVideo,
+    );
+    if (started == CallStartResult.unsupported) {
+      showToast(context, AppStringKeys.callsUnavailableOnDesktop);
+    } else if (started == CallStartResult.busy) {
+      showToast(context, AppStringKeys.callAlreadyInProgress);
+    }
+  }
+
+  Future<void> _addToContacts() async {
+    final fallbackName = _name.trim().isNotEmpty ? _name.trim() : widget.name;
+    final firstName = _firstName.trim().isNotEmpty
+        ? _firstName.trim()
+        : fallbackName.trim();
+    try {
+      await TdClient.shared.query(
+        addOrEditContactRequest(
+          userId: widget.userId,
+          phoneNumber: _rawPhone,
+          firstName: firstName.isEmpty ? widget.userId.toString() : firstName,
+          lastName: _lastName.trim(),
+        ),
+      );
+      if (!mounted) return;
+      setState(() => _isContact = true);
+      showToast(context, AppStringKeys.profileDetailAddFriendDone);
+    } catch (_) {
+      if (!mounted) return;
+      showToast(context, AppStringKeys.profileDetailAddFriendFailed);
+    }
+  }
+
+  void _callMenu() {
+    if (Theme.of(context).platform == TargetPlatform.macOS) return;
+    showAppCupertinoModalPopup<void>(
+      context: context,
+      builder: (sheet) => CupertinoActionSheet(
+        actions: [
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.of(sheet).pop();
+              _call(false);
+            },
+            child: Text(AppStrings.t(AppStringKeys.composerVoiceCall)),
+          ),
+          CupertinoActionSheetAction(
+            onPressed: () {
+              Navigator.of(sheet).pop();
+              _call(true);
+            },
+            child: Text(AppStrings.t(AppStringKeys.composerVideoCall)),
+          ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          isDefaultAction: true,
+          onPressed: () => Navigator.of(sheet).pop(),
+          child: Text(AppStrings.t(AppStringKeys.countryPickerCancel)),
+        ),
+      ),
+    );
+  }
+
+  void _openChat() {
+    final cid = _chatId;
+    if (cid == null) return;
+    unawaited(openChatFromCurrentWindow(context, chatId: cid, title: _name));
+  }
+
+  /// Resolves a typed `@username` from the bio to its person and opens that
+  /// profile. The entity carries no user id, so a public-chat lookup supplies
+  /// it; anything that is not a private chat keeps the public-link behavior.
+  Future<void> _openUsernameProfile(String username) async {
+    final Map<String, dynamic> chat;
+    try {
+      chat = await TdClient.shared.query({
+        '@type': 'searchPublicChat',
+        'username': username,
+      });
+    } catch (_) {
+      if (mounted) {
+        showToast(context, AppStringKeys.linkHandlerOpenTelegramLinkFailed);
+      }
+      return;
+    }
+    if (!mounted) return;
+    final type = chat.obj('type');
+    final userId = type?.int64('user_id');
+    if (type?.str('@type') == 'chatTypePrivate' && userId != null) {
+      unawaited(
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => ProfileDetailView(userId: userId, name: username),
+          ),
+        ),
+      );
+      return;
+    }
+    await openLink(context, 'https://t.me/$username');
+  }
+
+  Future<void> _startSecretChat() async {
+    if (_isMe || _isBot || _isDeleted || _isCreatingSecretChat) return;
+    final confirmed = await confirmDialog(
+      context,
+      title: AppStringKeys.secretChatStartTitle,
+      message: AppStringKeys.secretChatStartMessage,
+      confirmText: AppStringKeys.secretChatStart,
+    );
+    if (!mounted || !confirmed || _isCreatingSecretChat) return;
+
+    setState(() => _isCreatingSecretChat = true);
+    try {
+      final secretChat = await SecretChatService.create(widget.userId);
+      if (!mounted) return;
+      final title = secretChat.title.isNotEmpty ? secretChat.title : _name;
+      await openChatFromCurrentWindow(
+        context,
+        chatId: secretChat.id,
+        title: title,
+      );
+    } catch (error) {
+      if (mounted) {
+        showToast(
+          context,
+          AppStrings.t(AppStringKeys.secretChatStartFailed, {'value1': error}),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isCreatingSecretChat = false);
+    }
+  }
+
+  void _changeAvatar() {
+    if (!_isMe) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => const EditProfileView(openAvatarPicker: true),
+      ),
+    );
+  }
+
+  Future<void> _openEditProfile() async {
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const EditProfileView()));
+    if (mounted) await _load();
+  }
+
+  Future<void> _openSearch() async {
+    final cid = _chatId;
+    if (cid == null) return;
+    final messageId = await Navigator.of(context).push<int>(
+      MaterialPageRoute(
+        builder: (_) => ChatSearchView(chatId: cid, title: _name),
+      ),
+    );
+    if (!mounted || messageId == null) return;
+    await openChatFromCurrentWindow(
+      context,
+      chatId: cid,
+      title: _name,
+      initialMessageId: messageId,
+    );
+  }
+
+  void _copyProfileLink() {
+    final link =
+        profileLinkForIdentity(usernames: _usernames, userId: widget.userId) ??
+        'tg://user?id=${widget.userId}';
+    Clipboard.setData(ClipboardData(text: link));
+    showToast(context, AppStrings.t(AppStringKeys.profileDetailCardLinkCopied));
+  }
+
+  /// Copies a single profile field on a long press. Everything here is a value
+  /// people want somewhere else — an ID for a bot, a username for a mention, a
+  /// number for a dialer — and none of it has another use for a long press.
+  /// Copying on a plain tap would fire while the page is only being read, so
+  /// the gesture is deliberate.
+  /// Puts [value] on the clipboard and says whether that worked. The toast
+  /// waits for the platform call: a clipboard that refused the write must not
+  /// be reported as a copy that happened.
+  Future<void> _copyValue(String value) async {
+    final text = value.trim();
+    if (text.isEmpty) return;
+    unawaited(HapticFeedback.mediumImpact());
+    var copied = true;
+    try {
+      await Clipboard.setData(ClipboardData(text: text));
+    } catch (_) {
+      copied = false;
+    }
+    if (!mounted) return;
+    showToast(
+      context,
+      AppStrings.t(
+        copied
+            ? AppStringKeys.profileDetailCopied
+            : AppStringKeys.profileDetailCopyFailed,
+      ),
+    );
+  }
+
+  Future<void> _showProfileContextMenu() async {
+    final action = await showAppModalSheet<_ProfileContextAction>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _ProfileContextMenu(
+        showManage: !_isDeleted,
+        showBlock: !_isMe && !_isBlocked && !_isDeleted,
+        manageLabel: _isMe
+            ? context.l10n.t(AppStringKeys.profileToolsTitle)
+            : context.l10n.t(AppStringKeys.profileContactManagementTitle),
+      ),
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case _ProfileContextAction.manage:
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => ProfileContactManagementView(
+              userId: widget.userId,
+              initialName: _name,
+            ),
+          ),
+        );
+        if (mounted) await _load();
+      case _ProfileContextAction.copyLink:
+        _copyProfileLink();
+      case _ProfileContextAction.blockUser:
+        await _blockUser();
+    }
+  }
+
+  Future<void> _blockUser() async {
+    final confirmed = await confirmDialog(
+      context,
+      title: AppStringKeys.chatBlockUserConfirm,
+      confirmText: AppStringKeys.chatBlockUserConfirm,
+      destructive: true,
+    );
+    if (!mounted || !confirmed) return;
+    try {
+      await BlockedUserService.shared.blockUser(widget.userId);
+      if (mounted) setState(() => _isBlocked = true);
+    } catch (e) {
+      if (!mounted) return;
+      showToast(
+        context,
+        AppStrings.t(AppStringKeys.chatBlockUserFailed, {'value1': e}),
+      );
+    }
+  }
+
+  Future<void> _loadStoryCollections(int chatId) async {
+    final results = await Future.wait([
+      _loadStoryIds('getChatPostedToChatPageStories', chatId),
+      _loadStoryIds('getChatArchivedStories', chatId),
+    ]);
+    if (!mounted || _chatId != chatId) return;
+    setState(() {
+      _postStoryIds = results[0];
+      _archivedStoryIds = results[1];
+    });
+  }
+
+  Future<List<int>> _loadStoryIds(String type, int chatId) async {
+    try {
+      final response = await TdClient.shared.query({
+        '@type': type,
+        'chat_id': chatId,
+        'from_story_id': 0,
+        'limit': 20,
+      });
+      return (response.objects('stories') ?? const <Map<String, dynamic>>[])
+          .map((story) => story.int64('id') ?? story.integer('id'))
+          .whereType<int>()
+          .where((id) => id > 0)
+          .toList(growable: false);
+    } catch (_) {
+      // Stories are privacy-scoped. Archived posts are shown only when TDLib
+      // returns posts the active account is allowed to see.
+      return const [];
+    }
+  }
+
+  void _openStories(List<int> storyIds) {
+    final chatId = _chatId;
+    if (chatId == null || storyIds.isEmpty) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => StoryViewerView(chatId: chatId, storyIds: storyIds),
+      ),
+    );
+  }
+
+  void _manageStories() {
+    final chatId = _chatId;
+    if (chatId == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => StoryManagementView(
+          chatId: chatId,
+          title: AppStrings.t(AppStringKeys.momentsStories),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openMusicSearch() async {
+    final initial = _musicTitle.trim();
+    final selected = await Navigator.of(context).push<(int, ChatMessage)>(
+      MaterialPageRoute(
+        builder: (_) =>
+            AudioSearchView(initialQuery: initial, selectOnly: true),
+      ),
+    );
+    if (selected == null || !mounted) return;
+    final (_, message) = selected;
+    setState(() {
+      _musicMessage = message;
+      _musicTitle = message.music?.title ?? message.text;
+    });
+  }
+
+  String _durationString(int seconds) {
+    final s = seconds < 0 ? 0 : seconds;
+    final h = s ~/ 3600;
+    final m = (s % 3600) ~/ 60;
+    final sec = s % 60;
+    String two(int v) => v.toString().padLeft(2, '0');
+    return h > 0 ? '${two(h)}:${two(m)}:${two(sec)}' : '${two(m)}:${two(sec)}';
+  }
+
+  // MARK: - Build
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final themingEnabled = context.watch<ThemeController>().themingEnabled;
+    final wallpaper = !themingEnabled || _chatId == null
+        ? null
+        : _wallpaperController.wallpaperFor(
+            _chatId!,
+            dark: Theme.of(context).brightness == Brightness.dark,
+          );
+    return Scaffold(
+      backgroundColor: c.card,
+      body: ChatWallpaperBackground(
+        wallpaper: wallpaper,
+        fallbackColor: c.card,
+        child: Column(
+          children: [
+            Expanded(
+              child: ListView(
+                padding: EdgeInsets.zero,
+                children: [
+                  _header(),
+                  if (_photos.isNotEmpty) ...[
+                    _profileGap(wallpaper != null),
+                    _photosCard(),
+                  ],
+                  if (_gifts.isNotEmpty) ...[
+                    _profileGap(wallpaper != null),
+                    _giftsCard(),
+                  ],
+                  if (_hasProfileCollections) ...[
+                    _profileGap(wallpaper != null),
+                    _profileCollectionsCard(),
+                  ],
+                  _profileGap(wallpaper != null),
+                  if (!_isDeleted) _profileToolsCard(),
+                  if (_infoRows.isNotEmpty) ...[
+                    _profileGap(wallpaper != null),
+                    _infoCard(),
+                  ],
+                  const SizedBox(height: 24),
+                ],
+              ),
+            ),
+            if (!_isDeleted) _bottomBar(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _profileGap(bool transparent) => ColoredBox(
+    color: transparent
+        ? const Color(0x00000000)
+        : context.colors.groupedBackground,
+    child: const SizedBox(height: 12),
+  );
+
+  List<(String, String)> get _infoRows {
+    final registration = _registrationText;
+    return [
+      // The bio lives in the header (and only there), so it never needs a
+      // second, truncated-looking home among the detail rows.
+      if (_birthday.isNotEmpty)
+        (AppStrings.t(AppStringKeys.profileDetailBirthday), _birthday),
+      if (registration.isNotEmpty)
+        (
+          AppStrings.t(AppStringKeys.chatFirstContactRegistration),
+          registration,
+        ),
+      if (_location.isNotEmpty)
+        (AppStrings.t(AppStringKeys.profileDetailLocation), _location),
+      if (_businessHours.isNotEmpty)
+        (
+          AppStrings.t(AppStringKeys.profileDetailBusinessHours),
+          _businessHours,
+        ),
+    ];
+  }
+
+  /// Registration month: Telegram's own value when the chat's action bar
+  /// carries one, otherwise where this user ID sits in the ID sequence. Empty
+  /// — and the row left out entirely — unless the profile is a verified regular
+  /// user with an ID inside the anchor table's fitted range.
+  String get _registrationText {
+    final locale = Localizations.localeOf(context).toString();
+    final accountInfo = _accountInfo;
+    if (accountInfo != null && accountInfo.hasRegistrationDate) {
+      return _yearMonth(
+        DateTime(accountInfo.registrationYear, accountInfo.registrationMonth),
+        locale,
+      );
+    }
+    // The table is fitted on private user accounts and excludes bots. Unknown
+    // and deleted profiles do not establish which population their ID belongs
+    // to, so only a regular user can receive an estimate.
+    if (!_hasLoadedUser || !_isRegularUser) return '';
+    final estimate = estimateRegistrationDate(widget.userId);
+    if (estimate == null) return '';
+    return AppStrings.t(AppStringKeys.profileDetailRegistrationAroundValue1, {
+      'value1': _yearMonth(estimate, locale),
+    });
+  }
+
+  String _yearMonth(DateTime value, String locale) {
+    try {
+      return DateFormat.yMMMM(locale).format(value);
+    } catch (_) {
+      // An unknown locale must not cost the row its value.
+      return '${value.year}-${value.month.toString().padLeft(2, '0')}';
+    }
+  }
+
+  bool get _hasProfileCollections =>
+      _postStoryIds.isNotEmpty || _archivedStoryIds.isNotEmpty;
+
+  static const _defaultOwnMusicTitle = 'SEKAI NO OWARI - The Peak';
+
+  String _formatBirthday(Map<String, dynamic>? bd) {
+    if (bd == null) return '';
+    final d = bd.integer('day') ?? 0;
+    final m = bd.integer('month') ?? 0;
+    final y = bd.integer('year') ?? 0;
+    if (d == 0 || m == 0) return '';
+    final md = AppStrings.t(AppStringKeys.profileDetailMonthDayDate, {
+      'value1': m,
+      'value2': d,
+    });
+    return y > 0
+        ? AppStrings.t(AppStringKeys.profileDetailYearMonthDate, {
+            'value1': y,
+            'value2': md,
+          })
+        : md;
+  }
+
+  String _formatBusinessHours(Map<String, dynamic>? openingHours) {
+    final intervals =
+        openingHours?.objects('opening_hours') ??
+        const <Map<String, dynamic>>[];
+    if (intervals.isEmpty) return '';
+    const minutesPerDay = 24 * 60;
+    const minutesPerWeek = 7 * minutesPerDay;
+    if (intervals.length == 1 &&
+        intervals.first.integer('start_minute') == 0 &&
+        intervals.first.integer('end_minute') == minutesPerWeek) {
+      return '24/7';
+    }
+    final perDay = List.generate(7, (_) => <String>[]);
+    for (final interval in intervals) {
+      final start = interval.integer('start_minute');
+      final end = interval.integer('end_minute');
+      if (start == null || end == null || start < 0 || end <= start) continue;
+      final day = math.min(6, math.max(0, start ~/ minutesPerDay));
+      final startTime = _formatBusinessTime(start % minutesPerDay);
+      final endTime = _formatBusinessTime(end % minutesPerDay);
+      perDay[day].add('$startTime-$endTime');
+    }
+    final locale = Localizations.localeOf(context).toString();
+    final weekday = DateFormat.E(locale);
+    final monday = DateTime.utc(2024);
+    final lines = <String>[];
+    for (var day = 0; day < perDay.length; day++) {
+      if (perDay[day].isEmpty) continue;
+      final label = weekday.format(monday.add(Duration(days: day)));
+      lines.add('$label ${perDay[day].join(', ')}');
+    }
+    return lines.join('\n');
+  }
+
+  String _formatBusinessTime(int minutes) {
+    final normalized = minutes % (24 * 60);
+    final hour = normalized ~/ 60;
+    final minute = normalized % 60;
+    return '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
+  }
+
+  String _extractMusicTitle(Map<String, dynamic> full, String bio) {
+    for (final source in [
+      full.str('music'),
+      full.obj('business_info')?.str('music'),
+      bio,
+    ]) {
+      final value = source?.trim();
+      if (value == null || value.isEmpty) continue;
+      final match = RegExp(
+        r'(?:\u97f3\u4e50|music)\s*[:\uff1a]\s*(.+)',
+        caseSensitive: false,
+      ).firstMatch(value);
+      if (match != null) return match.group(1)!.trim();
+    }
+    return '';
+  }
+
+  Future<void> _resolveMusicCandidate(String title) async {
+    final q = title.trim();
+    if (q.isEmpty || _musicMessage?.music?.file != null) return;
+    try {
+      final res = await TdClient.shared.query({
+        '@type': 'searchMessages',
+        'chat_list': {'@type': 'chatListMain'},
+        'query': q,
+        'offset_date': 0,
+        'offset_chat_id': 0,
+        'offset_message_id': 0,
+        'limit': 1,
+        'filter': {'@type': 'searchMessagesFilterAudio'},
+        'min_date': 0,
+        'max_date': 0,
+      });
+      ChatMessage? first;
+      for (final object
+          in res.objects('messages') ?? const <Map<String, dynamic>>[]) {
+        final message = TDParse.message(object);
+        if (message?.music?.file != null) {
+          first = message;
+          break;
+        }
+      }
+      if (first == null || !mounted) return;
+      final resolved = first;
+      setState(() {
+        _musicMessage = resolved;
+        _musicTitle = resolved.music?.title ?? q;
+      });
+    } catch (_) {}
+  }
+
+  /// Cover (blurred profile photo, gradient fallback) + overlapping avatar +
+  /// name/username/status.
+  Widget _header() {
+    final top = topChromeInsetOf(context);
+    final bannerH = top + 232;
+    final status = _isOnline
+        ? AppStrings.t(AppStringKeys.presenceOnline)
+        : _statusText;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Column(children: [_cover(bannerH.toDouble()), _identityPanel(status)]),
+        if (widget.showBackButton)
+          Positioned(
+            top: top + 4,
+            left: 18,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () => Navigator.of(context).pop(),
+              child: Container(
+                width: 42,
+                height: 42,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.22),
+                  shape: BoxShape.circle,
+                ),
+                child: const AppIcon(
+                  HeroAppIcons.chevronLeft,
+                  size: 20,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
+        if (_isMe)
+          Positioned(
+            top: top + 4,
+            right: 18,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _openEditProfile,
+              child: Container(
+                width: 42,
+                height: 42,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.22),
+                  shape: BoxShape.circle,
+                ),
+                child: const AppIcon(
+                  HeroAppIcons.pen,
+                  size: 19,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ),
+        Positioned(
+          top: top + 4,
+          right: _isMe ? 70 : 18,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: _showProfileContextMenu,
+            child: Container(
+              width: 42,
+              height: 42,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.22),
+                shape: BoxShape.circle,
+              ),
+              child: const AppIcon(
+                HeroAppIcons.ellipsis,
+                size: 21,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _identityPanel(String status) {
+    final c = context.colors;
+    final identityLines = fullProfileIdentityLines(
+      formattedPhone: _phone,
+      rawPhone: _rawPhone,
+      usernames: _usernames,
+      userId: widget.userId,
+      hidePhone: _hideIdentity,
+    );
+    return Container(
+      transform: Matrix4.translationValues(0, -34, 0),
+      decoration: BoxDecoration(
+        color: c.card,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      padding: const EdgeInsets.fromLTRB(20, 30, 20, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _isMe ? _changeAvatar : null,
+                child: Container(
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    border: Border.all(color: c.card, width: 4),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.08),
+                        blurRadius: 16,
+                        offset: const Offset(0, 5),
+                      ),
+                    ],
+                  ),
+                  child: PhotoAvatar(
+                    title: _name.isEmpty ? '?' : _name,
+                    photo: _photo,
+                    size: 80,
+                    isDeleted: _isDeleted,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _nameLine(),
+                      if (identityLines.isNotEmpty) ...[
+                        const SizedBox(height: 7),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  for (final line in identityLines)
+                                    _identityLine(line),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: () => setState(
+                                () => _hideIdentity = !_hideIdentity,
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.all(4),
+                                child: Icon(
+                                  _hideIdentity
+                                      ? HeroAppIcons.eye.data
+                                      : HeroAppIcons.eyeSlash.data,
+                                  size: 17,
+                                  color: c.textTertiary,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (status.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                if (_isOnline) ...[
+                  const AppIcon(
+                    HeroAppIcons.solidCircle,
+                    size: 7,
+                    color: Color(0xFF1AC81A),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+                Text(
+                  status,
+                  style: TextStyle(fontSize: 13, color: c.textSecondary),
+                ),
+              ],
+            ),
+          ],
+          if (_bio.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            Row(
+              children: [
+                Expanded(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onLongPress: () => _copyValue(_bio),
+                    child: TelegramRichText(
+                      key: const ValueKey('profileBio'),
+                      text: _bio,
+                      entities: _bioEntities,
+                      style: TextStyle(fontSize: 15, color: c.textPrimary),
+                      onMentionTap: (userId, name) {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                ProfileDetailView(userId: userId, name: name),
+                          ),
+                        );
+                      },
+                      onUsernameTap: (username) =>
+                          unawaited(_openUsernameProfile(username)),
+                    ),
+                  ),
+                ),
+                // Only your own bio is editable, so the pen must not promise
+                // an edit on someone else's profile.
+                if (_isMe) ...[
+                  const SizedBox(width: 8),
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: _openEditProfile,
+                    child: AppIcon(
+                      HeroAppIcons.pen,
+                      key: const ValueKey('profileBioEditIcon'),
+                      size: 17,
+                      color: c.textTertiary,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// One identity row (phone / Telegram ID / username). A long press copies it:
+  /// the row shows [ProfileIdentityLine.text] while the clipboard gets the
+  /// undecorated [ProfileIdentityLine.copyText].
+  Widget _identityLine(ProfileIdentityLine line) {
+    final c = context.colors;
+    final isUsername = line.kind == ProfileIdentityKind.username;
+    return Padding(
+      padding: EdgeInsets.only(top: isUsername ? 3 : 0),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onLongPress: () => _copyValue(line.copyText),
+        child: isUsername
+            ? ProfileUsernamePill(
+                username: line.text,
+                onTap: (username) =>
+                    unawaited(openLink(context, 'https://t.me/$username')),
+              )
+            : Text(
+                line.text,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 13,
+                  height: 1.28,
+                  color: c.textSecondary,
+                ),
+              ),
+      ),
+    );
+  }
+
+  Widget _nameLine() {
+    final c = context.colors;
+    final usePremiumWeight = _isPremium ? FontWeight.w600 : FontWeight.w600;
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            _name.isEmpty ? '?' : _name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 24,
+              height: 1.08,
+              fontWeight: usePremiumWeight,
+              color: c.textPrimary,
+            ),
+          ),
+        ),
+        if (_emojiStatusId != 0) ...[
+          const SizedBox(width: 6),
+          StatusEmojiView(id: _emojiStatusId, size: 24),
+        ],
+        if (_isPremium) ...[const SizedBox(width: 6), const VipBadge()],
+      ],
+    );
+  }
+
+  Widget _cover(double h) {
+    final chatId = _chatId;
+    final wallpaper =
+        !context.read<ThemeController>().themingEnabled || chatId == null
+        ? null
+        : _wallpaperController.wallpaperFor(
+            chatId,
+            dark: Theme.of(context).brightness == Brightness.dark,
+          );
+    if (wallpaper != null) {
+      return SizedBox(
+        height: h,
+        width: double.infinity,
+        child: ChatWallpaperBackground(
+          wallpaper: wallpaper,
+          fallbackColor: context.colors.chatBackground,
+          imageScrim: const Color(0x26000000),
+          child: const ColoredBox(color: Color(0x10000000)),
+        ),
+      );
+    }
+    if (_photo != null) {
+      return SizedBox(
+        height: h,
+        width: double.infinity,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            // Own layer, so scrolling the profile does not re-record the
+            // gaussian with the header.
+            RepaintBoundary(
+              child: ImageFiltered(
+                imageFilter: ui.ImageFilter.blur(sigmaX: 28, sigmaY: 28),
+                child: TDImage(photo: _photo, cornerRadius: 0),
+              ),
+            ),
+            Container(color: Colors.black.withValues(alpha: 0.18)),
+          ],
+        ),
+      );
+    }
+    return Container(
+      height: h,
+      decoration: BoxDecoration(gradient: AppTheme.brandGradient),
+    );
+  }
+
+  Widget _profileToolsCard() {
+    return Container(
+      color: context.colors.card,
+      child: Column(
+        children: [
+          _musicRow(),
+          const InsetDivider(leadingInset: 56),
+          _profileRow(
+            HeroAppIcons.magnifyingGlass.data,
+            AppStrings.t(AppStringKeys.chatInfoSearchHistory),
+            trailing: AppStrings.t(AppStringKeys.profileDetailMediaFiles),
+            onTap: _openSearch,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _profileCollectionsCard() {
+    final rows = <Widget>[];
+    void addRow(Widget row) {
+      if (rows.isNotEmpty) rows.add(const InsetDivider(leadingInset: 56));
+      rows.add(row);
+    }
+
+    if (_isMe) {
+      addRow(
+        _profileRow(
+          HeroAppIcons.penToSquare.data,
+          'Manage stories',
+          onTap: _manageStories,
+        ),
+      );
+    }
+
+    if (_postStoryIds.isNotEmpty) {
+      addRow(
+        _profileRow(
+          HeroAppIcons.towerBroadcast.data,
+          AppStrings.t(AppStringKeys.profileDetailPosts),
+          trailing: _postStoryIds.length.toString(),
+          onTap: () => _openStories(_postStoryIds),
+        ),
+      );
+    }
+    if (_archivedStoryIds.isNotEmpty) {
+      addRow(
+        _profileRow(
+          HeroAppIcons.inbox.data,
+          AppStrings.t(AppStringKeys.profileDetailArchivedPosts),
+          trailing: _archivedStoryIds.length.toString(),
+          onTap: () => _openStories(_archivedStoryIds),
+        ),
+      );
+    }
+    return Container(
+      color: context.colors.card,
+      child: Column(children: rows),
+    );
+  }
+
+  Widget _musicRow() {
+    final c = context.colors;
+    final controller = MusicPlayerController.shared;
+    final title = _musicTitle.trim();
+    final music = _musicMessage?.music;
+    final musicFile = music?.file;
+    final canPlay = musicFile != null;
+    final chatId = _chatId;
+    final toggle = canPlay && chatId != null
+        ? () {
+            // Route through the shared player so the track joins the global
+            // queue, the mini bar and the system media controls.
+            if (controller.isActive(musicFile)) {
+              controller.toggleCurrent();
+            } else if (_musicMessage != null) {
+              unawaited(
+                controller.playChat(
+                  _musicMessage!,
+                  chatId,
+                  title: title.isEmpty ? _name : title,
+                ),
+              );
+            }
+          }
+        : null;
+    return AnimatedBuilder(
+      animation: controller,
+      builder: (context, _) {
+        final active = controller.isActive(music?.file);
+        final playing = active && controller.isPlaying;
+        final loading = active && controller.isLoading;
+        final total = active && controller.total.inMilliseconds > 0
+            ? controller.total
+            : Duration(seconds: music?.duration ?? 0);
+        final position = active ? controller.position : Duration.zero;
+        final totalMs = math.max(1, total.inMilliseconds);
+        final value = (position.inMilliseconds / totalMs).clamp(0.0, 1.0);
+        return GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onTap: canPlay ? toggle : _openMusicSearch,
+          onTapDown: (_) => setState(() => _musicPressed = true),
+          onTapCancel: () => setState(() => _musicPressed = false),
+          onTapUp: (_) => setState(() => _musicPressed = false),
+          child: SizedBox(
+            height: active || loading ? 66 : 56,
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 90),
+              curve: Curves.easeOut,
+              color: _musicPressed
+                  ? c.textPrimary.withValues(alpha: 0.06)
+                  : Colors.transparent,
+              padding: const EdgeInsets.fromLTRB(20, 0, 16, 0),
+              child: Row(
+                children: [
+                  AppIcon(HeroAppIcons.music, size: 22, color: c.textPrimary),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          AppStrings.t(AppStringKeys.profileDetailMusic),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w500,
+                            color: c.textPrimary,
+                          ),
+                        ),
+                        if (active || loading) ...[
+                          const SizedBox(height: 3),
+                          _musicProgressLine(
+                            value: value.toDouble(),
+                            position: position,
+                            total: total,
+                            onChanged: controller.seekFraction,
+                            onChangeEnd: controller.seekFraction,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  SizedBox(
+                    width: MediaQuery.sizeOf(context).width * 0.34,
+                    child: Text(
+                      title.isEmpty
+                          ? AppStrings.t(AppStringKeys.groupManagementNotSet)
+                          : title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.right,
+                      style: TextStyle(fontSize: 13, color: c.textTertiary),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: Center(
+                      child: loading
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator.adaptive(
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : canPlay
+                          ? GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              onTap: toggle,
+                              child: AppIcon(
+                                playing
+                                    ? HeroAppIcons.pause
+                                    : HeroAppIcons.play,
+                                size: 18,
+                                color: AppTheme.brand,
+                              ),
+                            )
+                          : AppIcon(
+                              HeroAppIcons.chevronRight,
+                              size: 16,
+                              color: c.textTertiary,
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _musicProgressLine({
+    required double value,
+    required Duration position,
+    required Duration total,
+    required ValueChanged<double> onChanged,
+    required ValueChanged<double> onChangeEnd,
+  }) {
+    final c = context.colors;
+    return Row(
+      children: [
+        Expanded(
+          child: SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 2.5,
+              activeTrackColor: AppTheme.brand,
+              inactiveTrackColor: c.divider,
+              thumbColor: AppTheme.brand,
+              overlayColor: AppTheme.brand.withValues(alpha: 0.12),
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 4),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 11),
+            ),
+            child: Slider(
+              value: value,
+              onChanged: onChanged,
+              onChangeEnd: onChangeEnd,
+            ),
+          ),
+        ),
+        const SizedBox(width: 4),
+        SizedBox(
+          width: 70,
+          child: Text(
+            '${_durationString(position.inSeconds)}/'
+            '${total.inSeconds > 0 ? _durationString(total.inSeconds) : '--:--'}',
+            textAlign: TextAlign.right,
+            style: TextStyle(fontSize: 11, color: c.textSecondary),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _profileRow(
+    IconData icon,
+    String title, {
+    String? trailing,
+    required VoidCallback? onTap,
+    bool showChevron = true,
+  }) {
+    final c = context.colors;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: SizedBox(
+        height: 56,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 16, 0),
+          child: Row(
+            children: [
+              Icon(icon, size: 22, color: c.textPrimary),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: context.appFontWeight(AppTextWeight.medium),
+                    color: c.textPrimary,
+                  ),
+                ),
+              ),
+              if (trailing != null) ...[
+                const SizedBox(width: 12),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxWidth: math.min(
+                      MediaQuery.sizeOf(context).width * 0.42,
+                      190,
+                    ),
+                  ),
+                  child: Text(
+                    trailing,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.right,
+                    style: TextStyle(fontSize: 13, color: c.textTertiary),
+                  ),
+                ),
+              ],
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 24,
+                height: 24,
+                child: Center(
+                  child: showChevron
+                      ? AppIcon(
+                          HeroAppIcons.chevronRight,
+                          size: 16,
+                          color: c.textTertiary,
+                        )
+                      : const SizedBox.shrink(),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _bottomBar() {
+    final c = context.colors;
+    final showLeadingAction =
+        !_isContact || Theme.of(context).platform != TargetPlatform.macOS;
+    return Container(
+      decoration: BoxDecoration(
+        color: c.navBar,
+        border: Border(top: BorderSide(color: c.divider, width: 0.5)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          child: Row(
+            children: [
+              if (showLeadingAction) ...[
+                Expanded(
+                  child: _barButton(
+                    AppStrings.t(
+                      _isContact
+                          ? AppStringKeys.profileDetailAudioVideoCall
+                          : AppStringKeys.profileDetailAddFriend,
+                    ),
+                    primary: false,
+                    onTap: _isContact
+                        ? _callMenu
+                        : () => unawaited(_addToContacts()),
+                  ),
+                ),
+                const SizedBox(width: 12),
+              ],
+              Expanded(
+                child: _barButton(
+                  AppStrings.t(AppStringKeys.profileDetailSendMessage),
+                  primary: true,
+                  onTap: _openChat,
+                  onLongPress: _hasLoadedUser && !_isMe && !_isBot
+                      ? _startSecretChat
+                      : null,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _barButton(
+    String label, {
+    required bool primary,
+    required VoidCallback onTap,
+    VoidCallback? onLongPress,
+  }) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      onLongPress: onLongPress,
+      child: Container(
+        height: 44,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: primary
+              ? AppTheme.brand
+              : AppTheme.brand.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(AppRadius.control),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+                color: primary ? AppTheme.onBrand : AppTheme.brand,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 精选照片 — a horizontal strip of the user's profile-photo history.
+  Widget _photosCard() {
+    final c = context.colors;
+    final count = _photos.length;
+    return Container(
+      decoration: BoxDecoration(
+        color: c.card,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  AppStrings.t(AppStringKeys.profileDetailFeaturedPhotos),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    color: c.textPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                '$count',
+                style: TextStyle(fontSize: 13, color: c.textSecondary),
+              ),
+              const SizedBox(width: 4),
+              AppIcon(
+                HeroAppIcons.chevronRight,
+                size: 14,
+                color: c.textTertiary,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 78,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.zero,
+              itemCount: count,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, i) => _photoTile(i),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _photoTile(int i) {
+    const s = 78.0;
+    final photo = _photos[i];
+    return GestureDetector(
+      key: ValueKey('featured-photo-tile-$i'),
+      behavior: HitTestBehavior.opaque,
+      onTap: () => unawaited(_openFeaturedPhoto(i)),
+      child: SizedBox(
+        width: s,
+        height: s,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            TDImage(photo: photo.file, cornerRadius: 10),
+            // Tiles keep the still frame — a strip of looping decoders would
+            // be a real cost — so a corner badge advertises that the full
+            // viewer will play this photo.
+            if (photo.animation != null)
+              Positioned(
+                right: 5,
+                bottom: 5,
+                child: Semantics(
+                  label: AppStrings.t(AppStringKeys.appearanceStatusAnimated),
+                  child: Container(
+                    key: const ValueKey('featured-photo-animation-badge'),
+                    width: 18,
+                    height: 18,
+                    alignment: Alignment.center,
+                    decoration: const BoxDecoration(
+                      color: Color(0x99000000),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const AppIcon(
+                      HeroAppIcons.play,
+                      size: 10,
+                      color: Color(0xFFFFFFFF),
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openFeaturedPhoto(int startIndex) async {
+    if (_photos.isEmpty || startIndex < 0 || startIndex >= _photos.length) {
+      return;
+    }
+    final photos = List<_FeaturedProfilePhoto>.unmodifiable(_photos);
+    final items = photos.map((photo) => photo.file).toList(growable: false);
+    if (profileFeaturedPhotosUseDesktopWindow(
+      Theme.of(context).platform,
+      hasProfileActions: _isMe,
+      hasAnimation: photos.any((photo) => photo.animation != null),
+    )) {
+      final opened = await DesktopImagePreviewWindowService.instance.open(
+        items,
+        startIndex: startIndex,
+        dark: Theme.of(context).brightness == Brightness.dark,
+      );
+      if (opened) return;
+      if (!mounted) return;
+    }
+    await Navigator.of(context).push<void>(
+      AppPageRoute<void>(
+        pageBuilder: (previewContext, _, _) => FullImageViewer(
+          items: items,
+          animations: photos
+              .map((photo) => photo.animation)
+              .toList(growable: false),
+          startIndex: startIndex,
+          primaryActionLabel: _isMe
+              ? AppStrings.t(AppStringKeys.profilePhotoSetAsAvatar)
+              : null,
+          onPrimaryAction: _isMe
+              ? (index) =>
+                    _setFeaturedPhotoAsAvatar(previewContext, photos[index])
+              : null,
+          onMore: _isMe
+              ? (index) => _showFeaturedPhotoMenu(previewContext, photos[index])
+              : null,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _setFeaturedPhotoAsAvatar(
+    BuildContext previewContext,
+    _FeaturedProfilePhoto photo,
+  ) async {
+    try {
+      await TdClient.shared.query(
+        setOwnProfilePhotoRequest(
+          photo: previousChatPhoto(photo.id),
+          isPublic: false,
+        ),
+      );
+      if (previewContext.mounted) {
+        showToast(previewContext, AppStringKeys.editProfileAvatarUpdated);
+      }
+      unawaited(_load());
+    } catch (error) {
+      if (previewContext.mounted) {
+        showToast(
+          previewContext,
+          AppStrings.t(AppStringKeys.editProfileAvatarUpdateFailed, {
+            'value1': '$error',
+          }),
+        );
+      }
+    }
+  }
+
+  Future<void> _showFeaturedPhotoMenu(
+    BuildContext previewContext,
+    _FeaturedProfilePhoto photo,
+  ) async {
+    final action = await showGeneralDialog<_FeaturedPhotoAction>(
+      context: previewContext,
+      barrierDismissible: true,
+      barrierLabel: AppStrings.t(AppStringKeys.countryPickerCancel),
+      barrierColor: const Color(0x99000000),
+      transitionDuration: const Duration(milliseconds: 160),
+      pageBuilder: (menuContext, _, _) => _FeaturedPhotoMenu(
+        onSave: () => Navigator.of(menuContext).pop(_FeaturedPhotoAction.save),
+        onDelete: () =>
+            Navigator.of(menuContext).pop(_FeaturedPhotoAction.delete),
+        onCancel: () => Navigator.of(menuContext).pop(),
+      ),
+      transitionBuilder: (_, animation, _, child) => FadeTransition(
+        opacity: animation,
+        child: SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(0, 0.08),
+            end: Offset.zero,
+          ).animate(animation),
+          child: child,
+        ),
+      ),
+    );
+    if (!previewContext.mounted) return;
+    // Save mirrors the chat gallery's `…` menu: the sheet closes, the image
+    // stays on screen and the save pipeline reports its own progress.
+    if (action == _FeaturedPhotoAction.save) {
+      await saveViewerImage(previewContext, photo.file);
+      return;
+    }
+    if (action != _FeaturedPhotoAction.delete) return;
+    final confirmed = await showAppConfirmDialog(
+      previewContext,
+      title: AppStringKeys.profilePhotoDeleteTitle,
+      message: AppStringKeys.profilePhotoDeleteMessage,
+      confirmText: AppStringKeys.chatDelete,
+      destructive: true,
+    );
+    if (!confirmed || !previewContext.mounted) return;
+    try {
+      await TdClient.shared.query(deleteOwnProfilePhotoRequest(photo.id));
+      if (mounted) {
+        setState(
+          () => _photos = _photos
+              .where((candidate) => candidate.id != photo.id)
+              .toList(growable: false),
+        );
+      }
+      if (previewContext.mounted) {
+        showToast(previewContext, AppStringKeys.profilePhotoDeleted);
+        Navigator.of(previewContext).pop();
+      }
+      unawaited(_load());
+    } catch (error) {
+      if (previewContext.mounted) {
+        showToast(
+          previewContext,
+          AppStrings.t(AppStringKeys.profilePhotoDeleteFailed, {
+            'value1': '$error',
+          }),
+        );
+      }
+    }
+  }
+
+  Widget _giftsCard() {
+    final c = context.colors;
+    final count = _giftCount > 0 ? _giftCount : _gifts.length;
+    return Container(
+      decoration: BoxDecoration(
+        color: c.card,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+      ),
+      padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  AppStrings.t(AppStringKeys.profileDetailGifts),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w500,
+                    color: c.textPrimary,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Text(
+                '$count',
+                style: TextStyle(fontSize: 13, color: c.textSecondary),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: 78,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.zero,
+              itemCount: _gifts.length,
+              separatorBuilder: (_, _) => const SizedBox(width: 8),
+              itemBuilder: (context, index) => Container(
+                width: 78,
+                height: 78,
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: c.groupedBackground,
+                  borderRadius: BorderRadius.circular(AppRadius.control),
+                ),
+                child: StickerPreview(item: _gifts[index], cornerRadius: 8),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoCard() {
+    final c = context.colors;
+    final rows = _infoRows;
+    return Container(
+      decoration: BoxDecoration(
+        color: c.card,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          for (var i = 0; i < rows.length; i++) ...[
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onLongPress: () => _copyValue(rows[i].$2),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 14,
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      rows[i].$1,
+                      style: TextStyle(fontSize: 16, color: c.textPrimary),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Text(
+                        rows[i].$2,
+                        textAlign: TextAlign.right,
+                        style: TextStyle(fontSize: 15, color: c.textSecondary),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            if (i < rows.length - 1) const InsetDivider(leadingInset: 16),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _FeaturedProfilePhoto {
+  const _FeaturedProfilePhoto({
+    required this.id,
+    required this.file,
+    this.animation,
+  });
+
+  final int id;
+
+  /// The still frame: the tile image, the poster while [animation] plays, and
+  /// the file the save action writes to the photo library.
+  final TdFileRef file;
+
+  /// Muted motion variant of this photo, when TDLib reports one.
+  final TdFileRef? animation;
+}
+
+/// The best motion variant TDLib offers for a `chatPhoto`: the full-size
+/// animation, falling back to the small one. Null when neither has a file.
+TdFileRef? _featuredPhotoAnimationFile(Map<String, dynamic> photo) {
+  for (final key in const ['animation', 'small_animation']) {
+    final ref = TDParse.fileRef(photo.obj(key)?.obj('file'));
+    // `fileRef` accepts any object carrying an id, including an id TDLib has
+    // not assigned yet; a player fed that id can never fetch anything.
+    if (ref != null && ref.id > 0) return ref;
+  }
+  return null;
+}
+
+enum _FeaturedPhotoAction { save, delete }
+
+class _FeaturedPhotoMenu extends StatelessWidget {
+  const _FeaturedPhotoMenu({
+    required this.onSave,
+    required this.onDelete,
+    required this.onCancel,
+  });
+
+  final VoidCallback onSave;
+  final VoidCallback onDelete;
+  final VoidCallback onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return SafeArea(
+      top: false,
+      child: Align(
+        alignment: Alignment.bottomCenter,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                decoration: BoxDecoration(
+                  color: c.card,
+                  borderRadius: BorderRadius.circular(AppRadius.card),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Color(0x44000000),
+                      blurRadius: 22,
+                      offset: Offset(0, 8),
+                    ),
+                  ],
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _action(
+                      context,
+                      key: const ValueKey('featured-photo-save'),
+                      icon: HeroAppIcons.download,
+                      label: AppStrings.t(
+                        AppStringKeys.messageActionSaveToPhotos,
+                      ),
+                      color: c.textPrimary,
+                      onTap: onSave,
+                    ),
+                    const InsetDivider(leadingInset: 56),
+                    _action(
+                      context,
+                      key: const ValueKey('featured-photo-delete'),
+                      icon: HeroAppIcons.trash,
+                      label: AppStrings.t(AppStringKeys.chatDelete),
+                      color: AppTheme.tagRed,
+                      onTap: onDelete,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                decoration: BoxDecoration(
+                  color: c.card,
+                  borderRadius: BorderRadius.circular(AppRadius.card),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: _action(
+                  context,
+                  key: const ValueKey('featured-photo-cancel'),
+                  label: AppStrings.t(AppStringKeys.countryPickerCancel),
+                  color: c.textPrimary,
+                  onTap: onCancel,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _action(
+    BuildContext context, {
+    required Key key,
+    AppIconData? icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) => Semantics(
+    button: true,
+    label: label,
+    child: GestureDetector(
+      key: key,
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: SizedBox(
+        height: 56,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Row(
+            mainAxisAlignment: icon == null
+                ? MainAxisAlignment.center
+                : MainAxisAlignment.start,
+            children: [
+              if (icon != null) ...[
+                AppIcon(icon, size: 21, color: color),
+                const SizedBox(width: 16),
+              ],
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+enum _ProfileContextAction { manage, copyLink, blockUser }
+
+class _ProfileContextMenu extends StatelessWidget {
+  const _ProfileContextMenu({
+    required this.showManage,
+    required this.showBlock,
+    required this.manageLabel,
+  });
+
+  final bool showManage;
+  final bool showBlock;
+  final String manageLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    return SafeArea(
+      top: false,
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        decoration: BoxDecoration(
+          color: c.card,
+          borderRadius: BorderRadius.circular(AppRadius.card),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.16),
+              blurRadius: 18,
+              offset: const Offset(0, 6),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (showManage) ...[
+              _item(
+                context,
+                key: const ValueKey('profile-context-manage'),
+                icon: HeroAppIcons.penToSquare,
+                label: manageLabel,
+                onTap: () =>
+                    Navigator.of(context).pop(_ProfileContextAction.manage),
+              ),
+              const InsetDivider(leadingInset: 56),
+            ],
+            _item(
+              context,
+              key: const ValueKey('profile-context-copy-link'),
+              icon: HeroAppIcons.link,
+              label: AppStrings.t(AppStringKeys.profileDetailCopyLink),
+              onTap: () =>
+                  Navigator.of(context).pop(_ProfileContextAction.copyLink),
+            ),
+            if (showBlock) ...[
+              const InsetDivider(leadingInset: 56),
+              _item(
+                context,
+                key: const ValueKey('profile-context-block-user'),
+                icon: HeroAppIcons.shieldHalved,
+                label: AppStrings.t(AppStringKeys.chatBlockUserConfirm),
+                destructive: true,
+                onTap: () =>
+                    Navigator.of(context).pop(_ProfileContextAction.blockUser),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _item(
+    BuildContext context, {
+    required Key key,
+    required AppIconData icon,
+    required String label,
+    required VoidCallback onTap,
+    bool destructive = false,
+  }) {
+    final c = context.colors;
+    final color = destructive ? const Color(0xFFFF4D4F) : c.textPrimary;
+    return GestureDetector(
+      key: key,
+      behavior: HitTestBehavior.opaque,
+      onTap: onTap,
+      child: SizedBox(
+        height: 56,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Row(
+            children: [
+              AppIcon(icon, size: 21, color: color),
+              const SizedBox(width: 16),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: context.appFontWeight(AppTextWeight.medium),
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}

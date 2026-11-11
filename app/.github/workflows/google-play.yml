@@ -1,0 +1,277 @@
+name: 📦 Google Play Release
+
+# Nightly builds go to Google Play's beta track (Open testing), while release
+# builds continue to go to Production. A manual master run also publishes to
+# Production, using the exact selected master commit and the same quality gate.
+
+on:
+  push:
+    branches: [nightly, release]
+  workflow_dispatch:
+    inputs:
+      expected_source_commit:
+        description: Optional exact source SHA; required for store snapshot tags
+        type: string
+
+concurrency:
+  # Serialize every Play publication so one version code cannot race across
+  # beta and production.
+  group: google-play-publication
+  cancel-in-progress: false
+  queue: max
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  source:
+    name: Verify source snapshot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - env:
+          EXPECTED_SOURCE_COMMIT: ${{ inputs.expected_source_commit }}
+        run: bash scripts/verify-store-source.sh
+
+  quality:
+    name: Required quality gate
+    needs: source
+    uses: ./.github/workflows/quality.yml
+
+  prepare:
+    name: Read release version
+    if: github.ref == 'refs/heads/nightly' || github.ref == 'refs/heads/release' || (github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/store-v')))
+    needs: quality
+    runs-on: ubuntu-latest
+    outputs:
+      app_version: ${{ steps.version.outputs.app_version }}
+      version_code: ${{ steps.version.outputs.version_code }}
+      android_version_code: ${{ steps.version.outputs.android_version_code }}
+      build_stamp: ${{ steps.version.outputs.build_stamp }}
+      release_date: ${{ steps.version.outputs.release_date }}
+      short_sha: ${{ steps.version.outputs.short_sha }}
+      play_track: ${{ steps.version.outputs.play_track }}
+      release_name: ${{ steps.version.outputs.release_name }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Read version from pubspec.yaml
+        id: version
+        run: |
+          raw_version="$(awk '/^version:/ { print $2; exit }' pubspec.yaml)"
+          test -n "$raw_version"
+          app_version="${raw_version%%+*}"
+          version_code="${raw_version##*+}"
+          test "$raw_version" != "$version_code"
+          case "$version_code" in
+            ''|*[!0-9]*) echo "Invalid Android version code: $version_code" >&2; exit 1 ;;
+          esac
+          # Direct APKs and Play AABs from one release commit must use the
+          # exact same code. Promote an existing Play artifact when rerunning
+          # an already-uploaded commit instead of allocating a different code.
+          android_version_code="$(bash scripts/android-version-code.sh)"
+          build_stamp="$(date -u '+%y%m%d%H')"
+          release_date="$(date -u '+%Y-%m-%d')"
+          short_sha="${GITHUB_SHA::7}"
+          branch_name="${GITHUB_REF_NAME:-${GITHUB_REF#refs/heads/}}"
+          case "$branch_name" in
+            nightly)
+              play_track="beta"
+              release_name="Mithka $app_version Beta · $release_date ($short_sha)"
+              ;;
+            master|release|store-v*)
+              play_track="production"
+              release_name="Mithka $app_version · $release_date"
+              ;;
+            *)
+              echo "Unsupported Google Play branch: $branch_name" >&2
+              exit 1
+              ;;
+          esac
+          {
+            echo "app_version=$app_version"
+            echo "version_code=$version_code"
+            echo "android_version_code=$android_version_code"
+            echo "build_stamp=$build_stamp"
+            echo "release_date=$release_date"
+            echo "short_sha=$short_sha"
+            echo "play_track=$play_track"
+            echo "release_name=$release_name"
+          } >> "$GITHUB_OUTPUT"
+          echo "Google Play $play_track version: $app_version+$android_version_code"
+
+  google-play:
+    name: Publish AAB to Google Play
+    needs: prepare
+    runs-on: ubuntu-latest
+    environment: google-play-production
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Guard immutable Google Play version code
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION_CODE: ${{ needs.prepare.outputs.android_version_code }}
+        run: |
+          if [ "$GITHUB_RUN_ATTEMPT" != "1" ]; then
+            echo "Do not rerun a Google Play publication; allocate a new release commit or promote the existing Play artifact" >&2
+            exit 1
+          fi
+
+          marker_tag="play-version-code-$VERSION_CODE"
+          if git ls-remote --exit-code --tags origin "refs/tags/$marker_tag" >/dev/null 2>&1; then
+            echo "Google Play version code $VERSION_CODE is already published" >&2
+            exit 1
+          fi
+
+          prior_run_ids="$(
+            gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/google-play.yml/runs?head_sha=$GITHUB_SHA&per_page=100" \
+              --jq '.workflow_runs[].id'
+          )"
+          other_run_ids="$(
+            printf '%s\n' "$prior_run_ids" \
+              | grep -vx "$GITHUB_RUN_ID" \
+              || true
+          )"
+          if [ -n "$other_run_ids" ]; then
+            echo "This commit already had a Google Play publication attempt; allocate a new release commit before retrying" >&2
+            exit 1
+          fi
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.2'
+          channel: stable
+          cache: true
+
+      - name: Install Android NDK 28.2.13676358
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "ndk;28.2.13676358" >/dev/null 2>&1 || \
+          yes | sdkmanager "ndk;28.2.13676358" >/dev/null 2>&1 || true
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+
+      - name: Cache Android tdjson libraries
+        uses: actions/cache@v6
+        with:
+          path: android/app/src/main/jniLibs
+          key: tdjson-android-${{ runner.os }}-play-${{ hashFiles('scripts/tdjson-manifest.json') }}
+
+      - name: Install pinned tdjson libraries
+        run: scripts/build-tdjson-android.sh arm64-v8a armeabi-v7a x86_64
+
+      - name: Flutter dependencies
+        run: flutter pub get
+
+      - name: Write Firebase Android config
+        env:
+          FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_B64: ${{ secrets.FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_B64 }}
+        run: |
+          : "${FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_B64:?set FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_B64 in repository secrets}"
+          mkdir -p android/app
+          printf '%s' "$FIREBASE_ANDROID_GOOGLE_SERVICES_JSON_B64" | base64 -d > android/app/google-services.json
+          python3 scripts/verify_firebase_configuration.py --platform android
+
+      - name: Write Telegram client credentials
+        env:
+          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
+          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
+        run: |
+          : "${TELEGRAM_API_ID:?set TELEGRAM_API_ID in repository secrets}"
+          : "${TELEGRAM_API_HASH:?set TELEGRAM_API_HASH in repository secrets}"
+          mkdir -p lib/config
+          cat > lib/config/secrets.dart <<EOF
+          class Secrets {
+            static const int apiId = $TELEGRAM_API_ID;
+            static const String apiHash = '$TELEGRAM_API_HASH';
+            static bool get isConfigured => apiId != 0 && apiHash.isNotEmpty;
+          }
+          EOF
+
+      - name: Decode Play signing keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          : "${KEYSTORE_B64:?set ANDROID_KEYSTORE_BASE64 in repository secrets}"
+          : "${STORE_PASSWORD:?set ANDROID_KEYSTORE_PASSWORD in repository secrets}"
+          : "${KEY_ALIAS:?set ANDROID_KEY_ALIAS in repository secrets}"
+          printf '%s' "$KEYSTORE_B64" | base64 -d > android/app/upload-keystore.jks
+          cat > android/key.properties <<EOF
+          storePassword=$STORE_PASSWORD
+          keyPassword=${KEY_PASSWORD:-$STORE_PASSWORD}
+          keyAlias=$KEY_ALIAS
+          storeFile=upload-keystore.jks
+          EOF
+
+      - name: Remove direct APK install permission from Play build
+        run: bash scripts/prepare-google-play-manifest.sh
+
+      - name: Build signed release AAB
+        env:
+          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
+        run: |
+          flutter build appbundle --release \
+            --dart-define="I_DONT_FUCKING_CARE_ABOUT_TOS=false" \
+            --target-platform android-arm,android-arm64,android-x64 \
+            --build-name="${{ needs.prepare.outputs.app_version }}" \
+            --build-number="${{ needs.prepare.outputs.android_version_code }}" \
+            --dart-define="GIT_COMMIT=${{ needs.prepare.outputs.short_sha }}" \
+            --dart-define="CI_BUILD_STAMP=${{ needs.prepare.outputs.build_stamp }}" \
+            --dart-define="GOOGLE_PLAY_BUILD=true" \
+            --dart-define="SENTRY_DSN=$SENTRY_DSN"
+          jarsigner -verify build/app/outputs/bundle/release/app-release.aab
+
+      - name: Upload AAB artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: google-play-aab-${{ needs.prepare.outputs.app_version }}+${{ needs.prepare.outputs.android_version_code }}
+          path: build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Submit ${{ needs.prepare.outputs.play_track }} release to Google Play
+        uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: ad.neko.mithka
+          releaseFiles: build/app/outputs/bundle/release/app-release.aab
+          tracks: ${{ needs.prepare.outputs.play_track }}
+          status: completed
+          releaseName: ${{ needs.prepare.outputs.release_name }}
+          whatsNewDirectory: distribution/google-play/whatsnew
+          changesNotSentForReview: false
+
+  record-play-version:
+    name: Record published Play version code
+    needs: [prepare, google-play]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Create immutable version marker
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.sha }}
+          VERSION_CODE: ${{ needs.prepare.outputs.android_version_code }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          python3 -m unittest discover -s test/scripts -p 'weekly_store_release_test.py' -v
+          python3 scripts/record_play_marker.py

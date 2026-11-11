@@ -1,0 +1,743 @@
+//
+//  auth_manager.dart
+//
+//  Owns app startup and TDLib's authorization flow. Subscribes to the update
+//  stream, reacts to updateAuthorizationState, and exposes a simple `step` that
+//  the UI gates on. Port of the Swift `AuthManager`.
+//
+
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+import 'package:mithka/l10n/app_localizations.dart';
+import 'package:mithka/notifications/scope_notification_settings.dart';
+
+import '../chat/chat_members_cache.dart';
+import '../config/secrets.dart';
+import '../settings/api_credentials_config.dart';
+import '../tdlib/json_helpers.dart';
+import '../tdlib/td_client.dart';
+import 'account_backup_service.dart';
+import 'premium_auth_purchase_service.dart';
+import 'telegram_passkey_service.dart';
+
+sealed class AuthStep {
+  const AuthStep();
+}
+
+class AuthInitializing extends AuthStep {
+  const AuthInitializing();
+}
+
+/// A reload of an already-started client is in flight (account switch, add
+/// account, session replacement). Unlike [AuthInitializing] this is NOT a
+/// cold-start: the login surface is already what the user asked for, so the
+/// auth gate must keep showing it instead of the full-screen splash.
+class AuthReloading extends AuthStep {
+  const AuthReloading();
+}
+
+class AuthWaitPhoneNumber extends AuthStep {
+  const AuthWaitPhoneNumber();
+}
+
+class AuthWaitQrCode extends AuthStep {
+  const AuthWaitQrCode(this.link);
+  final String link;
+}
+
+class AuthWaitCode extends AuthStep {
+  const AuthWaitCode(this.info);
+  final AuthCodeInfo info;
+}
+
+class AuthWaitPremiumPurchase extends AuthStep {
+  const AuthWaitPremiumPurchase({
+    required this.productId,
+    required this.premiumDayCount,
+    required this.supportEmail,
+    required this.supportSubject,
+  });
+
+  final String productId;
+  final int premiumDayCount;
+  final String supportEmail;
+  final String supportSubject;
+}
+
+class AuthWaitEmailAddress extends AuthStep {
+  const AuthWaitEmailAddress({
+    required this.allowAppleId,
+    required this.allowGoogleId,
+  });
+
+  final bool allowAppleId;
+  final bool allowGoogleId;
+}
+
+class AuthWaitEmailCode extends AuthStep {
+  const AuthWaitEmailCode({
+    required this.allowAppleId,
+    required this.allowGoogleId,
+    required this.emailPattern,
+    required this.length,
+    required this.canReset,
+    required this.resetWaitSeconds,
+    required this.resetPending,
+  });
+
+  final bool allowAppleId;
+  final bool allowGoogleId;
+  final String emailPattern;
+  final int length;
+  final bool canReset;
+  final int resetWaitSeconds;
+  final bool resetPending;
+}
+
+enum AuthCodeDeliveryMethod {
+  telegramMessage,
+  sms,
+  call,
+  flashCall,
+  missedCall,
+  fragment,
+  firebase,
+  email,
+  unknown,
+}
+
+class AuthCodeInfo {
+  const AuthCodeInfo({
+    required this.method,
+    required this.length,
+    this.numericOnly = true,
+    this.phoneNumber,
+    this.phoneNumberPrefix,
+    this.pattern,
+    this.url,
+    this.timeout,
+  });
+
+  final AuthCodeDeliveryMethod method;
+  final int length;
+  final bool numericOnly;
+  final String? phoneNumber;
+  final String? phoneNumberPrefix;
+  final String? pattern;
+  final String? url;
+  final int? timeout;
+
+  int get effectiveLength => length > 0 ? length : 5;
+
+  bool get isNumeric => numericOnly;
+
+  static const fallback = AuthCodeInfo(
+    method: AuthCodeDeliveryMethod.unknown,
+    length: 5,
+  );
+}
+
+class AuthWaitPassword extends AuthStep {
+  const AuthWaitPassword(this.hint);
+  final String hint;
+}
+
+class AuthWaitRegistration extends AuthStep {
+  const AuthWaitRegistration();
+}
+
+class AuthReady extends AuthStep {
+  const AuthReady();
+}
+
+class AuthLoggingOut extends AuthStep {
+  const AuthLoggingOut();
+}
+
+class AuthClosed extends AuthStep {
+  const AuthClosed();
+}
+
+class AuthMissingCredentials extends AuthStep {
+  const AuthMissingCredentials();
+}
+
+@visibleForTesting
+bool authorizationStateAcceptsPhoneNumber(String? type) => const {
+  'authorizationStateWaitPhoneNumber',
+  'authorizationStateWaitPremiumPurchase',
+  'authorizationStateWaitEmailAddress',
+  'authorizationStateWaitEmailCode',
+  'authorizationStateWaitCode',
+  'authorizationStateWaitPassword',
+  'authorizationStateWaitRegistration',
+}.contains(type);
+
+@visibleForTesting
+bool authorizationStateRequiresQrReset(String? type) =>
+    type == 'authorizationStateWaitOtherDeviceConfirmation';
+
+@visibleForTesting
+Map<String, dynamic> authenticationEmailAddressRequest(String email) => {
+  '@type': 'setAuthenticationEmailAddress',
+  'email_address': email.trim(),
+};
+
+@visibleForTesting
+Map<String, dynamic> authenticationEmailCodeRequest(String code) => {
+  '@type': 'checkAuthenticationEmailCode',
+  'code': {'@type': 'emailAddressAuthenticationCode', 'code': code.trim()},
+};
+
+@visibleForTesting
+bool authReloadIsCurrent({
+  required int reloadAction,
+  required int currentAction,
+  required int reloadClientId,
+  required int currentClientId,
+}) => reloadAction == currentAction && reloadClientId == currentClientId;
+
+class AuthManager extends ChangeNotifier {
+  static const _startupTimeout = Duration(seconds: 20);
+
+  final TdClient _client = TdClient.shared;
+  final TelegramPasskeyService _passkeys = TelegramPasskeyService.shared;
+  final PremiumAuthPurchaseService _premiumPurchases =
+      const PremiumAuthPurchaseService();
+  bool _started = false;
+  bool _subscribed = false;
+  bool _credentialsMissing = false;
+  Timer? _startupWatchdog;
+
+  AuthStep _step = const AuthInitializing();
+  String? _errorMessage;
+  bool _isWorking = false;
+  int _actionSerial = 0;
+  int? _authorizationTransitionAction;
+  bool _canUseLoginPasskey = false;
+
+  AuthStep get step => _step;
+  String? get errorMessage => _errorMessage;
+  bool get isWorking => _isWorking;
+  bool get canUseLoginPasskey => _canUseLoginPasskey;
+
+  @override
+  void dispose() {
+    _cancelStartupWatchdog();
+    super.dispose();
+  }
+
+  void start() {
+    if (_started) return;
+    _started = true;
+    _startupWatchdog?.cancel();
+    _startupWatchdog = Timer(_startupTimeout, _handleStartupTimeout);
+    unawaited(_startAfterCredentialCheck());
+  }
+
+  Future<void> _startAfterCredentialCheck() async {
+    try {
+      final customApi = await ApiCredentialsConfig.load().timeout(
+        const Duration(seconds: 8),
+      );
+      _credentialsMissing = !Secrets.isConfigured && !customApi.isUsable;
+
+      // Subscribe before start so no early update is missed.
+      if (!_subscribed) {
+        _subscribed = true;
+        _client
+            .updatesOfAny(const ['updateOption', 'updateAuthorizationState'])
+            .listen((update) {
+              if (update.type == 'updateOption' &&
+                  update.str('name') == 'can_use_login_passkey') {
+                unawaited(_loadPasskeyAvailability());
+                return;
+              }
+              if (update.type != 'updateAuthorizationState') return;
+              final state = update.obj('authorization_state');
+              if (state != null) _handle(state);
+            });
+      }
+      await _client.start().timeout(_startupTimeout);
+      if (_credentialsMissing && !_client.activeIsBotApi) {
+        _cancelStartupWatchdog();
+        _set(const AuthMissingCredentials());
+        return;
+      }
+      if (!_client.activeIsBotApi) _client.sendParametersForActiveClient();
+      unawaited(_loadPasskeyAvailability());
+      await ScopeNotificationSettings.shared.load().timeout(
+        const Duration(seconds: 8),
+      );
+    } catch (error, stackTrace) {
+      debugPrint('Auth startup failed: $error\n$stackTrace');
+      _showStartupFailure(error);
+    }
+  }
+
+  void retryStart() {
+    if (_step is! AuthMissingCredentials) return;
+    _started = false;
+    _cancelStartupWatchdog();
+    _set(const AuthInitializing());
+    start();
+  }
+
+  void _handleStartupTimeout() {
+    if (!_started || _step is! AuthInitializing) return;
+    debugPrint('Auth startup timed out; showing the login screen.');
+    try {
+      if (!_client.activeIsBotApi) _client.sendParametersForActiveClient();
+    } catch (error) {
+      debugPrint('Auth startup retry failed: $error');
+    }
+    _showStartupFailure(
+      StateError(
+        'Mithka is taking longer than expected to connect. '
+        'Check your internet connection and try again.',
+      ),
+    );
+  }
+
+  void _showStartupFailure(Object error) {
+    if (!_started || _step is! AuthInitializing) return;
+    _cancelStartupWatchdog();
+    _errorMessage = error is StateError
+        ? error.message.toString()
+        : 'Mithka could not finish connecting. Check your internet connection '
+              'and try again.';
+    _set(const AuthWaitPhoneNumber());
+  }
+
+  void _cancelStartupWatchdog() {
+    _startupWatchdog?.cancel();
+    _startupWatchdog = null;
+  }
+
+  // MARK: - Authorization state machine
+
+  void _handle(Map<String, dynamic> state) {
+    if (_credentialsMissing && !_client.activeIsBotApi) {
+      _set(const AuthMissingCredentials());
+      return;
+    }
+    debugPrint('🔑 [Mithka] authorizationState → ${state.type ?? 'nil'}');
+    if (state.type != 'authorizationStateWaitTdlibParameters') {
+      _cancelStartupWatchdog();
+    }
+    final preserveWorking = _authorizationTransitionAction == _actionSerial;
+    if (_isWorking && !preserveWorking) {
+      _actionSerial += 1;
+      _isWorking = false;
+    }
+    switch (state.type) {
+      case 'authorizationStateWaitTdlibParameters':
+        // The lower-level router normally sends these before broadcasting the
+        // state. On Flutter hot restart, Dart-side lifecycle can be rebuilt
+        // while tdjson is still alive, so repeat the active bootstrap here.
+        _client.sendParametersForActiveClient();
+      case 'authorizationStateWaitPhoneNumber':
+        _set(const AuthWaitPhoneNumber());
+      case 'authorizationStateWaitPremiumPurchase':
+        _set(
+          AuthWaitPremiumPurchase(
+            productId: state.str('store_product_id') ?? '',
+            premiumDayCount: state.integer('premium_day_count') ?? 0,
+            supportEmail: state.str('support_email_address') ?? '',
+            supportSubject: state.str('support_email_subject') ?? '',
+          ),
+        );
+      case 'authorizationStateWaitEmailAddress':
+        _set(
+          AuthWaitEmailAddress(
+            allowAppleId: state.boolean('allow_apple_id') ?? false,
+            allowGoogleId: state.boolean('allow_google_id') ?? false,
+          ),
+        );
+      case 'authorizationStateWaitEmailCode':
+        final codeInfo = state.obj('code_info');
+        final resetState = state.obj('email_address_reset_state');
+        _set(
+          AuthWaitEmailCode(
+            allowAppleId: state.boolean('allow_apple_id') ?? false,
+            allowGoogleId: state.boolean('allow_google_id') ?? false,
+            emailPattern: codeInfo?.str('email_address_pattern') ?? '',
+            length: codeInfo?.integer('length') ?? 0,
+            canReset: resetState != null,
+            resetWaitSeconds:
+                resetState?.integer('wait_period') ??
+                resetState?.integer('reset_in') ??
+                0,
+            resetPending: resetState?.type == 'emailAddressResetStatePending',
+          ),
+        );
+      case 'authorizationStateWaitOtherDeviceConfirmation':
+        _set(AuthWaitQrCode(state.str('link') ?? ''));
+      case 'authorizationStateWaitCode':
+        final info = state.obj('code_info');
+        _set(AuthWaitCode(_codeInfo(info)));
+      case 'authorizationStateWaitPassword':
+        _set(AuthWaitPassword(state.str('password_hint') ?? ''));
+      case 'authorizationStateWaitRegistration':
+        _set(const AuthWaitRegistration());
+      case 'authorizationStateReady':
+        _errorMessage = null;
+        _set(const AuthReady());
+        if (!_client.activeIsBotApi) {
+          unawaited(AccountBackupService.shared.backupActiveAccountIfEnabled());
+        }
+      case 'authorizationStateLoggingOut':
+        // Slots are reused by whoever signs in next, and the cache is keyed by
+        // slot — drop every strip rather than risk painting one account's
+        // members under another's chat.
+        ChatMembersCache.shared.clear();
+        _set(const AuthLoggingOut());
+      case 'authorizationStateClosing':
+        break;
+      case 'authorizationStateClosed':
+        _set(const AuthClosed());
+      default:
+        break;
+    }
+  }
+
+  /// Re-reads the active account's authorization state (after an account
+  /// switch) and updates `step` so the UI gates on the right account.
+  ///
+  /// The read takes real time (a fresh add-account slot reaches its first
+  /// authorization state only hundreds of milliseconds after setTdlibParameters),
+  /// so the intermediate frame is [AuthReloading] — mapped to the login surface,
+  /// not the cold-start splash. Startup keeps [AuthInitializing] for the splash.
+  void reloadAuthState() {
+    final action = ++_actionSerial;
+    final clientId = _client.activeClientId;
+    _isWorking = false;
+    _errorMessage = null;
+    _canUseLoginPasskey = false;
+    _set(const AuthReloading());
+    unawaited(_loadPasskeyAvailability());
+    unawaited(_reloadAuthState(action: action, clientId: clientId));
+  }
+
+  Future<void> _reloadAuthState({
+    required int action,
+    required int clientId,
+  }) async {
+    bool isCurrent() => authReloadIsCurrent(
+      reloadAction: action,
+      currentAction: _actionSerial,
+      reloadClientId: clientId,
+      currentClientId: _client.activeClientId,
+    );
+
+    try {
+      final state = await _client.queryTo(
+        {'@type': 'getAuthorizationState'},
+        clientId,
+        timeout: const Duration(seconds: 8),
+      );
+      if (!isCurrent()) return;
+      _handle(state);
+    } catch (error) {
+      if (!isCurrent()) return;
+      debugPrint('Auth state reload failed: $error');
+      _client.sendParametersForActiveClient();
+      _set(const AuthWaitPhoneNumber());
+    }
+  }
+
+  // MARK: - User actions
+
+  Future<bool> submitPhone(String phone) async {
+    if (_isWorking) return false;
+    final normalizedPhone = phone.trim();
+    final action = _beginAuthorizationTransition();
+    try {
+      var state = await _client
+          .query({'@type': 'getAuthorizationState'})
+          .timeout(const Duration(seconds: 5));
+      if (authorizationStateRequiresQrReset(state.type)) {
+        _set(const AuthInitializing());
+        await _client.resetActiveQrLogin();
+        if (action != _actionSerial) return false;
+        state = await _client
+            .query({'@type': 'getAuthorizationState'})
+            .timeout(const Duration(seconds: 5));
+      }
+      if (!authorizationStateAcceptsPhoneNumber(state.type)) {
+        throw StateError(
+          'Phone number authentication is unavailable from ${state.type}',
+        );
+      }
+      await _client
+          .query({
+            '@type': 'setAuthenticationPhoneNumber',
+            'phone_number': normalizedPhone,
+            'settings': null,
+          })
+          .timeout(const Duration(seconds: 20));
+      return action == _actionSerial;
+    } catch (error) {
+      if (action == _actionSerial) _report(error);
+      return false;
+    } finally {
+      _finishAuthorizationTransition(action);
+    }
+  }
+
+  /// Leaves TDLib's persisted QR state before the phone-number form is used.
+  Future<bool> switchToPhoneLogin() async {
+    if (_isWorking) return false;
+    final action = _beginAuthorizationTransition();
+    try {
+      final state = await _client
+          .query({'@type': 'getAuthorizationState'})
+          .timeout(const Duration(seconds: 5));
+      if (authorizationStateRequiresQrReset(state.type)) {
+        // The login surface is already showing the phone form the user asked
+        // for; the client reset behind it is a reload, not a cold start, so it
+        // must keep the login surface instead of flashing the splash.
+        _set(const AuthReloading());
+        await _client.resetActiveQrLogin();
+      } else if (!authorizationStateAcceptsPhoneNumber(state.type)) {
+        throw StateError(
+          'Phone number authentication is unavailable from ${state.type}',
+        );
+      }
+      return action == _actionSerial;
+    } catch (error) {
+      if (action == _actionSerial) _report(error);
+      return false;
+    } finally {
+      _finishAuthorizationTransition(action);
+    }
+  }
+
+  void requestQrLogin() =>
+      _run({'@type': 'requestQrCodeAuthentication', 'other_user_ids': []});
+
+  Future<bool> loginWithPasskey() async {
+    if (_isWorking || !_canUseLoginPasskey) return false;
+    final clientId = _client.activeClientId;
+    if (clientId == 0) return false;
+    final action = _beginAuthorizationTransition();
+    try {
+      await _passkeys.authenticate(clientId: clientId);
+      return action == _actionSerial;
+    } on TelegramPasskeyException catch (error) {
+      if (action == _actionSerial && !error.isCancelled) {
+        _errorMessage = _friendlyPasskey(error);
+      }
+      return false;
+    } catch (error) {
+      if (action == _actionSerial) _report(error);
+      return false;
+    } finally {
+      _finishAuthorizationTransition(action);
+    }
+  }
+
+  void submitCode(String code) =>
+      _run({'@type': 'checkAuthenticationCode', 'code': code.trim()});
+
+  void submitEmailAddress(String email) =>
+      _run(authenticationEmailAddressRequest(email));
+
+  void submitEmailCode(String code) =>
+      _run(authenticationEmailCodeRequest(code));
+
+  void resetAuthenticationEmailAddress() =>
+      _run({'@type': 'resetAuthenticationEmailAddress'});
+
+  Future<bool> purchaseRequiredPremium({bool restore = false}) async {
+    final step = _step;
+    if (_isWorking || step is! AuthWaitPremiumPurchase) return false;
+    final clientId = _client.activeClientId;
+    if (clientId == 0 || step.productId.isEmpty) return false;
+    final action = _beginAuthorizationTransition();
+    try {
+      await _premiumPurchases.purchaseAndAuthorize(
+        clientId: clientId,
+        productId: step.productId,
+        premiumDayCount: step.premiumDayCount,
+        restore: restore,
+      );
+      return action == _actionSerial;
+    } on PremiumAuthPurchaseException catch (error) {
+      if (action == _actionSerial && !error.isCancelled) {
+        _errorMessage = error.message ?? error.code;
+      }
+      return false;
+    } catch (error) {
+      if (action == _actionSerial) _report(error);
+      return false;
+    } finally {
+      _finishAuthorizationTransition(action);
+    }
+  }
+
+  void submitPassword(String password) =>
+      _run({'@type': 'checkAuthenticationPassword', 'password': password});
+
+  void register(String firstName, String lastName) => _run({
+    '@type': 'registerUser',
+    'first_name': firstName,
+    'last_name': lastName,
+    'disable_notification': false,
+  });
+
+  void resendCode() =>
+      _run({'@type': 'resendAuthenticationCode', 'reason': null});
+
+  void logOut() => _run({'@type': 'logOut'});
+
+  void cancelPendingAction() {
+    if (!_isWorking) return;
+    _actionSerial += 1;
+    _isWorking = false;
+    notifyListeners();
+  }
+
+  // MARK: - Helpers
+
+  int _beginAuthorizationTransition() {
+    final action = ++_actionSerial;
+    _authorizationTransitionAction = action;
+    _isWorking = true;
+    _errorMessage = null;
+    notifyListeners();
+    return action;
+  }
+
+  void _finishAuthorizationTransition(int action) {
+    if (_authorizationTransitionAction == action) {
+      _authorizationTransitionAction = null;
+    }
+    if (action != _actionSerial) return;
+    _isWorking = false;
+    notifyListeners();
+  }
+
+  void _set(AuthStep step) {
+    _step = step;
+    notifyListeners();
+  }
+
+  void _run(Map<String, dynamic> request) {
+    final action = ++_actionSerial;
+    _isWorking = true;
+    _errorMessage = null;
+    notifyListeners();
+    _client
+        .query(request)
+        .timeout(const Duration(seconds: 20))
+        .then((_) {
+          if (action != _actionSerial) return;
+          _isWorking = false;
+          notifyListeners();
+        })
+        .catchError((error) {
+          if (action != _actionSerial) return;
+          _report(error);
+          _isWorking = false;
+          notifyListeners();
+        });
+  }
+
+  void _report(Object error) {
+    if (error is TdError) {
+      _errorMessage = _friendly(error);
+    } else {
+      _errorMessage = error.toString();
+    }
+  }
+
+  Future<void> _loadPasskeyAvailability() async {
+    final clientId = _client.activeClientId;
+    final enabled = await _passkeys.canUse(clientId: clientId);
+    if (clientId != _client.activeClientId || enabled == _canUseLoginPasskey) {
+      return;
+    }
+    _canUseLoginPasskey = enabled;
+    notifyListeners();
+  }
+
+  String _friendlyPasskey(TelegramPasskeyException error) =>
+      switch (error.code) {
+        'passkey_empty' => AppStrings.t(
+          AppStringKeys.passkeysErrorNoCredential,
+        ),
+        'passkey_not_allowed' => AppStrings.t(
+          AppStringKeys.passkeysErrorNotAllowed,
+        ),
+        'passkey_already_signed_in' => AppStrings.t(
+          AppStringKeys.passkeysErrorAlreadySignedIn,
+        ),
+        'passkey_unavailable' => AppStrings.t(
+          AppStringKeys.passkeysErrorUnavailable,
+        ),
+        _ => AppStrings.t(AppStringKeys.passkeysErrorGeneric),
+      };
+
+  String _friendly(TdError error) {
+    switch (error.message) {
+      case 'PHONE_NUMBER_INVALID':
+        return AppStrings.t(AppStringKeys.authInvalidPhoneNumber);
+      case 'PHONE_CODE_INVALID':
+        return AppStrings.t(AppStringKeys.authInvalidVerificationCode);
+      case 'PHONE_CODE_EXPIRED':
+        return AppStrings.t(AppStringKeys.authCodeExpiredRetry);
+      case 'PASSWORD_HASH_INVALID':
+        return AppStrings.t(AppStringKeys.authInvalidPassword);
+      default:
+        return error.message;
+    }
+  }
+
+  AuthCodeInfo _codeInfo(Map<String, dynamic>? info) {
+    final type = info?.obj('type');
+    final rawType = type?.type ?? '';
+    final lowerType = rawType.toLowerCase();
+    final method = switch (rawType) {
+      'authenticationCodeTypeTelegramMessage' =>
+        AuthCodeDeliveryMethod.telegramMessage,
+      'authenticationCodeTypeSms' ||
+      'authenticationCodeTypeSmsWord' ||
+      'authenticationCodeTypeSmsPhrase' => AuthCodeDeliveryMethod.sms,
+      'authenticationCodeTypeCall' => AuthCodeDeliveryMethod.call,
+      'authenticationCodeTypeFlashCall' => AuthCodeDeliveryMethod.flashCall,
+      'authenticationCodeTypeMissedCall' => AuthCodeDeliveryMethod.missedCall,
+      'authenticationCodeTypeFragment' => AuthCodeDeliveryMethod.fragment,
+      'authenticationCodeTypeFirebaseAndroid' ||
+      'authenticationCodeTypeFirebaseIos' => AuthCodeDeliveryMethod.firebase,
+      'authenticationCodeTypeEmailAddress' ||
+      'emailAddressAuthenticationCodeInfo' => AuthCodeDeliveryMethod.email,
+      _ when lowerType.contains('telegram') =>
+        AuthCodeDeliveryMethod.telegramMessage,
+      _ when lowerType.contains('sms') => AuthCodeDeliveryMethod.sms,
+      _ when lowerType.contains('missedcall') =>
+        AuthCodeDeliveryMethod.missedCall,
+      _ when lowerType.contains('flashcall') =>
+        AuthCodeDeliveryMethod.flashCall,
+      _ when lowerType.contains('call') => AuthCodeDeliveryMethod.call,
+      _ when lowerType.contains('fragment') => AuthCodeDeliveryMethod.fragment,
+      _ when lowerType.contains('firebase') => AuthCodeDeliveryMethod.firebase,
+      _ when lowerType.contains('email') => AuthCodeDeliveryMethod.email,
+      _ => AuthCodeDeliveryMethod.unknown,
+    };
+    return AuthCodeInfo(
+      method: method,
+      length: type?.integer('length') ?? 0,
+      numericOnly:
+          !lowerType.contains('word') &&
+          !lowerType.contains('phrase') &&
+          method != AuthCodeDeliveryMethod.email,
+      phoneNumber: info?.str('phone_number'),
+      phoneNumberPrefix: type?.str('phone_number_prefix'),
+      pattern: type?.str('pattern'),
+      url: type?.str('url'),
+      timeout: info?.integer('timeout'),
+    );
+  }
+}

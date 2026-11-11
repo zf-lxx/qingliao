@@ -1,0 +1,827 @@
+//
+//  content_view.dart
+//
+//  Auth gate: shows the tab bar once TDLib reports ready, otherwise login.
+//  Port of the Swift `ContentView` / `SplashView`.
+//
+
+import 'dart:async';
+import 'dart:io';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+
+import '../auth/account_store.dart';
+import '../auth/auth_manager.dart';
+import '../auth/login_view.dart';
+import '../chat/custom_emoji.dart';
+import '../chat/link_handler.dart';
+import '../chats/search_view.dart';
+import '../components/app_icons.dart';
+import '../components/app_interactive_surface.dart';
+import '../l10n/app_localizations.dart';
+import '../platform/adaptive_platform.dart';
+import '../profile/emoji_status_picker.dart';
+import '../settings/desktop_hotkey_controller.dart';
+import '../theme/app_theme.dart';
+import '../theme/theme_controller.dart';
+import 'active_conversation.dart';
+import 'app_navigator.dart';
+import 'desktop_chat_list_title_bar_anchors.dart';
+import 'desktop_utility_window.dart';
+import 'desktop_window_controls.dart';
+import 'macos_desktop_title_bar.dart';
+import 'main_tab_view.dart';
+
+Key desktopPrimaryWindowIdentityKey(int accountSlot, int? accountUserId) =>
+    ValueKey(('desktop-primary-window', accountSlot, accountUserId));
+
+class ContentView extends StatelessWidget {
+  const ContentView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final step = context.watch<AuthManager>().step;
+    final Widget child = switch (step) {
+      AuthReady() => const MainTabView(),
+      // A real cold start (and a logout) paints the splash. AuthReloading is a
+      // re-read of an already-running client — account switch or add account —
+      // and the login surface is what the user asked for, so it stays on screen.
+      AuthInitializing() || AuthLoggingOut() => const SplashView(),
+      _ => const LoginView(),
+    };
+    // Entering MainTabView is the one edge where the crossfade lands on the
+    // frames that inflate the tab stack and the first chat rows; wrapping that
+    // in a full-viewport opacity layer for 250 ms is the most expensive
+    // rasterisation of the launch. Splash <-> login still crossfades.
+    final content = AnimatedSwitcher(
+      duration: child is MainTabView
+          ? Duration.zero
+          : const Duration(milliseconds: 250),
+      child: KeyedSubtree(key: ValueKey(child.runtimeType), child: child),
+    );
+    return content;
+  }
+}
+
+/// Persistent desktop chrome placed above the app Navigator.
+///
+/// Keeping this frame outside individual routes prevents full-page surfaces
+/// such as Chat Info from covering the account identity or colliding with the
+/// native window controls.
+class DesktopPrimaryWindowFrame extends StatefulWidget {
+  const DesktopPrimaryWindowFrame({
+    super.key,
+    required this.accountReady,
+    required this.child,
+    this.accountName,
+    this.accountAvatarPath,
+    this.accountPhone,
+    this.showAccountPhone,
+    this.onOpenSearchAll,
+    this.profileWindowOpener,
+  });
+
+  final bool accountReady;
+  final Widget child;
+  final String? accountName;
+  final String? accountAvatarPath;
+  final String? accountPhone;
+  final bool? showAccountPhone;
+  final FutureOr<void> Function(String query)? onOpenSearchAll;
+  final Future<bool> Function(DesktopUtilityWindowArguments)?
+  profileWindowOpener;
+
+  @override
+  State<DesktopPrimaryWindowFrame> createState() =>
+      _DesktopPrimaryWindowFrameState();
+}
+
+class _DesktopPrimaryWindowFrameState extends State<DesktopPrimaryWindowFrame> {
+  static const _profileDismissDelay = Duration(milliseconds: 220);
+
+  final LayerLink _profileLink = LayerLink();
+  final LayerLink _searchLink = LayerLink();
+  final Object _profileTapGroup = Object();
+  final Object _searchTapGroup = Object();
+  late final DesktopInlineSearchController _searchController =
+      DesktopInlineSearchController();
+  Timer? _profileDismissTimer;
+  DesktopHotkeyRegistration? _focusSearchRegistration;
+  bool _profileVisible = false;
+  bool _statusPickerVisible = false;
+  NavigatorState? _statusPickerNavigator;
+
+  @override
+  void initState() {
+    super.initState();
+    if (!kIsWeb && isDesktopTargetPlatform(defaultTargetPlatform)) {
+      _focusSearchRegistration = DesktopHotkeyRegistry.instance.register(
+        DesktopHotkeyAction.focusSearch,
+        _focusSearch,
+        isEnabled: () => widget.accountReady,
+      );
+    }
+  }
+
+  @override
+  void didUpdateWidget(DesktopPrimaryWindowFrame oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!widget.accountReady && _profileVisible) {
+      _profileDismissTimer?.cancel();
+      _profileVisible = false;
+    }
+    if (!widget.accountReady) _searchController.dismiss();
+  }
+
+  @override
+  void dispose() {
+    _profileDismissTimer?.cancel();
+    _focusSearchRegistration?.dispose();
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  /// Focusing search from inside a conversation pre-fills an `in: <chat>`
+  /// filter, so the common case — "find this in what I'm reading" — needs no
+  /// second step, while removing the chip widens the search again.
+  void _focusSearch() =>
+      _searchController.focus(scope: ActiveConversation.shared.current);
+
+  Future<void> _openSearchAll(String query) => _openSearch(query, null);
+
+  Future<void> _openSearchCategory(String query, SearchTab tab) =>
+      _openSearch(query, tab);
+
+  Future<void> _openSearch(String query, SearchTab? tab) async {
+    final trimmed = query.trim();
+    if (trimmed.isEmpty) return;
+    final override = widget.onOpenSearchAll;
+    if (override != null && tab == null) {
+      await override(trimmed);
+      return;
+    }
+
+    if (DesktopUtilityWindowService.instance.isSupported) {
+      final accounts = context.read<AccountStore>();
+      final accountUserId = accounts.activeUserId;
+      if (accountUserId != null) {
+        final opened = await DesktopUtilityWindowService.instance.open(
+          DesktopUtilityWindowArguments(
+            kind: DesktopUtilityWindowKind.search,
+            accountSlot: accounts.activeSlot,
+            accountUserId: accountUserId,
+            title: tab?.label ?? AppStringKeys.topicChatSearch.l10n(context),
+            localeTag: Localizations.localeOf(context).toLanguageTag(),
+            dark: Theme.of(context).brightness == Brightness.dark,
+            initialQuery: trimmed,
+            initialSearchTab: tab?.name,
+            instanceId: createDesktopUtilityWindowInstanceId(),
+          ),
+        );
+        if (opened || !mounted) return;
+      }
+    }
+
+    final navigator =
+        appNavigatorKey.currentState ?? Navigator.maybeOf(context);
+    await navigator?.push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => SearchView(initialQuery: trimmed, initialTab: tab),
+      ),
+    );
+  }
+
+  void _showProfile() {
+    _profileDismissTimer?.cancel();
+    if (!widget.accountReady || _profileVisible || _statusPickerVisible) return;
+    setState(() => _profileVisible = true);
+  }
+
+  Future<void> _showStatusPicker(int currentStatusId) async {
+    if (!widget.accountReady || _statusPickerVisible) return;
+    // This frame is above the app Navigator. Its overlay supplies a context
+    // that can present the picker without replacing the current workspace.
+    final navigator =
+        appNavigatorKey.currentState ?? Navigator.maybeOf(context);
+    final pickerContext = navigator?.overlay?.context;
+    if (pickerContext == null) return;
+    _hideProfile();
+    _searchController.dismiss();
+    setState(() {
+      _statusPickerVisible = true;
+      _statusPickerNavigator = navigator;
+    });
+    try {
+      await showEmojiStatusPicker(
+        pickerContext,
+        currentStatusId: currentStatusId,
+      );
+    } finally {
+      _statusPickerNavigator = null;
+      if (mounted) setState(() => _statusPickerVisible = false);
+    }
+  }
+
+  /// The picker's barrier covers only the app below the title bar, which
+  /// sits above the app Navigator; a click on the title bar closes it too.
+  void _closeStatusPicker() {
+    if (!_statusPickerVisible) return;
+    unawaited(_statusPickerNavigator?.maybePop());
+  }
+
+  Future<void> _openEditProfile() async {
+    _hideProfile();
+    final accounts = context.read<AccountStore?>();
+    final userId = accounts?.activeUserId;
+    if (accounts == null || userId == null || accounts.activeIsBotApi) return;
+    await (widget.profileWindowOpener ??
+        DesktopUtilityWindowService.instance.open)(
+      DesktopUtilityWindowArguments(
+        kind: DesktopUtilityWindowKind.editProfile,
+        accountSlot: accounts.activeSlot,
+        accountUserId: userId,
+        title: AppStringKeys.editProfileTitle.l10n(context),
+        localeTag: Localizations.localeOf(context).toLanguageTag(),
+        dark: Theme.of(context).brightness == Brightness.dark,
+      ),
+    );
+  }
+
+  void _scheduleProfileDismiss() {
+    _profileDismissTimer?.cancel();
+    _profileDismissTimer = Timer(_profileDismissDelay, _hideProfile);
+  }
+
+  void _hideProfile() {
+    _profileDismissTimer?.cancel();
+    if (!mounted || !_profileVisible) return;
+    setState(() => _profileVisible = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (kIsWeb || !isDesktopTargetPlatform(defaultTargetPlatform)) {
+      return widget.child;
+    }
+    final accounts = context.watch<AccountStore?>();
+    final activeAccount = accounts?.activeSummary;
+    final identity = widget.accountName?.trim().isNotEmpty == true
+        ? widget.accountName!.trim()
+        : activeAccount?.name.trim();
+    final label = identity == null || identity.isEmpty ? 'Mithka' : identity;
+    final phone = widget.accountPhone?.trim().isNotEmpty == true
+        ? widget.accountPhone!.trim()
+        : activeAccount?.phone.trim();
+    final showPhone =
+        widget.showAccountPhone ??
+        !context.watch<ThemeController>().hideSidebarPhone;
+    final avatarPath = widget.accountAvatarPath ?? activeAccount?.avatarPath;
+    final canManageProfile =
+        widget.accountReady && activeAccount?.isBotApi != true;
+    // Emoji statuses are a Premium feature; without it the button could only
+    // open a picker that fails on every choice.
+    final canSetStatus = canManageProfile && activeAccount?.isPremium == true;
+    final statusId = activeAccount?.emojiStatusId ?? 0;
+    final statusMode = context
+        .watch<ThemeController?>()
+        ?.chatListStatusEmojiMode;
+    final flutterWindowControls = usesFlutterDesktopWindowControls;
+    return ColoredBox(
+      color: context.colors.background,
+      child: Stack(
+        children: [
+          Column(
+            children: [
+              MacosDesktopTitleBar(
+                leadingClearance: defaultTargetPlatform == TargetPlatform.macOS
+                    ? 78
+                    : 8,
+                // Before sign-in the bar continues the login canvas instead
+                // of sitting on it as a separate strip.
+                backgroundColor: widget.accountReady
+                    ? null
+                    : context.colors.background,
+                showDivider: widget.accountReady,
+                trailingControls: flutterWindowControls
+                    ? const DesktopWindowControls()
+                    : null,
+                trailingActions: widget.accountReady
+                    ? _DesktopChatTitleBarActions(
+                        searchController: _searchController,
+                        searchLink: _searchLink,
+                        searchTapGroup: _searchTapGroup,
+                        onSearchAll: _openSearchAll,
+                      )
+                    : null,
+                onDragAreaDoubleTap: flutterWindowControls
+                    ? () => unawaited(togglePrimaryDesktopWindowMaximized())
+                    : null,
+                // Signed out, the bar carries only the window controls: the
+                // login screen names the app itself, and an account identity
+                // has nothing to show yet.
+                appIdentity: !widget.accountReady
+                    ? const SizedBox.shrink()
+                    : LayoutBuilder(
+                        builder: (context, constraints) => Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: TapRegion(
+                                groupId: _profileTapGroup,
+                                onTapOutside: (_) => _hideProfile(),
+                                child: CompositedTransformTarget(
+                                  link: _profileLink,
+                                  child: MouseRegion(
+                                    onEnter: widget.accountReady
+                                        ? (_) => _showProfile()
+                                        : null,
+                                    onExit: widget.accountReady
+                                        ? (_) => _scheduleProfileDismiss()
+                                        : null,
+                                    child: AppInteractiveSurface(
+                                      key: const ValueKey(
+                                        'macos-title-bar-account',
+                                      ),
+                                      semanticLabel: label,
+                                      enabled: widget.accountReady,
+                                      onTap: widget.accountReady
+                                          ? _showProfile
+                                          : null,
+                                      borderRadius: BorderRadius.circular(
+                                        AppRadius.md,
+                                      ),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 6,
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            ClipOval(
+                                              key: const ValueKey(
+                                                'macos-title-bar-account-avatar',
+                                              ),
+                                              child: _MacosTitleBarAvatar(
+                                                path: avatarPath,
+                                                name: label,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Flexible(
+                                              child: ConstrainedBox(
+                                                constraints:
+                                                    const BoxConstraints(
+                                                      maxWidth: 220,
+                                                    ),
+                                                child: Text(
+                                                  label,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: TextStyle(
+                                                    color: context
+                                                        .colors
+                                                        .textPrimary,
+                                                    fontSize: 14,
+                                                    fontWeight: FontWeight.w600,
+                                                    decoration:
+                                                        TextDecoration.none,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            if (canSetStatus && constraints.maxWidth >= 80) ...[
+                              const SizedBox(width: 2),
+                              AppInteractiveSurface(
+                                key: const ValueKey('desktop-title-bar-status'),
+                                semanticLabel: AppStringKeys.emojiStatusSetTitle
+                                    .l10n(context),
+                                enabled: !_statusPickerVisible,
+                                onTap: () =>
+                                    unawaited(_showStatusPicker(statusId)),
+                                borderRadius: BorderRadius.circular(
+                                  AppRadius.md,
+                                ),
+                                child: SizedBox(
+                                  width: 28,
+                                  height: 28,
+                                  child: Center(
+                                    child:
+                                        statusId != 0 &&
+                                            statusMode?.visible != false
+                                        ? StatusEmojiView(
+                                            id: statusId,
+                                            size: 18,
+                                            color: context.colors.textPrimary,
+                                            animate:
+                                                statusMode?.animate ?? true,
+                                          )
+                                        : AppIcon(
+                                            HeroAppIcons.faceSmile,
+                                            size: 18,
+                                            color: context.colors.textSecondary,
+                                          ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+              ),
+              Expanded(
+                child: MediaQuery.removePadding(
+                  context: context,
+                  removeTop: true,
+                  child: widget.child,
+                ),
+              ),
+            ],
+          ),
+          if (_profileVisible)
+            CompositedTransformFollower(
+              link: _profileLink,
+              showWhenUnlinked: false,
+              targetAnchor: Alignment.bottomLeft,
+              offset: const Offset(0, 6),
+              child: TapRegion(
+                groupId: _profileTapGroup,
+                onTapOutside: (_) => _hideProfile(),
+                child: MouseRegion(
+                  onEnter: (_) => _profileDismissTimer?.cancel(),
+                  onExit: (_) => _scheduleProfileDismiss(),
+                  child: _DesktopTitleBarProfilePopup(
+                    name: label,
+                    phone: showPhone ? phone : null,
+                    avatarPath: avatarPath,
+                    onEdit: canManageProfile
+                        ? () => unawaited(_openEditProfile())
+                        : null,
+                  ),
+                ),
+              ),
+            ),
+          if (_statusPickerVisible)
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              height: MacosDesktopTitleBar.height,
+              child: GestureDetector(
+                key: const ValueKey('desktop-title-bar-status-dismiss'),
+                behavior: HitTestBehavior.opaque,
+                onTap: _closeStatusPicker,
+                // Dims with the picker's own barrier (the Cupertino modal
+                // barrier colour), so the whole window reads as behind it.
+                child: ColoredBox(
+                  color: Theme.of(context).brightness == Brightness.dark
+                      ? const Color(0x7A000000)
+                      : const Color(0x33000000),
+                ),
+              ),
+            ),
+          if (widget.accountReady)
+            CompositedTransformFollower(
+              link: _searchLink,
+              showWhenUnlinked: false,
+              targetAnchor: Alignment.bottomRight,
+              followerAnchor: Alignment.topRight,
+              offset: const Offset(0, 6),
+              child: TapRegion(
+                groupId: _searchTapGroup,
+                onTapOutside: (_) => _searchController.dismiss(),
+                child: DesktopInlineSearchPanel(
+                  controller: _searchController,
+                  onSearchAll: _openSearchAll,
+                  onSearchCategory: _openSearchCategory,
+                  onOpenTelegramLink: openLink,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DesktopChatTitleBarActions extends StatelessWidget {
+  const _DesktopChatTitleBarActions({
+    required this.searchController,
+    required this.searchLink,
+    required this.searchTapGroup,
+    required this.onSearchAll,
+  });
+
+  static const double actionSize = 28;
+
+  /// Matches the search field's own glyph, which sits directly beside it — at
+  /// 16 the plus read as a size larger than everything around it.
+  static const double iconSize = 14;
+  static const double gap = 4;
+
+  final DesktopInlineSearchController searchController;
+  final LayerLink searchLink;
+  final Object searchTapGroup;
+  final FutureOr<void> Function(String query) onSearchAll;
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: searchController,
+    builder: (context, child) => SizedBox(
+      // The field grows when it carries an `in: <chat>` chip; the title bar
+      // has to give it that room in the same frame or the chip overflows.
+      width:
+          DesktopInlineSearchField.widthFor(searchController) +
+          gap +
+          actionSize,
+      height: actionSize,
+      child: child,
+    ),
+    // DesktopPrimaryWindowFrame wraps the app Navigator from MaterialApp's
+    // builder, so title-bar controls are siblings of (not descendants of) the
+    // Navigator's Overlay. EditableText needs its own local Overlay ancestor
+    // for selection handles and editing gestures.
+    child: Overlay(
+      clipBehavior: Clip.none,
+      initialEntries: [
+        OverlayEntry(
+          builder: (overlayContext) => Row(
+            children: [
+              // The title bar may contract before the fixed window controls.
+              // Keep the add button available and let the search field absorb
+              // that contraction instead of overflowing into the controls.
+              Expanded(
+                child: TapRegion(
+                  groupId: searchTapGroup,
+                  onTapOutside: (_) => searchController.dismiss(),
+                  child: CompositedTransformTarget(
+                    link: searchLink,
+                    child: DesktopInlineSearchField(
+                      controller: searchController,
+                      onSearchAll: onSearchAll,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: gap),
+              CompositedTransformTarget(
+                link: DesktopChatListTitleBarAnchors.add,
+                child: KeyedSubtree(
+                  key: DesktopChatListTitleBarAnchors.addButton,
+                  child: _action(
+                    overlayContext,
+                    key: const ValueKey('desktop-title-bar-add'),
+                    icon: HeroAppIcons.plus,
+                    label: AppStringKeys.chatInfoCreate.l10n(overlayContext),
+                    action: DesktopHotkeyAction.newChat,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _action(
+    BuildContext context, {
+    required Key key,
+    required AppIconData icon,
+    required String label,
+    required DesktopHotkeyAction action,
+  }) => AppInteractiveSurface(
+    key: key,
+    semanticLabel: label,
+    onTap: () => DesktopHotkeyRegistry.instance.invoke(action),
+    borderRadius: BorderRadius.circular(AppRadius.md),
+    child: SizedBox.square(
+      dimension: actionSize,
+      child: Center(
+        child: AppIcon(icon, size: iconSize, color: context.colors.textPrimary),
+      ),
+    ),
+  );
+}
+
+class _MacosTitleBarAvatar extends StatelessWidget {
+  const _MacosTitleBarAvatar({this.path, required this.name, this.size = 24});
+
+  final String? path;
+  final String name;
+  final double size;
+
+  Widget _fallback() {
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty || trimmedName == 'Mithka') {
+      // The icon is 1024x1024: 4 MB of RGBA for a 24 pt slot without a decode
+      // hint. Width only, so the square aspect survives.
+      return Image.asset(
+        'assets/app_icon.png',
+        width: size,
+        height: size,
+        cacheWidth: (size * 4).round(),
+        fit: BoxFit.cover,
+      );
+    }
+    return Container(
+      width: size,
+      height: size,
+      alignment: Alignment.center,
+      color: AppTheme.brand,
+      child: Text(
+        trimmedName.characters.first.toUpperCase(),
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: size * 0.4,
+          fontWeight: FontWeight.w600,
+          decoration: TextDecoration.none,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final path = this.path?.trim();
+    if (path == null || path.isEmpty) return _fallback();
+    return Image.file(
+      File(path),
+      key: const ValueKey('macos-title-bar-account-avatar-file'),
+      width: size,
+      height: size,
+      // The branch a signed-in user actually renders: a full-size profile
+      // photo for a 24 pt slot. Width only, so the aspect BoxFit.cover crops
+      // against is unchanged.
+      cacheWidth: (size * 4).round(),
+      fit: BoxFit.cover,
+      errorBuilder: (_, _, _) => _fallback(),
+    );
+  }
+}
+
+class _DesktopTitleBarProfilePopup extends StatelessWidget {
+  const _DesktopTitleBarProfilePopup({
+    required this.name,
+    required this.phone,
+    required this.avatarPath,
+    required this.onEdit,
+  });
+
+  final String name;
+  final String? phone;
+  final String? avatarPath;
+  final VoidCallback? onEdit;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.colors;
+    final phone = this.phone;
+    return Container(
+      key: const ValueKey('desktop-title-bar-profile-popup'),
+      width: 264,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: c.card,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(color: c.divider),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.18),
+            blurRadius: 22,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              ClipOval(
+                child: _MacosTitleBarAvatar(
+                  path: avatarPath,
+                  name: name,
+                  size: 52,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      key: const ValueKey('desktop-title-bar-profile-name'),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        color: c.textPrimary,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        decoration: TextDecoration.none,
+                      ),
+                    ),
+                    if (phone != null && phone.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        phone,
+                        key: const ValueKey('desktop-title-bar-profile-phone'),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: c.textSecondary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w400,
+                          decoration: TextDecoration.none,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+          ),
+          if (onEdit != null) ...[
+            const SizedBox(height: 12),
+            AppInteractiveSurface(
+              key: const ValueKey('desktop-title-bar-profile-edit'),
+              semanticLabel: AppStringKeys.editProfileTitle.l10n(context),
+              onTap: onEdit,
+              borderRadius: BorderRadius.circular(AppRadius.md),
+              child: Container(
+                height: 32,
+                decoration: BoxDecoration(
+                  color: c.searchFill,
+                  borderRadius: BorderRadius.circular(AppRadius.md),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    AppIcon(HeroAppIcons.pen, size: 16, color: c.linkBlue),
+                    const SizedBox(width: 6),
+                    Text(
+                      AppStringKeys.editProfileTitle.l10n(context),
+                      style: TextStyle(
+                        color: c.linkBlue,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        decoration: TextDecoration.none,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class SplashView extends StatelessWidget {
+  const SplashView({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(gradient: AppTheme.brandGradient),
+      child: const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // The asset is 1254x1254 and would otherwise decode at full size
+            // (6.3 MB of RGBA) for a 192 pt slot. Width only keeps it square.
+            Image(
+              image: ResizeImage(AssetImage('assets/penguin.png'), width: 576),
+              width: AppMetric.splashPenguinSize,
+              height: AppMetric.splashPenguinSize,
+            ),
+            SizedBox(height: AppSpacing.lg + AppSpacing.sm),
+            SizedBox(
+              width: AppMetric.splashSpinnerSize,
+              height: AppMetric.splashSpinnerSize,
+              child: CircularProgressIndicator(
+                strokeWidth: 2.5,
+                valueColor: AlwaysStoppedAnimation(Colors.white),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

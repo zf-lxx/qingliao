@@ -1,0 +1,2780 @@
+import AVFoundation
+import AVKit
+import Flutter
+import ImageIO
+import LiveCommunicationKit
+import NaturalLanguage
+import Security
+import Sentry
+import SwiftUI
+import Translation
+import UIKit
+import UserNotifications
+
+/// Why a video note re-encode produced no usable file. Every case maps to the
+/// same `video_crop_failed` FlutterError code the Dart side already treats as
+/// "send the recording instead".
+enum VideoNoteExportError: Error, Sendable {
+  case recordingUnavailable
+  case unusableVideoTrack
+  case exporterUnavailable
+  case exportFailed(String)
+  case noOutputVideoTrack
+  case verificationFailed(String)
+}
+
+@main
+@MainActor
+@objc class AppDelegate: FlutterAppDelegate, @preconcurrency FlutterImplicitEngineDelegate {
+  private var nativeTranslationBridge: AnyObject?
+  private var pushChannel: FlutterMethodChannel?
+  private var notificationTapChannel: FlutterMethodChannel?
+  private var communicationNotificationBridge: CommunicationNotificationBridge?
+  private var pendingNotificationTap: [String: Any]?
+  private var apnsDeviceToken: String?
+  private var didRegisterFlutterPlugins = false
+  private var liveCommunicationBridge: AnyObject?
+  private var groupCallMediaBridge: TelegramGroupCallMediaBridge?
+  private var mediaDropBridge: MediaDropBridge?
+  private var telegramPasskeyBridge: TelegramPasskeyBridge?
+  private var webProxyBridge: WebProxyBridge?
+  private var premiumAuthPurchaseBridge: PremiumAuthPurchaseBridge?
+  private var mithkaProBridge: MithkaProBridge?
+  private var nowPlayingBridge: NowPlayingBridge?
+  private var applePCCBridge: ApplePCCBridge?
+  private var privacyShieldView: UIView?
+
+  override func application(
+    _ application: UIApplication,
+    didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+  ) -> Bool {
+    configureNativeSentryIfNeeded()
+    // flutter_local_notifications registers through FlutterAppDelegate. iOS
+    // only forwards tap callbacks to it when the app delegate is explicitly
+    // installed as the notification-center delegate.
+    UNUserNotificationCenter.current().delegate = self
+    if
+      let userInfo = launchOptions?[.remoteNotification] as? [AnyHashable: Any],
+      Self.containsVisibleAlert(userInfo)
+    {
+      pendingNotificationTap = Self.stringKeyed(userInfo)
+    }
+    return super.application(application, didFinishLaunchingWithOptions: launchOptions)
+  }
+
+  override func application(
+    _ application: UIApplication,
+    continue userActivity: NSUserActivity,
+    restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void
+  ) -> Bool {
+    if HandoffBridge.shared.accept(userActivity) {
+      return true
+    }
+    return super.application(
+      application,
+      continue: userActivity,
+      restorationHandler: restorationHandler
+    )
+  }
+
+  private func setPrivacyShieldVisible(_ visible: Bool) {
+    guard let window = Self.keyWindow() else { return }
+    if visible {
+      let shield = privacyShieldView ?? {
+        let view = UIView(frame: window.bounds)
+        view.backgroundColor = window.backgroundColor ?? .systemBackground
+        view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        return view
+      }()
+      if shield.superview !== window {
+        shield.removeFromSuperview()
+        window.addSubview(shield)
+      }
+      privacyShieldView = shield
+      window.bringSubviewToFront(shield)
+    } else {
+      privacyShieldView?.removeFromSuperview()
+      privacyShieldView = nil
+    }
+  }
+
+  private static func keyWindow() -> UIWindow? {
+    UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }
+      .flatMap { $0.windows }
+      .first { $0.isKeyWindow }
+  }
+
+  /// Where the system keeps its status items along the top edge, in window
+  /// points. On iPhone Duo the clock and status icons sit in a cluster in one
+  /// corner while the safe area still reserves the whole top edge; Dart uses
+  /// this to keep side-by-side panes level and their controls clear of the
+  /// cluster. Regions are read live because they move when the device turns.
+  private static func topOcclusionGeometry() -> [String: Any]? {
+    guard let window = keyWindow(),
+          window.bounds.width.isFinite, window.bounds.width > 0 else { return nil }
+    let safeTop = window.safeAreaInsets.top
+    var statusBarBottom: CGFloat = 0
+    if let scene = window.windowScene, let manager = scene.statusBarManager,
+       !manager.isStatusBarHidden {
+      let frame = window.convert(manager.statusBarFrame, from: scene.coordinateSpace)
+      if frame.maxY.isFinite { statusBarBottom = max(0, frame.maxY) }
+    }
+    var regions: [[Double]] = []
+    #if MITHKA_HAS_RESERVED_REGIONS
+    if #available(iOS 27.1, *) {
+      for region in window.reservedRegions(kind: .occlusion) where region.isActive {
+        let frame = region.frame
+        guard frame.minX.isFinite, frame.minY.isFinite,
+              frame.width.isFinite, frame.height.isFinite,
+              frame.width > 0, frame.height > 0,
+              frame.minY < safeTop else { continue }
+        regions.append([
+          Double(frame.minX), Double(frame.minY),
+          Double(frame.width), Double(frame.height),
+        ])
+      }
+    }
+    #endif
+    return [
+      "safeTop": Double(safeTop),
+      "statusBarBottom": Double(statusBarBottom),
+      "width": Double(window.bounds.width),
+      "regions": regions,
+    ]
+  }
+
+  private func configureNativeSentryIfNeeded() {
+    guard !SentrySDK.isEnabled else { return }
+    let info = Bundle.main.infoDictionary ?? [:]
+    let encodedDsn = (info["SentryDSNEncoded"] as? String ?? "")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let dsn = (encodedDsn.removingPercentEncoding ?? encodedDsn)
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !dsn.isEmpty, !dsn.contains("$(") else { return }
+
+    let configuredEnvironment = (info["SentryEnvironment"] as? String ?? "production")
+      .trimmingCharacters(in: .whitespacesAndNewlines)
+    let environment = configuredEnvironment.isEmpty || configuredEnvironment.contains("$(")
+      ? "production"
+      : configuredEnvironment
+
+    SentrySDK.start { options in
+      options.dsn = dsn
+      options.environment = environment
+      options.releaseName = Self.sentryReleaseName(info: info)
+      options.sendDefaultPii = false
+      // SentryFlutter configures Dart transactions later, but its iOS bridge
+      // does not copy `tracesSampleRate` into an already-started native SDK.
+      // Keep this in lockstep with `sentryTracesSampleRate` so TestFlight
+      // builds also emit the sampled app-start/native performance traces.
+      options.tracesSampleRate = 0.02
+      // Sentry Cocoa 8.58.3 scans every app runtime class to auto-instrument
+      // UIViewControllers. On affected iOS 16 devices that background scan
+      // crashes in `swift_getTypeByMangledName` before Flutter can start.
+      // Keep crash reporting and sampled app-start traces, but do not enable
+      // the unsafe automatic UIKit transaction instrumentation.
+      options.enableUIViewControllerTracing = false
+      options.enableWatchdogTerminationTracking = true
+    }
+  }
+
+  private static func sentryReleaseName(info: [String: Any]) -> String {
+    let bundleId = info["CFBundleIdentifier"] as? String ?? "ad.neko.mithka"
+    let version = info["CFBundleShortVersionString"] as? String ?? "0"
+    let build = info["CFBundleVersion"] as? String ?? "0"
+    return "\(bundleId)@\(version)+\(build)"
+  }
+
+  private static func nativeIconName(_ name: String) -> String? {
+    switch name {
+    case "default": return nil
+    case "white": return "MithkaWhite"
+    case "blue": return "MithkaBlue"
+    case "purple": return "MithkaPurple"
+    case "pixel": return "MithkaPixel"
+    case "aurora": return "MithkaAurora"
+    case "prism": return "MithkaPrism"
+    case "signal": return "MithkaSignal"
+    case "pilot": return "MithkaPilot"
+    case "headphones": return "MithkaHeadphones"
+    case "winter": return "MithkaWinter"
+    case "astronaut": return "MithkaAstronaut"
+    case "crown": return "MithkaCrown"
+    case "party": return "MithkaParty"
+    case "sleepy": return "MithkaSleepy"
+    case "heart": return "MithkaHeart"
+    case "coffee": return "MithkaCoffee"
+    case "detective": return "MithkaDetective"
+    case "gamer": return "MithkaGamer"
+    case "fishing": return "MithkaFishing"
+    case "pixel_neutral": return "MithkaPixelNeutral"
+    case "pixel_gradient": return "MithkaPixelGradient"
+    case "letter_m_neutral": return "MithkaLetterMNeutral"
+    case "letter_m_gradient": return "MithkaLetterMGradient"
+    case "skateboard": return "MithkaSkateboard"
+    case "surfboard": return "MithkaSurfboard"
+    case "basketball": return "MithkaBasketball"
+    case "football": return "MithkaFootball"
+    case "tennis": return "MithkaTennis"
+    case "skiing": return "MithkaSkiing"
+    case "painter": return "MithkaPainter"
+    case "guitar": return "MithkaGuitar"
+    case "drummer": return "MithkaDrummer"
+    case "photographer": return "MithkaPhotographer"
+    case "magician": return "MithkaMagician"
+    case "chef": return "MithkaChef"
+    case "reader": return "MithkaReader"
+    case "scientist": return "MithkaScientist"
+    case "gardener": return "MithkaGardener"
+    case "mail-carrier": return "MithkaMailCarrier"
+    case "pirate": return "MithkaPirate"
+    case "dragon": return "MithkaDragon"
+    case "bubblegum": return "MithkaBubblegum"
+    case "raincoat": return "MithkaRaincoat"
+    case "noodles": return "MithkaNoodles"
+    case "ice-cream": return "MithkaIceCream"
+    case "sunflower": return "MithkaSunflower"
+    case "ninja": return "MithkaNinja"
+    case "high-five": return "MithkaHighFive"
+    case "hug": return "MithkaHug"
+    case "seesaw": return "MithkaSeesaw"
+    case "dance": return "MithkaDance"
+    case "pillow-fight": return "MithkaPillowFight"
+    case "snowball": return "MithkaSnowball"
+    case "parade": return "MithkaParade"
+    case "choir": return "MithkaChoir"
+    case "stack": return "MithkaStack"
+    case "picnic": return "MithkaPicnic"
+    case "paper-planes": return "MithkaPaperPlanes"
+    case "stargazing": return "MithkaStargazing"
+    default: return nil
+    }
+  }
+
+  private static func flutterIconName(_ name: String?) -> String {
+    switch name {
+    case nil: return "default"
+    case "MithkaWhite": return "white"
+    case "MithkaBlue": return "blue"
+    case "MithkaPurple": return "purple"
+    case "MithkaPixel": return "pixel"
+    case "MithkaAurora": return "aurora"
+    case "MithkaPrism": return "prism"
+    case "MithkaSignal": return "signal"
+    case "MithkaPilot": return "pilot"
+    case "MithkaHeadphones": return "headphones"
+    case "MithkaWinter": return "winter"
+    case "MithkaAstronaut": return "astronaut"
+    case "MithkaCrown": return "crown"
+    case "MithkaParty": return "party"
+    case "MithkaSleepy": return "sleepy"
+    case "MithkaHeart": return "heart"
+    case "MithkaCoffee": return "coffee"
+    case "MithkaDetective": return "detective"
+    case "MithkaGamer": return "gamer"
+    case "MithkaFishing": return "fishing"
+    case "MithkaPixelNeutral": return "pixel_neutral"
+    case "MithkaPixelGradient": return "pixel_gradient"
+    case "MithkaLetterMNeutral": return "letter_m_neutral"
+    case "MithkaLetterMGradient": return "letter_m_gradient"
+    case "MithkaSkateboard": return "skateboard"
+    case "MithkaSurfboard": return "surfboard"
+    case "MithkaBasketball": return "basketball"
+    case "MithkaFootball": return "football"
+    case "MithkaTennis": return "tennis"
+    case "MithkaSkiing": return "skiing"
+    case "MithkaPainter": return "painter"
+    case "MithkaGuitar": return "guitar"
+    case "MithkaDrummer": return "drummer"
+    case "MithkaPhotographer": return "photographer"
+    case "MithkaMagician": return "magician"
+    case "MithkaChef": return "chef"
+    case "MithkaReader": return "reader"
+    case "MithkaScientist": return "scientist"
+    case "MithkaGardener": return "gardener"
+    case "MithkaMailCarrier": return "mail-carrier"
+    case "MithkaPirate": return "pirate"
+    case "MithkaDragon": return "dragon"
+    case "MithkaBubblegum": return "bubblegum"
+    case "MithkaRaincoat": return "raincoat"
+    case "MithkaNoodles": return "noodles"
+    case "MithkaIceCream": return "ice-cream"
+    case "MithkaSunflower": return "sunflower"
+    case "MithkaNinja": return "ninja"
+    case "MithkaHighFive": return "high-five"
+    case "MithkaHug": return "hug"
+    case "MithkaSeesaw": return "seesaw"
+    case "MithkaDance": return "dance"
+    case "MithkaPillowFight": return "pillow-fight"
+    case "MithkaSnowball": return "snowball"
+    case "MithkaParade": return "parade"
+    case "MithkaChoir": return "choir"
+    case "MithkaStack": return "stack"
+    case "MithkaPicnic": return "picnic"
+    case "MithkaPaperPlanes": return "paper-planes"
+    case "MithkaStargazing": return "stargazing"
+    // nil is the genuine primary icon. Preserve an unrecognized non-nil
+    // native identity for Dart; merely reading must not claim default.
+    default: return name ?? "default"
+    }
+  }
+
+  func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
+    // The engine is ready at this callback. Register synchronously so Dart
+    // cannot invoke a plugin between engine startup and the next main-loop
+    // turn; that race produced MissingPluginException reports from secure
+    // storage, MobileScanner, and platform channels.
+    registerFlutterPluginsAndChannels(engineBridge)
+  }
+
+  private func registerFlutterPluginsAndChannels(_ engineBridge: FlutterImplicitEngineBridge) {
+    guard !didRegisterFlutterPlugins else { return }
+    didRegisterFlutterPlugins = true
+    GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NativeGlassSurface") {
+      registrar.register(NativeGlassSurfaceFactory(registrar: registrar), withId: "mithka/native_glass")
+    }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NativeTabBar") {
+      registrar.register(NativeTabBarFactory(registrar: registrar), withId: "mithka/native_tab_bar")
+    }
+    let nativeTabAvailability = FlutterMethodChannel(
+      name: "mithka/native_tab_bar",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    nativeTabAvailability.setMethodCallHandler { call, result in
+      guard call.method == "isSupported" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      if #available(iOS 26.0, *) { result(true) } else { result(false) }
+    }
+    let windowGeometryChannel = FlutterMethodChannel(
+      name: "mithka/window_geometry",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    windowGeometryChannel.setMethodCallHandler { call, result in
+      if call.method == "topOcclusionGeometry" {
+        result(Self.topOcclusionGeometry())
+        return
+      }
+      guard call.method == "sideNavigationGeometry", let window = Self.keyWindow() else {
+        result(nil)
+        return
+      }
+      var bottom: CGFloat = 0
+      let insets = window.safeAreaInsets
+      let sideWidth = max(insets.left, insets.right)
+      guard sideWidth.isFinite, sideWidth >= 64,
+            window.bounds.height.isFinite, window.bounds.height > 0 else {
+        result(nil)
+        return
+      }
+      let side = CGRect(
+        x: insets.right >= insets.left ? window.bounds.maxX - sideWidth : 0,
+        y: 0, width: sideWidth, height: window.bounds.height
+      )
+      if let scene = window.windowScene, let manager = scene.statusBarManager {
+        let frame = window.convert(manager.statusBarFrame, from: scene.coordinateSpace)
+        if frame.intersects(side) { bottom = max(bottom, frame.maxY) }
+      }
+      #if MITHKA_HAS_RESERVED_REGIONS
+      if #available(iOS 27.1, *) {
+        for region in window.reservedRegions(kind: .occlusion) where region.isActive {
+          if region.frame.intersects(side) { bottom = max(bottom, region.frame.maxY) }
+        }
+      }
+      #endif
+      // Do not invent usable space when the system reserves the whole edge.
+      var geometry: [String: Any] = [:]
+      if !bottom.isFinite || bottom >= window.bounds.height {
+        geometry["topFraction"] = 1.0
+      } else if bottom > 0 {
+        geometry["topFraction"] = Double(min(1, (bottom + 8) / window.bounds.height))
+      }
+      result(geometry)
+    }
+    HandoffBridge.shared.register(
+      messenger: engineBridge.applicationRegistrar.messenger()
+    )
+    let clipboardChannel = FlutterMethodChannel(
+      name: "mithka/clipboard",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    clipboardChannel.setMethodCallHandler { call, result in
+      if call.method == "readImageUri" {
+        guard
+          let arguments = call.arguments as? [String: Any],
+          let uri = arguments["uri"] as? String,
+          let url = URL(string: uri),
+          url.isFileURL
+        else {
+          result(nil)
+          return
+        }
+        do {
+          let data = try Data(contentsOf: url)
+          guard !data.isEmpty else {
+            result(nil)
+            return
+          }
+          let mimeType = arguments["mimeType"] as? String ?? "image/png"
+          result(["mimeType": mimeType, "data": FlutterStandardTypedData(bytes: data)])
+        } catch {
+          result(
+            FlutterError(
+              code: "clipboard_unavailable",
+              message: error.localizedDescription,
+              details: nil
+            )
+          )
+        }
+        return
+      }
+      if call.method == "writeImage" {
+        guard let bytes = call.arguments as? FlutterStandardTypedData, !bytes.data.isEmpty else {
+          result(false)
+          return
+        }
+        let data = bytes.data
+        let type: String
+        if data.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
+          type = "public.png"
+        } else if data.starts(with: [0x47, 0x49, 0x46, 0x38]) {
+          type = "com.compuserve.gif"
+        } else if data.starts(with: [0xFF, 0xD8, 0xFF]) {
+          type = "public.jpeg"
+        } else if data.count >= 12,
+                  data.starts(with: [0x52, 0x49, 0x46, 0x46]),
+                  data[8..<12].elementsEqual([0x57, 0x45, 0x42, 0x50]) {
+          type = "org.webmproject.webp"
+        } else {
+          result(false)
+          return
+        }
+        UIPasteboard.general.setData(data, forPasteboardType: type)
+        result(true)
+        return
+      }
+      guard call.method == "readImage" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let pasteboard = UIPasteboard.general
+      if let data = pasteboard.data(forPasteboardType: "com.compuserve.gif") {
+        result(["mimeType": "image/gif", "data": FlutterStandardTypedData(bytes: data)])
+        return
+      }
+      if let data = pasteboard.data(forPasteboardType: "public.png") {
+        result(["mimeType": "image/png", "data": FlutterStandardTypedData(bytes: data)])
+        return
+      }
+      if let data = pasteboard.data(forPasteboardType: "public.jpeg") {
+        result(["mimeType": "image/jpeg", "data": FlutterStandardTypedData(bytes: data)])
+        return
+      }
+      if let image = pasteboard.image, let data = image.pngData() {
+        result(["mimeType": "image/png", "data": FlutterStandardTypedData(bytes: data)])
+        return
+      }
+      result(nil)
+    }
+    let mediaEditorChannel = FlutterMethodChannel(
+      name: "mithka/media_editor",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    mediaEditorChannel.setMethodCallHandler { [weak self] call, result in
+      let arguments = call.arguments as? [String: Any]
+      switch call.method {
+      case "trimVideo":
+        guard
+          let path = arguments?["path"] as? String,
+          let startMs = arguments?["startMs"] as? NSNumber,
+          let endMs = arguments?["endMs"] as? NSNumber,
+          !path.isEmpty,
+          startMs.int64Value >= 0,
+          endMs.int64Value > startMs.int64Value
+        else {
+          result(
+            FlutterError(
+              code: "invalid_arguments",
+              message: "A valid video trim range is required",
+              details: nil
+            )
+          )
+          return
+        }
+        self?.trimVideo(
+          path: path,
+          startMs: startMs.int64Value,
+          endMs: endMs.int64Value,
+          result: result
+        )
+      case "trimAudio":
+        guard
+          let path = arguments?["path"] as? String,
+          let startMs = arguments?["startMs"] as? NSNumber,
+          let endMs = arguments?["endMs"] as? NSNumber,
+          !path.isEmpty,
+          startMs.int64Value >= 0,
+          endMs.int64Value > startMs.int64Value
+        else {
+          result(
+            FlutterError(
+              code: "invalid_arguments",
+              message: "A valid voice trim range is required",
+              details: nil
+            )
+          )
+          return
+        }
+        self?.trimAudio(
+          path: path,
+          startMs: startMs.int64Value,
+          endMs: endMs.int64Value,
+          result: result
+        )
+      case "cropVideoNote":
+        guard let path = arguments?["path"] as? String, !path.isEmpty else {
+          result(
+            FlutterError(
+              code: "invalid_arguments",
+              message: "A recorded video note path is required",
+              details: nil
+            )
+          )
+          return
+        }
+        self?.cropVideoNote(path: path, result: result)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+    let animatedAvatarChannel = FlutterMethodChannel(
+      name: "mithka/animated_avatar",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    animatedAvatarChannel.setMethodCallHandler { call, result in
+      guard call.method == "prepare" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      guard
+        let arguments = call.arguments as? [String: Any],
+        let inputPath = arguments["path"] as? String,
+        !inputPath.isEmpty
+      else {
+        result(
+          FlutterError(
+            code: "invalid_arguments",
+            message: "An animated image path is required",
+            details: nil
+          )
+        )
+        return
+      }
+      let callback = AnimatedAvatarFlutterCallback(result)
+      let crop = AnimatedAvatarCropRegion(
+        left: arguments["cropLeft"] as? Double ?? 0,
+        top: arguments["cropTop"] as? Double ?? 0,
+        width: arguments["cropWidth"] as? Double ?? 1,
+        height: arguments["cropHeight"] as? Double ?? 1
+      )
+      AnimatedAvatarTranscoder.transcode(inputPath: inputPath, crop: crop) { conversion in
+        switch conversion {
+        case .success(let outputPath):
+          callback.success(outputPath)
+        case .failure(let error):
+          callback.failure(error)
+        }
+      }
+    }
+    let stickerExportChannel = FlutterMethodChannel(
+      name: "mithka/sticker_export",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    stickerExportChannel.setMethodCallHandler { call, result in
+      guard call.method == "encodeAlphaMov" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      guard
+        let arguments = call.arguments as? [String: Any],
+        let inputPath = arguments["path"] as? String,
+        !inputPath.isEmpty
+      else {
+        result(
+          FlutterError(
+            code: "invalid_arguments",
+            message: "A PNG or APNG path is required",
+            details: nil
+          )
+        )
+        return
+      }
+      let callback = StickerExportFlutterCallback(result)
+      StickerAlphaMovTranscoder.transcode(inputPath: inputPath) { conversion in
+        switch conversion {
+        case .success(let outputPath): callback.success(outputPath)
+        case .failure(let error): callback.failure(error)
+        }
+      }
+    }
+    mediaDropBridge = MediaDropBridge(
+      messenger: engineBridge.applicationRegistrar.messenger()
+    )
+
+    let fontsChannel = FlutterMethodChannel(
+      name: "mithka/fonts",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    fontsChannel.setMethodCallHandler { call, result in
+      if call.method == "normalizeFontFamilies" {
+        let values = call.arguments as? [String] ?? []
+        result(values.map { value in
+          if let font = UIFont(name: value, size: UIFont.systemFontSize) {
+            return font.familyName
+          }
+          return value
+        })
+        return
+      }
+      guard call.method == "listFonts" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      var names = Set<String>()
+      UIFont.familyNames.forEach { family in
+        names.insert(family)
+      }
+      result(Array(names).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending })
+    }
+
+    let appIconChannel = FlutterMethodChannel(
+      name: "mithka/app_icon",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    appIconChannel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "isSupported":
+        result(UIApplication.shared.supportsAlternateIcons)
+      case "currentIcon":
+        result(Self.flutterIconName(UIApplication.shared.alternateIconName))
+      case "setIcon":
+        guard UIApplication.shared.supportsAlternateIcons else {
+          result(
+            FlutterError(
+              code: "unsupported_platform",
+              message: "Alternate app icons are not supported on this device",
+              details: nil
+            )
+          )
+          return
+        }
+        let args = call.arguments as? [String: Any]
+        let requested = args?["name"] as? String ?? "default"
+        let nativeName = Self.nativeIconName(requested)
+        guard requested == "default" || nativeName != nil else {
+          result(FlutterError(code: "invalid_icon", message: "Unknown app icon", details: nil))
+          return
+        }
+        let freeIconNames: Set<String> = [
+          "default", "white", "blue", "purple", "pixel", "aurora", "prism", "signal",
+          "pixel_neutral", "pixel_gradient", "letter_m_neutral", "letter_m_gradient",
+        ]
+        // The 48 penguins in their fixed catalogue order (01-pilot …
+        // 48-stargazing). Must match AppIconVariant.dailyPenguinOrder in
+        // lib/settings/app_icon_controller.dart and paidIcons in
+        // MainActivity.kt; never sort it.
+        let dailyPenguinOrder: [String] = [
+          "pilot", "headphones", "winter", "astronaut", "crown", "party",
+          "sleepy", "heart", "coffee", "detective", "gamer", "fishing",
+          "skateboard", "surfboard", "basketball", "football", "tennis", "skiing",
+          "painter", "guitar", "drummer", "photographer", "magician", "chef",
+          "reader", "scientist", "gardener", "mail-carrier", "pirate", "dragon",
+          "bubblegum", "raincoat", "noodles", "ice-cream", "sunflower", "ninja",
+          "high-five", "hug", "seesaw", "dance", "pillow-fight", "snowball",
+          "parade", "choir", "stack", "picnic", "paper-planes", "stargazing",
+        ]
+        Task { @MainActor in
+          // Today's penguin is free without a subscription. Compute the UTC
+          // day here at apply time, never trusting Dart:
+          // floor(unixSeconds / 86400) mod 48.
+          let utcDay = Int((Date().timeIntervalSince1970 / 86_400).rounded(.down))
+          let count = dailyPenguinOrder.count
+          let dailyPenguin = dailyPenguinOrder[((utcDay % count) + count) % count]
+          // Gate explicit paid selections only. Reading or retaining the
+          // currently installed icon never requires an active subscription.
+          if !freeIconNames.contains(requested) && requested != dailyPenguin {
+            guard await MithkaProBridge.hasActiveSupporterEntitlement() else {
+              result(
+                FlutterError(
+                  code: "supporter_required",
+                  message: "An active Mithka Pro subscription is required to select this icon",
+                  details: nil
+                )
+              )
+              return
+            }
+          }
+          UIApplication.shared.setAlternateIconName(nativeName) { error in
+            if let error {
+              result(
+                FlutterError(
+                  code: "app_icon_failed",
+                  message: error.localizedDescription,
+                  details: nil
+                )
+              )
+              return
+            }
+            result(nil)
+          }
+        }
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
+    let wakelockChannel = FlutterMethodChannel(
+      name: "mithka/screen_wakelock",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    wakelockChannel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "enable":
+        UIApplication.shared.isIdleTimerDisabled = true
+        result(nil)
+      case "disable":
+        UIApplication.shared.isIdleTimerDisabled = false
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
+    let appLockPrivacyChannel = FlutterMethodChannel(
+      name: "mithka/app_lock_privacy",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    appLockPrivacyChannel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "setPrivacyShieldVisible" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let arguments = call.arguments as? [String: Any]
+      let visible = arguments?["visible"] as? Bool ?? false
+      self?.setPrivacyShieldVisible(visible)
+      result(nil)
+    }
+
+    let firebaseConfigurationChannel = FlutterMethodChannel(
+      name: "mithka/firebase_configuration",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    firebaseConfigurationChannel.setMethodCallHandler { call, result in
+      guard call.method == "isAvailable" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let options = Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist")
+        .flatMap(NSDictionary.init(contentsOfFile:))
+      let appID = options?["GOOGLE_APP_ID"] as? String
+      let bundleID = options?["BUNDLE_ID"] as? String
+      let validAppID = appID?.range(
+        of: #"^1:[0-9]+:ios:[0-9a-fA-F]+$"#,
+        options: .regularExpression
+      ) != nil
+      result(validAppID && bundleID == Bundle.main.bundleIdentifier)
+    }
+
+    let playerBrightnessChannel = FlutterMethodChannel(
+      name: "mithka/player_brightness",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    playerBrightnessChannel.setMethodCallHandler { call, result in
+      switch call.method {
+      case "get":
+        result(Double(UIScreen.main.brightness))
+      case "set":
+        guard let value = call.arguments as? NSNumber else {
+          result(FlutterError(code: "invalid_brightness", message: "Expected a numeric value", details: nil))
+          return
+        }
+        UIScreen.main.brightness = CGFloat(max(0.01, min(1, value.doubleValue)))
+        result(nil)
+      case "restore":
+        guard let value = call.arguments as? NSNumber else {
+          result(FlutterError(code: "invalid_brightness", message: "Expected a numeric value", details: nil))
+          return
+        }
+        UIScreen.main.brightness = CGFloat(max(0.01, min(1, value.doubleValue)))
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
+    let accountBackupChannel = FlutterMethodChannel(
+      name: "mithka/account_backup",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    let accountBackup = AccountSessionBackupKeychain()
+    accountBackupChannel.setMethodCallHandler { call, result in
+      accountBackup.handle(call: call, result: result)
+    }
+    telegramPasskeyBridge = TelegramPasskeyBridge(
+      messenger: engineBridge.applicationRegistrar.messenger()
+    )
+    webProxyBridge = WebProxyBridge(messenger: engineBridge.applicationRegistrar.messenger())
+    premiumAuthPurchaseBridge = PremiumAuthPurchaseBridge(
+      messenger: engineBridge.applicationRegistrar.messenger()
+    )
+    mithkaProBridge = MithkaProBridge(
+      messenger: engineBridge.applicationRegistrar.messenger()
+    )
+    nowPlayingBridge = NowPlayingBridge(
+      messenger: engineBridge.applicationRegistrar.messenger()
+    )
+    applePCCBridge = ApplePCCBridge(
+      messenger: engineBridge.applicationRegistrar.messenger()
+    )
+
+    let pushChannel = FlutterMethodChannel(
+      name: "mithka/push",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    self.pushChannel = pushChannel
+    pushChannel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "registerForRemoteNotifications" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      UIApplication.shared.registerForRemoteNotifications()
+      result(self?.apnsDeviceToken)
+    }
+
+    let notificationTapChannel = FlutterMethodChannel(
+      name: "mithka/notification_tap",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    self.notificationTapChannel = notificationTapChannel
+    notificationTapChannel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "getInitialNotification" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let pending = self?.pendingNotificationTap
+      self?.pendingNotificationTap = nil
+      result(pending)
+    }
+    communicationNotificationBridge = CommunicationNotificationBridge(
+      messenger: engineBridge.applicationRegistrar.messenger()
+    )
+
+    var liveCommunicationOwnsAudioSession = false
+    if #available(iOS 17.4, *) {
+      liveCommunicationOwnsAudioSession = true
+    }
+    let groupCallMediaBridge = TelegramGroupCallMediaBridge(
+      messenger: engineBridge.applicationRegistrar.messenger(),
+      registrar: engineBridge.applicationRegistrar,
+      audioSessionManagedBySystem: liveCommunicationOwnsAudioSession
+    )
+    self.groupCallMediaBridge = groupCallMediaBridge
+
+    if #available(iOS 17.4, *) {
+      liveCommunicationBridge = LiveCommunicationBridge(
+        messenger: engineBridge.applicationRegistrar.messenger(),
+        audioSessionChanged: { [weak groupCallMediaBridge] active in
+          groupCallMediaBridge?.setAudioSessionActive(active)
+        }
+      )
+    } else {
+      let liveCommunicationChannel = FlutterMethodChannel(
+        name: "mithka/live_communication",
+        binaryMessenger: engineBridge.applicationRegistrar.messenger()
+      )
+      liveCommunicationChannel.setMethodCallHandler { call, result in
+        switch call.method {
+        case "start", "connected", "setMuted", "updateMembers", "end":
+          result(nil)
+        default:
+          result(FlutterMethodNotImplemented)
+        }
+      }
+    }
+
+    let nativeTranslationChannel = FlutterMethodChannel(
+      name: "mithka/native_translation",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    if #available(iOS 18.0, *) {
+      let bridge = NativeTranslationBridge()
+      nativeTranslationBridge = bridge
+      bridge.attachHostIfNeeded()
+      nativeTranslationChannel.setMethodCallHandler { call, result in
+        if call.method == "capabilities" {
+          result(["ios_system"])
+          return
+        }
+        if call.method == "identifyLanguage" {
+          result(Self.identifyTranslationLanguage(call.arguments))
+          return
+        }
+        bridge.handle(call: call, result: result)
+      }
+    } else {
+      nativeTranslationChannel.setMethodCallHandler { call, result in
+        if call.method == "capabilities" {
+          result([])
+          return
+        }
+        if call.method == "identifyLanguage" {
+          result(Self.identifyTranslationLanguage(call.arguments))
+          return
+        }
+        guard call.method == "translate" else {
+          result(FlutterMethodNotImplemented)
+          return
+        }
+        result(
+          FlutterError(
+            code: "unsupported_platform",
+            message: "本机翻译需要 iOS 18 或更高版本",
+            details: nil
+          )
+        )
+      }
+    }
+  }
+
+  private static func identifyTranslationLanguage(_ arguments: Any?) -> [String: Any]? {
+    guard
+      let args = arguments as? [String: Any],
+      let text = args["text"] as? String,
+      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else { return nil }
+    let recognizer = NLLanguageRecognizer()
+    recognizer.processString(String(text.prefix(256)))
+    guard
+      let hypothesis = recognizer.languageHypotheses(withMaximum: 4)
+        .max(by: { $0.value < $1.value }),
+      hypothesis.value >= 0.5
+    else { return nil }
+    return [
+      "languageCode": hypothesis.key.rawValue,
+      "confidence": hypothesis.value,
+    ]
+  }
+
+  private func trimVideo(
+    path: String,
+    startMs: Int64,
+    endMs: Int64,
+    result: @escaping FlutterResult
+  ) {
+    let inputURL = URL(fileURLWithPath: path)
+    guard FileManager.default.fileExists(atPath: inputURL.path) else {
+      result(
+        FlutterError(
+          code: "video_trim_failed",
+          message: "The source video is unavailable",
+          details: nil
+        )
+      )
+      return
+    }
+    let outputURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("mithka-trim-\(UUID().uuidString)")
+      .appendingPathExtension("mp4")
+    let asset = AVURLAsset(url: inputURL)
+    guard let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetPassthrough)
+    else {
+      result(
+        FlutterError(
+          code: "video_trim_failed",
+          message: "This video cannot be exported",
+          details: nil
+        )
+      )
+      return
+    }
+    exporter.outputURL = outputURL
+    exporter.outputFileType = exporter.supportedFileTypes.contains(.mp4) ? .mp4 : .mov
+    exporter.shouldOptimizeForNetworkUse = true
+    let start = CMTime(value: startMs, timescale: 1000)
+    let duration = CMTime(value: endMs - startMs, timescale: 1000)
+    exporter.timeRange = CMTimeRange(start: start, duration: duration)
+    exporter.exportAsynchronously {
+      DispatchQueue.main.async {
+        switch exporter.status {
+        case .completed:
+          result(outputURL.path)
+        default:
+          try? FileManager.default.removeItem(at: outputURL)
+          result(
+            FlutterError(
+              code: "video_trim_failed",
+              message: exporter.error?.localizedDescription ?? "The video export failed",
+              details: nil
+            )
+          )
+        }
+      }
+    }
+  }
+
+  /// Cuts a recorded voice note (AAC in `.m4a`, or the `.aac` ADTS fallback)
+  /// to `startMs`..<`endMs` and returns the path of a new `.m4a` file in the
+  /// temporary directory.
+  private func trimAudio(
+    path: String,
+    startMs: Int64,
+    endMs: Int64,
+    result: @escaping FlutterResult
+  ) {
+    let inputURL = URL(fileURLWithPath: path)
+    guard FileManager.default.fileExists(atPath: inputURL.path) else {
+      result(
+        FlutterError(
+          code: "voice_trim_failed",
+          message: "The source recording is unavailable",
+          details: nil
+        )
+      )
+      return
+    }
+    let outputURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("mithka-voice-trim-\(UUID().uuidString)")
+      .appendingPathExtension("m4a")
+    let asset = AVURLAsset(url: inputURL)
+    guard
+      let exporter = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetAppleM4A),
+      exporter.supportedFileTypes.contains(.m4a)
+    else {
+      result(
+        FlutterError(
+          code: "voice_trim_failed",
+          message: "This recording cannot be exported",
+          details: nil
+        )
+      )
+      return
+    }
+    exporter.outputURL = outputURL
+    exporter.outputFileType = .m4a
+    let start = CMTime(value: startMs, timescale: 1000)
+    let duration = CMTime(value: endMs - startMs, timescale: 1000)
+    exporter.timeRange = CMTimeRange(start: start, duration: duration)
+    exporter.exportAsynchronously {
+      DispatchQueue.main.async {
+        switch exporter.status {
+        case .completed:
+          result(outputURL.path)
+        default:
+          try? FileManager.default.removeItem(at: outputURL)
+          result(
+            FlutterError(
+              code: "voice_trim_failed",
+              message: exporter.error?.localizedDescription ?? "The voice export failed",
+              details: nil
+            )
+          )
+        }
+      }
+    }
+  }
+
+  /// The centred square a video note is cropped to, in display space (the
+  /// natural frame with the recording's rotation applied).
+  struct VideoNoteCropRegion: Sendable {
+    let rect: CGRect
+    let side: CGFloat
+  }
+
+  /// The verified result of a video note re-encode: the square's side in pixels
+  /// and the exported duration in seconds.
+  struct VideoNoteExport: Sendable {
+    let side: CGFloat
+    let duration: Double
+  }
+
+  /// Crop maths for a video note, kept pure so the orientation handling is
+  /// readable on its own.
+  ///
+  /// A camera recording carries its rotation in `preferredTransform`, so the
+  /// displayed frame can be the natural frame turned 90 degrees: a portrait
+  /// note is encoded 1280x720 and shown 720x1280. The square is centred in the
+  /// displayed frame, and because a rotation about the centre keeps the
+  /// centred square centred and square, this is also the natural-space square
+  /// the recording would be cropped to without any rotation handling.
+  ///
+  /// `nonisolated` because it touches nothing but geometry: an actor-isolated
+  /// declaration here would force every caller, including the synchronous
+  /// XCTest cases, through the main-actor dispatcher.
+  nonisolated static func centredSquareCrop(
+    naturalSize: CGSize,
+    transform: CGAffineTransform
+  ) -> VideoNoteCropRegion {
+    let naturalRect = CGRect(origin: .zero, size: naturalSize).standardized
+    let displayRect = naturalRect.applying(transform).standardized
+    let displayWidth = abs(displayRect.width)
+    let displayHeight = abs(displayRect.height)
+    // H.264 requires even dimensions. Rounding down by one pixel keeps the
+    // output inside the one-pixel squareness tolerance the output check and
+    // the Dart side use.
+    var side = min(displayWidth, displayHeight).rounded(.down)
+    if side.truncatingRemainder(dividingBy: 2) != 0 { side -= 1 }
+    side = max(side, 2)
+    let square = CGRect(
+      x: displayRect.minX + (displayWidth - side) / 2,
+      y: displayRect.minY + (displayHeight - side) / 2,
+      width: side,
+      height: side
+    )
+    return VideoNoteCropRegion(rect: square, side: side)
+  }
+
+  /// Re-encodes a video note to its centred square and verifies the result.
+  ///
+  /// The export is awaited directly instead of through
+  /// `exportAsynchronously` so the same code path a hosted XCTest exercises is
+  /// the one the app runs. The output is verified (square within one pixel,
+  /// duration within 0.25s of the recording, a video track present); a
+  /// mismatch or a failed export deletes it and throws.
+  ///
+  /// `nonisolated` so it can run off the main actor: the encoder is told where
+  /// to write and nothing here reads or writes app state.
+  nonisolated static func exportCentredSquareVideoNote(
+    input: URL,
+    output: URL
+  ) async throws -> VideoNoteExport {
+    guard FileManager.default.fileExists(atPath: input.path) else {
+      throw VideoNoteExportError.recordingUnavailable
+    }
+    let asset = AVURLAsset(url: input)
+    guard
+      let track = asset.tracks(withMediaType: .video).first,
+      track.naturalSize.width >= 2,
+      track.naturalSize.height >= 2
+    else {
+      throw VideoNoteExportError.unusableVideoTrack
+    }
+    let crop = centredSquareCrop(
+      naturalSize: track.naturalSize,
+      transform: track.preferredTransform
+    )
+    let composition = AVMutableVideoComposition()
+    composition.renderSize = CGSize(width: crop.side, height: crop.side)
+    let frameRate = track.nominalFrameRate >= 1 ? track.nominalFrameRate : 30
+    composition.frameDuration = CMTime(
+      value: 1,
+      timescale: CMTimeScale(frameRate.rounded())
+    )
+    let instruction = AVMutableVideoCompositionInstruction()
+    instruction.timeRange = CMTimeRange(start: .zero, duration: asset.duration)
+    let layerInstruction = AVMutableVideoCompositionLayerInstruction(
+      assetTrack: track
+    )
+    // The layer transform carries both the recording's orientation and the
+    // crop offset: preferredTransform maps the natural frame into display
+    // space, then the translation moves the chosen square's corner onto the
+    // origin of the square renderSize, which clips everything outside it.
+    // setCropRectangle is deliberately not used here: it applies in the
+    // track's natural space, which leaves preferredTransform's translation
+    // pointing at the uncropped frame and shifts the result of a 180-degree
+    // recording out of the render.
+    let squareOrigin = crop.rect.origin
+    layerInstruction.setTransform(
+      track.preferredTransform.concatenating(
+        CGAffineTransform(
+          translationX: -squareOrigin.x,
+          y: -squareOrigin.y
+        )
+      ),
+      at: .zero
+    )
+    instruction.layerInstructions = [layerInstruction]
+    composition.instructions = [instruction]
+
+    try? FileManager.default.removeItem(at: output)
+    guard
+      let exporter = AVAssetExportSession(
+        asset: asset,
+        presetName: AVAssetExportPresetHighestQuality
+      )
+    else {
+      throw VideoNoteExportError.exporterUnavailable
+    }
+    exporter.outputURL = output
+    exporter.outputFileType = exporter.supportedFileTypes.contains(.mp4)
+      ? .mp4
+      : .mov
+    exporter.videoComposition = composition
+    exporter.shouldOptimizeForNetworkUse = true
+    let sourceDuration = CMTimeGetSeconds(asset.duration)
+    // Bridged rather than `await exporter.export()`: that async API only exists
+    // in the iOS 18 SDK, and this file has to build on older toolchains too.
+    await withCheckedContinuation {
+      (continuation: CheckedContinuation<Void, Never>) in
+      exporter.exportAsynchronously {
+        continuation.resume()
+      }
+    }
+    guard exporter.status == .completed else {
+      try? FileManager.default.removeItem(at: output)
+      throw VideoNoteExportError.exportFailed(
+        exporter.error?.localizedDescription
+          ?? "The video note export failed"
+      )
+    }
+    let outputAsset = AVURLAsset(url: output)
+    guard
+      let outputTrack = outputAsset.tracks(withMediaType: .video).first
+    else {
+      try? FileManager.default.removeItem(at: output)
+      throw VideoNoteExportError.noOutputVideoTrack
+    }
+    let size = outputTrack.naturalSize
+    let outputDuration = CMTimeGetSeconds(outputAsset.duration)
+    let isSquare = abs(size.width - size.height) <= 1
+    let durationMatches = abs(outputDuration - sourceDuration) <= 0.25
+    guard isSquare, durationMatches, size.width > 1 else {
+      try? FileManager.default.removeItem(at: output)
+      throw VideoNoteExportError.verificationFailed(
+        "\(Int(size.width))x\(Int(size.height)) duration=\(outputDuration)s source=\(sourceDuration)s"
+      )
+    }
+    return VideoNoteExport(side: crop.side, duration: outputDuration)
+  }
+
+  /// Re-encodes a recorded video note to its centred square so the uploaded
+  /// file matches what the recorder preview and the message bubble show.
+  ///
+  /// A failure deletes whatever the export wrote and reports a FlutterError,
+  /// and the Dart caller then sends the original recording.
+  private func cropVideoNote(path: String, result: @escaping FlutterResult) {
+    let inputURL = URL(fileURLWithPath: path)
+    let outputURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("mithka-video-note-\(UUID().uuidString)")
+      .appendingPathExtension("mp4")
+    // Main actor because the Flutter reply belongs to the platform thread; the
+    // export itself hops off through the nonisolated static function.
+    Task { @MainActor in
+      let outcome: Result<VideoNoteExport, Error>
+      do {
+        outcome = .success(
+          try await Self.exportCentredSquareVideoNote(
+            input: inputURL,
+            output: outputURL
+          )
+        )
+      } catch {
+        outcome = .failure(error)
+      }
+      Self.finishVideoNoteCrop(outcome, output: outputURL, result: result)
+    }
+  }
+
+  private nonisolated static func finishVideoNoteCrop(
+    _ outcome: Result<VideoNoteExport, Error>,
+    output: URL,
+    result: @escaping FlutterResult
+  ) {
+    switch outcome {
+    case .success:
+      result(output.path)
+    case .failure(let error):
+      guard let failure = error as? VideoNoteExportError else {
+        result(
+          FlutterError(
+            code: "video_crop_failed",
+            message: error.localizedDescription,
+            details: nil
+          )
+        )
+        return
+      }
+      switch failure {
+      case .recordingUnavailable:
+        result(
+          FlutterError(
+            code: "video_crop_failed",
+            message: "The recorded video note is unavailable",
+            details: nil
+          )
+        )
+      case .unusableVideoTrack:
+        result(
+          FlutterError(
+            code: "video_crop_failed",
+            message: "The recording has no usable video track",
+            details: nil
+          )
+        )
+      case .exporterUnavailable:
+        result(
+          FlutterError(
+            code: "video_crop_failed",
+            message: "This video note cannot be exported",
+            details: nil
+          )
+        )
+      case .exportFailed(let description):
+        result(
+          FlutterError(
+            code: "video_crop_failed",
+            message: description,
+            details: nil
+          )
+        )
+      case .noOutputVideoTrack:
+        result(
+          FlutterError(
+            code: "video_crop_failed",
+            message: "The cropped video note has no video track",
+            details: nil
+          )
+        )
+      case .verificationFailed(let details):
+        result(
+          FlutterError(
+            code: "video_crop_failed",
+            message: "The cropped video note failed verification",
+            details: details
+          )
+        )
+      }
+    }
+  }
+
+  override func application(
+    _ application: UIApplication,
+    didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+  ) {
+    let token = deviceToken.map { String(format: "%02x", $0) }.joined()
+    apnsDeviceToken = token
+    pushChannel?.invokeMethod("deviceToken", arguments: token)
+    super.application(application, didRegisterForRemoteNotificationsWithDeviceToken: deviceToken)
+  }
+
+  override func application(
+    _ application: UIApplication,
+    didFailToRegisterForRemoteNotificationsWithError error: Error
+  ) {
+    pushChannel?.invokeMethod("registrationError", arguments: error.localizedDescription)
+    super.application(application, didFailToRegisterForRemoteNotificationsWithError: error)
+  }
+
+  override func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  ) {
+    let userInfo = response.notification.request.content.userInfo
+    if Self.isFlutterLocalNotification(userInfo) {
+      super.userNotificationCenter(
+        center,
+        didReceive: response,
+        withCompletionHandler: completionHandler
+      )
+      return
+    }
+
+    let payload = Self.stringKeyed(userInfo)
+    pendingNotificationTap = payload
+    notificationTapChannel?.invokeMethod("notificationTap", arguments: payload)
+    completionHandler()
+  }
+
+  private static func isFlutterLocalNotification(_ userInfo: [AnyHashable: Any]) -> Bool {
+    userInfo["NotificationId"] != nil &&
+      userInfo["presentAlert"] != nil &&
+      userInfo["presentSound"] != nil &&
+      userInfo["presentBadge"] != nil &&
+      userInfo["payload"] != nil
+  }
+
+  private static func containsVisibleAlert(_ userInfo: [AnyHashable: Any]) -> Bool {
+    guard let aps = userInfo["aps"] as? [String: Any] else { return false }
+    return aps["alert"] != nil
+  }
+
+  private static func stringKeyed(_ userInfo: [AnyHashable: Any]) -> [String: Any] {
+    var result: [String: Any] = [:]
+    for (key, value) in userInfo {
+      result[String(describing: key)] = value
+    }
+    return result
+  }
+}
+
+private final class AnimatedAvatarFlutterCallback: @unchecked Sendable {
+  private let result: FlutterResult
+
+  init(_ result: @escaping FlutterResult) {
+    self.result = result
+  }
+
+  func success(_ outputPath: String) {
+    DispatchQueue.main.async { [self] in result(outputPath) }
+  }
+
+  func failure(_ error: Error) {
+    DispatchQueue.main.async { [self] in
+      result(
+        FlutterError(
+          code: "animated_avatar_conversion_failed",
+          message: error.localizedDescription,
+          details: nil
+        )
+      )
+    }
+  }
+}
+
+private final class StickerExportFlutterCallback: @unchecked Sendable {
+  private let result: FlutterResult
+
+  init(_ result: @escaping FlutterResult) {
+    self.result = result
+  }
+
+  func success(_ outputPath: String) {
+    DispatchQueue.main.async { [self] in result(outputPath) }
+  }
+
+  func failure(_ error: Error) {
+    DispatchQueue.main.async { [self] in
+      result(
+        FlutterError(
+          code: error is StickerAlphaMovUnsupportedError
+            ? "sticker_export_unsupported"
+            : "sticker_export_failed",
+          message: error.localizedDescription,
+          details: nil
+        )
+      )
+    }
+  }
+}
+
+private struct StickerAlphaMovUnsupportedError: LocalizedError {
+  var errorDescription: String? {
+    "This device does not provide an alpha-capable MOV encoder"
+  }
+}
+
+private enum StickerAlphaMovError: LocalizedError {
+  case unreadableImage
+  case cannotCreateWriter
+  case cannotStartWriter
+  case cannotCreatePixelBuffer
+  case cannotAppendFrame
+  case exportFailed(String)
+
+  var errorDescription: String? {
+    switch self {
+    case .unreadableImage: return "The sticker frames could not be decoded"
+    case .cannotCreateWriter: return "The sticker video encoder could not be created"
+    case .cannotStartWriter: return "The sticker video encoder could not start"
+    case .cannotCreatePixelBuffer: return "A transparent sticker frame could not be prepared"
+    case .cannotAppendFrame: return "A transparent sticker frame could not be encoded"
+    case .exportFailed(let reason): return "Sticker export failed: \(reason)"
+    }
+  }
+}
+
+/// Converts a PNG/APNG frame sequence into a MOV whose codec retains alpha.
+/// HEVC-with-alpha is preferred for compact output; ProRes 4444 is the
+/// lossless-alpha fallback. We deliberately do not fall back to H.264 because
+/// silently flattening transparency would make the export look correct only on
+/// a matching background.
+private enum StickerAlphaMovTranscoder {
+  private static let queue = DispatchQueue(
+    label: "ad.neko.mithka.sticker-export",
+    qos: .userInitiated
+  )
+  private static let defaultFrameDuration = 1.0 / 30.0
+  private static let minimumFrameDuration = 1.0 / 60.0
+
+  static func transcode(
+    inputPath: String,
+    completion: @escaping @Sendable (Result<String, Error>) -> Void
+  ) {
+    queue.async {
+      do {
+        completion(.success(try transcodeSynchronously(inputPath: inputPath)))
+      } catch {
+        completion(.failure(error))
+      }
+    }
+  }
+
+  private static func transcodeSynchronously(inputPath: String) throws -> String {
+    let inputURL = URL(fileURLWithPath: inputPath)
+    guard
+      let source = CGImageSourceCreateWithURL(inputURL as CFURL, nil),
+      CGImageSourceGetCount(source) > 0,
+      let firstFrame = CGImageSourceCreateImageAtIndex(source, 0, nil)
+    else {
+      throw StickerAlphaMovError.unreadableImage
+    }
+
+    // Video encoders require even dimensions. The generated PNG is normally
+    // 512 px already, but keep arbitrary static sticker sources valid too.
+    let width = max(2, firstFrame.width - firstFrame.width % 2)
+    let height = max(2, firstFrame.height - firstFrame.height % 2)
+    let outputURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("mithka-sticker-\(UUID().uuidString).mov")
+    try? FileManager.default.removeItem(at: outputURL)
+
+    let writer: AVAssetWriter
+    do {
+      writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
+    } catch {
+      throw StickerAlphaMovError.cannotCreateWriter
+    }
+
+    let candidateCodecs: [AVVideoCodecType] = [.hevcWithAlpha, .proRes4444]
+    var selectedSettings: [String: Any]?
+    for codec in candidateCodecs {
+      let settings: [String: Any] = [
+        AVVideoCodecKey: codec,
+        AVVideoWidthKey: width,
+        AVVideoHeightKey: height,
+      ]
+      if writer.canApply(outputSettings: settings, forMediaType: .video) {
+        selectedSettings = settings
+        break
+      }
+    }
+    guard let outputSettings = selectedSettings else {
+      throw StickerAlphaMovUnsupportedError()
+    }
+
+    let input = AVAssetWriterInput(mediaType: .video, outputSettings: outputSettings)
+    input.expectsMediaDataInRealTime = false
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+      assetWriterInput: input,
+      sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: width,
+        kCVPixelBufferHeightKey as String: height,
+        kCVPixelBufferIOSurfacePropertiesKey as String: [:],
+      ]
+    )
+    guard writer.canAdd(input) else {
+      throw StickerAlphaMovError.cannotCreateWriter
+    }
+    writer.add(input)
+    guard writer.startWriting() else {
+      throw StickerAlphaMovError.cannotStartWriter
+    }
+    writer.startSession(atSourceTime: .zero)
+
+    var timestamp = 0.0
+    let frameCount = CGImageSourceGetCount(source)
+    for index in 0..<frameCount {
+      guard let frame = CGImageSourceCreateImageAtIndex(source, index, nil) else {
+        continue
+      }
+      while !input.isReadyForMoreMediaData {
+        if writer.status == .failed || writer.status == .cancelled {
+          throw StickerAlphaMovError.exportFailed(
+            writer.error?.localizedDescription ?? "encoder stopped"
+          )
+        }
+        Thread.sleep(forTimeInterval: 0.002)
+      }
+      guard
+        let pool = adaptor.pixelBufferPool,
+        let pixelBuffer = makeTransparentPixelBuffer(
+          image: frame,
+          width: width,
+          height: height,
+          pool: pool
+        )
+      else {
+        throw StickerAlphaMovError.cannotCreatePixelBuffer
+      }
+      let presentationTime = CMTime(seconds: timestamp, preferredTimescale: 600)
+      guard adaptor.append(pixelBuffer, withPresentationTime: presentationTime) else {
+        throw StickerAlphaMovError.cannotAppendFrame
+      }
+      timestamp += frameDuration(source: source, index: index)
+    }
+    guard timestamp > 0 else {
+      throw StickerAlphaMovError.unreadableImage
+    }
+
+    writer.endSession(atSourceTime: CMTime(seconds: timestamp, preferredTimescale: 600))
+    input.markAsFinished()
+    let semaphore = DispatchSemaphore(value: 0)
+    writer.finishWriting { semaphore.signal() }
+    semaphore.wait()
+    guard writer.status == .completed else {
+      throw StickerAlphaMovError.exportFailed(
+        writer.error?.localizedDescription ?? "unknown encoder error"
+      )
+    }
+    return outputURL.path
+  }
+
+  private static func frameDuration(source: CGImageSource, index: Int) -> Double {
+    guard
+      let raw = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any]
+    else {
+      return defaultFrameDuration
+    }
+    let gif = raw[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+    let png = raw[kCGImagePropertyPNGDictionary] as? [CFString: Any]
+    let duration =
+      gif?[kCGImagePropertyGIFUnclampedDelayTime] as? Double ??
+      gif?[kCGImagePropertyGIFDelayTime] as? Double ??
+      png?[kCGImagePropertyAPNGUnclampedDelayTime] as? Double ??
+      png?[kCGImagePropertyAPNGDelayTime] as? Double ??
+      defaultFrameDuration
+    return max(duration, minimumFrameDuration)
+  }
+
+  private static func makeTransparentPixelBuffer(
+    image: CGImage,
+    width: Int,
+    height: Int,
+    pool: CVPixelBufferPool
+  ) -> CVPixelBuffer? {
+    var optionalBuffer: CVPixelBuffer?
+    guard
+      CVPixelBufferPoolCreatePixelBuffer(nil, pool, &optionalBuffer) == kCVReturnSuccess,
+      let pixelBuffer = optionalBuffer
+    else {
+      return nil
+    }
+    CVPixelBufferLockBaseAddress(pixelBuffer, [])
+    defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
+    guard
+      let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer),
+      let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+      let context = CGContext(
+        data: baseAddress,
+        width: width,
+        height: height,
+        bitsPerComponent: 8,
+        bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
+        space: colorSpace,
+        bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue |
+          CGImageAlphaInfo.premultipliedFirst.rawValue
+      )
+    else {
+      return nil
+    }
+    context.clear(CGRect(x: 0, y: 0, width: width, height: height))
+    context.interpolationQuality = .high
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    return pixelBuffer
+  }
+}
+
+private enum AnimatedAvatarTranscodeError: LocalizedError {
+  case unreadableImage
+  case missingFrames
+  case cannotCreateWriter
+  case cannotStartWriter
+  case cannotCreatePixelBuffer
+  case cannotAppendFrame
+  case exportFailed(String)
+
+  var errorDescription: String? {
+    switch self {
+    case .unreadableImage: return "The selected animated image could not be decoded"
+    case .missingFrames: return "The selected image does not contain animation frames"
+    case .cannotCreateWriter: return "The profile video encoder could not be created"
+    case .cannotStartWriter: return "The profile video encoder could not start"
+    case .cannotCreatePixelBuffer: return "An animation frame could not be prepared"
+    case .cannotAppendFrame: return "An animation frame could not be encoded"
+    case .exportFailed(let reason): return "Profile video export failed: \(reason)"
+    }
+  }
+}
+
+private struct AnimatedAvatarCropRegion: Sendable {
+  let left: Double
+  let top: Double
+  let width: Double
+  let height: Double
+
+  var clamped: AnimatedAvatarCropRegion {
+    let safeWidth = min(max(width, 0.001), 1)
+    let safeHeight = min(max(height, 0.001), 1)
+    return AnimatedAvatarCropRegion(
+      left: min(max(left, 0), 1 - safeWidth),
+      top: min(max(top, 0), 1 - safeHeight),
+      width: safeWidth,
+      height: safeHeight
+    )
+  }
+}
+
+private enum AnimatedAvatarTranscoder {
+  private static let queue = DispatchQueue(
+    label: "ad.neko.mithka.animated-avatar",
+    qos: .userInitiated
+  )
+  private static let maximumDuration = 10.0
+  private static let defaultFrameDuration = 0.1
+  private static let minimumFrameDuration = 0.02
+  private static let maximumDimension = 640
+
+  static func transcode(
+    inputPath: String,
+    crop: AnimatedAvatarCropRegion,
+    completion: @escaping @Sendable (Result<String, Error>) -> Void
+  ) {
+    queue.async {
+      do {
+        let outputPath = try transcodeSynchronously(
+          inputPath: inputPath,
+          crop: crop.clamped
+        )
+        completion(.success(outputPath))
+      } catch {
+        completion(.failure(error))
+      }
+    }
+  }
+
+  private static func transcodeSynchronously(
+    inputPath: String,
+    crop: AnimatedAvatarCropRegion
+  ) throws -> String {
+    let inputURL = URL(fileURLWithPath: inputPath)
+    if let source = CGImageSourceCreateWithURL(inputURL as CFURL, nil),
+       CGImageSourceGetCount(source) > 1
+    {
+      return try transcodeAnimatedImage(source: source, crop: crop)
+    }
+    return try transcodeVideo(inputURL: inputURL, crop: crop)
+  }
+
+  private static func transcodeAnimatedImage(
+    source: CGImageSource,
+    crop: AnimatedAvatarCropRegion
+  ) throws -> String {
+    let frameCount = CGImageSourceGetCount(source)
+    guard frameCount > 1, let firstFrame = CGImageSourceCreateImageAtIndex(source, 0, nil)
+    else {
+      throw AnimatedAvatarTranscodeError.missingFrames
+    }
+
+    let cropPixelSide = max(
+      Double(firstFrame.width) * crop.width,
+      Double(firstFrame.height) * crop.height
+    )
+    var side = min(max(Int(cropPixelSide.rounded()), 2), maximumDimension)
+    if side % 2 != 0 { side -= 1 }
+    side = max(side, 2)
+
+    let outputURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("mithka-avatar-\(UUID().uuidString).mp4")
+    try? FileManager.default.removeItem(at: outputURL)
+
+    let writer: AVAssetWriter
+    do {
+      writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
+    } catch {
+      throw AnimatedAvatarTranscodeError.cannotCreateWriter
+    }
+    let outputSettings: [String: Any] = [
+      AVVideoCodecKey: AVVideoCodecType.h264,
+      AVVideoWidthKey: side,
+      AVVideoHeightKey: side,
+      AVVideoCompressionPropertiesKey: [
+        AVVideoAverageBitRateKey: max(300_000, side * side * 4),
+        AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+      ],
+    ]
+    let input = AVAssetWriterInput(mediaType: .video, outputSettings: outputSettings)
+    input.expectsMediaDataInRealTime = false
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+      assetWriterInput: input,
+      sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: side,
+        kCVPixelBufferHeightKey as String: side,
+        kCVPixelBufferIOSurfacePropertiesKey as String: [:],
+      ]
+    )
+    guard writer.canAdd(input) else {
+      throw AnimatedAvatarTranscodeError.cannotCreateWriter
+    }
+    writer.add(input)
+    guard writer.startWriting() else {
+      throw AnimatedAvatarTranscodeError.cannotStartWriter
+    }
+    writer.startSession(atSourceTime: .zero)
+
+    var timestamp = 0.0
+    for index in 0..<frameCount {
+      guard timestamp < maximumDuration else { break }
+      guard let image = CGImageSourceCreateImageAtIndex(source, index, nil) else { continue }
+      while !input.isReadyForMoreMediaData {
+        if writer.status == .failed || writer.status == .cancelled {
+          throw AnimatedAvatarTranscodeError.exportFailed(
+            writer.error?.localizedDescription ?? "encoder stopped"
+          )
+        }
+        Thread.sleep(forTimeInterval: 0.002)
+      }
+      guard
+        let pool = adaptor.pixelBufferPool,
+        let pixelBuffer = makePixelBuffer(
+          image: image,
+          side: side,
+          crop: crop,
+          pool: pool
+        )
+      else {
+        throw AnimatedAvatarTranscodeError.cannotCreatePixelBuffer
+      }
+      let presentationTime = CMTime(seconds: timestamp, preferredTimescale: 600)
+      guard adaptor.append(pixelBuffer, withPresentationTime: presentationTime) else {
+        throw AnimatedAvatarTranscodeError.cannotAppendFrame
+      }
+      timestamp += min(frameDuration(source: source, index: index), maximumDuration - timestamp)
+    }
+    guard timestamp > 0 else {
+      throw AnimatedAvatarTranscodeError.missingFrames
+    }
+
+    input.markAsFinished()
+    let semaphore = DispatchSemaphore(value: 0)
+    writer.finishWriting { semaphore.signal() }
+    semaphore.wait()
+    guard writer.status == .completed else {
+      throw AnimatedAvatarTranscodeError.exportFailed(
+        writer.error?.localizedDescription ?? "unknown encoder error"
+      )
+    }
+    return outputURL.path
+  }
+
+  private static func transcodeVideo(
+    inputURL: URL,
+    crop: AnimatedAvatarCropRegion
+  ) throws -> String {
+    let asset = AVURLAsset(url: inputURL)
+    guard let track = asset.tracks(withMediaType: .video).first else {
+      throw AnimatedAvatarTranscodeError.unreadableImage
+    }
+    let transformedBounds = CGRect(origin: .zero, size: track.naturalSize)
+      .applying(track.preferredTransform)
+      .standardized
+    guard transformedBounds.width > 0, transformedBounds.height > 0 else {
+      throw AnimatedAvatarTranscodeError.unreadableImage
+    }
+    let cropPixelSide = max(
+      transformedBounds.width * CGFloat(crop.width),
+      transformedBounds.height * CGFloat(crop.height)
+    )
+    var side = min(max(Int(cropPixelSide.rounded()), 2), maximumDimension)
+    if side % 2 != 0 { side -= 1 }
+    side = max(side, 2)
+
+    let reader = try AVAssetReader(asset: asset)
+    let readerOutput = AVAssetReaderTrackOutput(
+      track: track,
+      outputSettings: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+      ]
+    )
+    readerOutput.alwaysCopiesSampleData = false
+    guard reader.canAdd(readerOutput) else {
+      throw AnimatedAvatarTranscodeError.cannotCreateWriter
+    }
+    reader.add(readerOutput)
+
+    let outputURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("mithka-avatar-\(UUID().uuidString).mp4")
+    try? FileManager.default.removeItem(at: outputURL)
+    let writer = try AVAssetWriter(outputURL: outputURL, fileType: .mp4)
+    let writerInput = AVAssetWriterInput(
+      mediaType: .video,
+      outputSettings: [
+        AVVideoCodecKey: AVVideoCodecType.h264,
+        AVVideoWidthKey: side,
+        AVVideoHeightKey: side,
+        AVVideoCompressionPropertiesKey: [
+          AVVideoAverageBitRateKey: max(300_000, side * side * 4),
+          AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+        ],
+      ]
+    )
+    writerInput.expectsMediaDataInRealTime = false
+    let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+      assetWriterInput: writerInput,
+      sourcePixelBufferAttributes: [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: side,
+        kCVPixelBufferHeightKey as String: side,
+        kCVPixelBufferIOSurfacePropertiesKey as String: [:],
+      ]
+    )
+    guard writer.canAdd(writerInput) else {
+      throw AnimatedAvatarTranscodeError.cannotCreateWriter
+    }
+    writer.add(writerInput)
+    guard reader.startReading(), writer.startWriting() else {
+      throw AnimatedAvatarTranscodeError.cannotStartWriter
+    }
+    writer.startSession(atSourceTime: .zero)
+
+    let ciContext = CIContext(options: [.cacheIntermediates: false])
+    let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+    var firstTimestamp: CMTime?
+    var wroteFrame = false
+    while let sample = readerOutput.copyNextSampleBuffer() {
+      guard let sourceBuffer = CMSampleBufferGetImageBuffer(sample) else { continue }
+      let sourceTimestamp = CMSampleBufferGetPresentationTimeStamp(sample)
+      let start = firstTimestamp ?? sourceTimestamp
+      firstTimestamp = start
+      let timestamp = CMTimeSubtract(sourceTimestamp, start)
+      if timestamp.seconds > maximumDuration { break }
+      while !writerInput.isReadyForMoreMediaData {
+        if writer.status == .failed || writer.status == .cancelled {
+          throw AnimatedAvatarTranscodeError.exportFailed(
+            writer.error?.localizedDescription ?? "encoder stopped"
+          )
+        }
+        Thread.sleep(forTimeInterval: 0.002)
+      }
+      guard
+        let pool = adaptor.pixelBufferPool,
+        let outputBuffer = allocatePixelBuffer(pool: pool)
+      else {
+        throw AnimatedAvatarTranscodeError.cannotCreatePixelBuffer
+      }
+
+      var image = CIImage(cvPixelBuffer: sourceBuffer)
+        .transformed(by: track.preferredTransform)
+      let extent = image.extent.standardized
+      image = image.transformed(
+        by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY)
+      )
+      let orientedWidth = extent.width
+      let orientedHeight = extent.height
+      let cropRect = CGRect(
+        x: orientedWidth * CGFloat(crop.left),
+        y: orientedHeight * CGFloat(1 - crop.top - crop.height),
+        width: orientedWidth * CGFloat(crop.width),
+        height: orientedHeight * CGFloat(crop.height)
+      )
+      let cropped = image
+        .cropped(to: cropRect)
+        .transformed(
+          by: CGAffineTransform(
+            translationX: -cropRect.minX,
+            y: -cropRect.minY
+          )
+        )
+        .transformed(
+          by: CGAffineTransform(
+            scaleX: CGFloat(side) / cropRect.width,
+            y: CGFloat(side) / cropRect.height
+          )
+        )
+      ciContext.render(
+        cropped,
+        to: outputBuffer,
+        bounds: CGRect(x: 0, y: 0, width: side, height: side),
+        colorSpace: colorSpace
+      )
+      guard adaptor.append(outputBuffer, withPresentationTime: timestamp) else {
+        throw AnimatedAvatarTranscodeError.cannotAppendFrame
+      }
+      wroteFrame = true
+    }
+    guard wroteFrame else {
+      throw AnimatedAvatarTranscodeError.missingFrames
+    }
+    writerInput.markAsFinished()
+    reader.cancelReading()
+    let semaphore = DispatchSemaphore(value: 0)
+    writer.finishWriting { semaphore.signal() }
+    semaphore.wait()
+    guard writer.status == .completed else {
+      throw AnimatedAvatarTranscodeError.exportFailed(
+        writer.error?.localizedDescription ?? "unknown encoder error"
+      )
+    }
+    return outputURL.path
+  }
+
+  private static func frameDuration(source: CGImageSource, index: Int) -> Double {
+    guard
+      let raw = CGImageSourceCopyPropertiesAtIndex(source, index, nil) as? [CFString: Any]
+    else {
+      return defaultFrameDuration
+    }
+    let gif = raw[kCGImagePropertyGIFDictionary] as? [CFString: Any]
+    let png = raw[kCGImagePropertyPNGDictionary] as? [CFString: Any]
+    let value =
+      gif?[kCGImagePropertyGIFUnclampedDelayTime] as? Double ??
+      gif?[kCGImagePropertyGIFDelayTime] as? Double ??
+      png?[kCGImagePropertyAPNGUnclampedDelayTime] as? Double ??
+      png?[kCGImagePropertyAPNGDelayTime] as? Double ??
+      defaultFrameDuration
+    return max(value, minimumFrameDuration)
+  }
+
+  private static func makePixelBuffer(
+    image: CGImage,
+    side: Int,
+    crop: AnimatedAvatarCropRegion,
+    pool: CVPixelBufferPool
+  ) -> CVPixelBuffer? {
+    var optionalBuffer: CVPixelBuffer?
+    guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &optionalBuffer) == kCVReturnSuccess,
+          let pixelBuffer = optionalBuffer
+    else {
+      return nil
+    }
+    CVPixelBufferLockBaseAddress(pixelBuffer, [])
+    defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
+    guard
+      let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer),
+      let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+      let context = CGContext(
+        data: baseAddress,
+        width: side,
+        height: side,
+        bitsPerComponent: 8,
+        bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
+        space: colorSpace,
+        bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue |
+          CGImageAlphaInfo.premultipliedFirst.rawValue
+      )
+    else {
+      return nil
+    }
+    context.setFillColor(UIColor.black.cgColor)
+    context.fill(CGRect(x: 0, y: 0, width: side, height: side))
+    let cropWidth = CGFloat(image.width) * CGFloat(crop.width)
+    let cropHeight = CGFloat(image.height) * CGFloat(crop.height)
+    let scaleX = CGFloat(side) / cropWidth
+    let scaleY = CGFloat(side) / cropHeight
+    context.interpolationQuality = .high
+    context.draw(
+      image,
+      in: CGRect(
+        x: -CGFloat(image.width) * CGFloat(crop.left) * scaleX,
+        y: -CGFloat(image.height) * CGFloat(crop.top) * scaleY,
+        width: CGFloat(image.width) * scaleX,
+        height: CGFloat(image.height) * scaleY
+      )
+    )
+    return pixelBuffer
+  }
+
+  private static func allocatePixelBuffer(pool: CVPixelBufferPool) -> CVPixelBuffer? {
+    var buffer: CVPixelBuffer?
+    guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &buffer) == kCVReturnSuccess else {
+      return nil
+    }
+    return buffer
+  }
+}
+
+@available(iOS 17.4, *)
+@MainActor
+private final class LiveCommunicationBridge: NSObject, ConversationManagerDelegate {
+  private let channel: FlutterMethodChannel
+  private let manager: ConversationManager
+  private var localActionIds = Set<UUID>()
+  private let audioSessionChanged: (Bool) -> Void
+
+  init(
+    messenger: FlutterBinaryMessenger,
+    audioSessionChanged: @escaping (Bool) -> Void
+  ) {
+    channel = FlutterMethodChannel(
+      name: "mithka/live_communication",
+      binaryMessenger: messenger
+    )
+    let configuration = ConversationManager.Configuration(
+      ringtoneName: nil,
+      iconTemplateImageData: nil,
+      maximumConversationGroups: 1,
+      maximumConversationsPerConversationGroup: 1,
+      includesConversationInRecents: true,
+      supportsVideo: true,
+      supportedHandleTypes: [.generic]
+    )
+    manager = ConversationManager(configuration: configuration)
+    self.audioSessionChanged = audioSessionChanged
+    super.init()
+    manager.delegate = self
+    channel.setMethodCallHandler { [weak self] call, result in
+      Task { @MainActor in
+        await self?.handle(call: call, result: result)
+      }
+    }
+  }
+
+  private func handle(call: FlutterMethodCall, result: @escaping FlutterResult) async {
+    guard
+      let arguments = call.arguments as? [String: Any],
+      let uuidString = arguments["uuid"] as? String,
+      let uuid = UUID(uuidString: uuidString)
+    else {
+      result(
+        FlutterError(
+          code: "live_communication_invalid_arguments",
+          message: "A valid conversation UUID is required",
+          details: nil
+        )
+      )
+      return
+    }
+
+    do {
+      switch call.method {
+      case "start":
+        let title = (arguments["title"] as? String)?.trimmingCharacters(
+          in: .whitespacesAndNewlines
+        )
+        let rawMembers = arguments["members"] as? [String] ?? []
+        var handles = rawMembers.filter { !$0.isEmpty }.map {
+          Handle(type: .generic, value: $0, displayName: $0)
+        }
+        if handles.isEmpty {
+          let displayName = title?.isEmpty == false ? title! : "Telegram"
+          handles = [Handle(type: .generic, value: displayName, displayName: displayName)]
+        } else if let title, !title.isEmpty {
+          handles[0].displayName = title
+        }
+        let action = StartConversationAction(
+          conversationUUID: uuid,
+          handles: handles,
+          isVideo: arguments["isVideo"] as? Bool ?? false
+        )
+        localActionIds.insert(action.uuid)
+        try await manager.perform([action])
+      case "connected":
+        guard let conversation = conversation(uuid: uuid) else {
+          result(nil)
+          return
+        }
+        manager.reportConversationEvent(
+          .conversationConnected(Date()),
+          for: conversation
+        )
+      case "setMuted":
+        let action = MuteConversationAction(
+          conversationUUID: uuid,
+          isMuted: arguments["muted"] as? Bool ?? false
+        )
+        localActionIds.insert(action.uuid)
+        try await manager.perform([action])
+      case "updateMembers":
+        guard let conversation = conversation(uuid: uuid) else {
+          result(nil)
+          return
+        }
+        let names = arguments["members"] as? [String] ?? []
+        let handles = Set(
+          names.filter { !$0.isEmpty }.map {
+            Handle(type: .generic, value: $0, displayName: $0)
+          }
+        )
+        manager.reportConversationEvent(
+          .conversationUpdated(Conversation.Update(members: handles)),
+          for: conversation
+        )
+      case "end":
+        let action = EndConversationAction(conversationUUID: uuid)
+        localActionIds.insert(action.uuid)
+        try await manager.perform([action])
+      default:
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      result(nil)
+    } catch {
+      result(
+        FlutterError(
+          code: "live_communication_failed",
+          message: error.localizedDescription,
+          details: nil
+        )
+      )
+    }
+  }
+
+  private func conversation(uuid: UUID) -> Conversation? {
+    manager.conversations.first { $0.uuid == uuid }
+  }
+
+  func conversationManager(
+    _ manager: ConversationManager,
+    conversationChanged conversation: Conversation
+  ) {}
+
+  func conversationManagerDidBegin(_ manager: ConversationManager) {}
+
+  func conversationManagerDidReset(_ manager: ConversationManager) {}
+
+  func conversationManager(
+    _ manager: ConversationManager,
+    perform action: ConversationAction
+  ) {
+    let wasRequestedByFlutter = localActionIds.remove(action.uuid) != nil
+    switch action {
+    case let start as StartConversationAction:
+      start.fulfill(dateStarted: Date())
+    case let join as JoinConversationAction:
+      join.fulfill(dateConnected: Date())
+    case let mute as MuteConversationAction:
+      if !wasRequestedByFlutter {
+        channel.invokeMethod(
+          "setMuted",
+          arguments: [
+            "uuid": mute.conversationUUID.uuidString,
+            "muted": mute.isMuted
+          ]
+        )
+      }
+      mute.fulfill()
+    case let end as EndConversationAction:
+      if !wasRequestedByFlutter {
+        channel.invokeMethod(
+          "end",
+          arguments: ["uuid": end.conversationUUID.uuidString]
+        )
+      }
+      end.fulfill(dateEnded: Date())
+    default:
+      action.fulfill()
+    }
+  }
+
+  func conversationManager(
+    _ manager: ConversationManager,
+    timedOutPerforming action: ConversationAction
+  ) {
+    localActionIds.remove(action.uuid)
+    action.fail()
+  }
+
+  func conversationManager(
+    _ manager: ConversationManager,
+    didActivate audioSession: AVAudioSession
+  ) {
+    audioSessionChanged(true)
+    channel.invokeMethod("audioSessionActivated", arguments: nil)
+  }
+
+  func conversationManager(
+    _ manager: ConversationManager,
+    didDeactivate audioSession: AVAudioSession
+  ) {
+    audioSessionChanged(false)
+    channel.invokeMethod("audioSessionDeactivated", arguments: nil)
+  }
+}
+
+private final class AccountSessionBackupKeychain {
+  private let syncedService: String
+  private let localService: String
+
+  init() {
+    let bundleId = Bundle.main.bundleIdentifier ?? "ad.neko.mithka"
+    self.syncedService = "\(bundleId).sessionsbackup"
+    self.localService = "\(bundleId).sessionsbackup.local"
+  }
+
+  func handle(call: FlutterMethodCall, result: FlutterResult) {
+    do {
+      switch call.method {
+      case "isSupported":
+        result(true)
+      case "isLocalStorageSupported":
+        result(true)
+      case "saveSession":
+        guard
+          let args = call.arguments as? [String: Any],
+          let id = args["id"] as? String,
+          !id.isEmpty,
+          let data = args["data"] as? FlutterStandardTypedData
+        else {
+          throw AccountSessionBackupError.invalidArguments
+        }
+        try saveSession(id: id, data: data.data, storage: storage(for: call))
+        result(nil)
+      case "getAllSessions":
+        result(
+          try getAllSessions(storage: storage(for: call)).map {
+            FlutterStandardTypedData(bytes: $0)
+          }
+        )
+      case "deleteSession":
+        guard
+          let args = call.arguments as? [String: Any],
+          let id = args["id"] as? String,
+          !id.isEmpty
+        else {
+          throw AccountSessionBackupError.invalidArguments
+        }
+        try deleteSession(id: id, storage: storage(for: call))
+        result(nil)
+      case "deleteAllSessions":
+        try deleteAllSessions(storage: storage(for: call))
+        result(nil)
+      default:
+        result(FlutterMethodNotImplemented)
+      }
+    } catch {
+      result(
+        FlutterError(
+          code: "account_backup_failed",
+          message: error.localizedDescription,
+          details: nil
+        )
+      )
+    }
+  }
+
+  private enum Storage: String {
+    case synced
+    case local
+  }
+
+  private func storage(for call: FlutterMethodCall) -> Storage {
+    guard
+      let args = call.arguments as? [String: Any],
+      let value = args["storage"] as? String
+    else {
+      return .synced
+    }
+    return Storage(rawValue: value) ?? .synced
+  }
+
+  private func saveSession(id: String, data: Data, storage: Storage) throws {
+    try saveSession(
+      id: id,
+      data: data,
+      service: storage == .local ? localService : syncedService,
+      synchronizable: storage == .local ? false : true,
+      accessibility: storage == .local
+        ? kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        : kSecAttrAccessibleWhenUnlocked
+    )
+  }
+
+  private func saveSession(
+    id: String,
+    data: Data,
+    service: String,
+    synchronizable: Bool,
+    accessibility: CFString
+  ) throws {
+    var query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: id,
+      kSecValueData as String: data,
+      kSecAttrAccessible as String: accessibility,
+      kSecAttrSynchronizable as String: synchronizable
+    ]
+
+    let status = SecItemAdd(query as CFDictionary, nil)
+    if status == errSecDuplicateItem {
+      var updateQuery: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: service,
+        kSecAttrAccount as String: id,
+        kSecAttrSynchronizable as String: synchronizable
+      ]
+      let updateStatus = SecItemUpdate(
+        updateQuery as CFDictionary,
+        [
+          kSecValueData as String: data,
+          kSecAttrAccessible as String: accessibility
+        ] as CFDictionary
+      )
+      guard updateStatus == errSecSuccess else {
+        throw AccountSessionBackupError.keychain(updateStatus)
+      }
+    } else if status != errSecSuccess {
+      throw AccountSessionBackupError.keychain(status)
+    }
+  }
+
+  private func getAllSessions(storage: Storage) throws -> [Data] {
+    if storage == .local {
+      return try getAllSessions(service: localService, synchronizable: false)
+    }
+    do {
+      return try getAllSessions(
+        service: syncedService,
+        synchronizable: kSecAttrSynchronizableAny
+      )
+    } catch AccountSessionBackupError.keychain(let status)
+      where isSynchronizableUnsupported(status) {
+      return try getAllSessions(service: syncedService, synchronizable: nil)
+    }
+  }
+
+  private func getAllSessions(
+    service: String,
+    synchronizable: Any?
+  ) throws -> [Data] {
+    var query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecReturnData as String: true,
+      kSecMatchLimit as String: kSecMatchLimitAll
+    ]
+    if let synchronizable {
+      query[kSecAttrSynchronizable as String] = synchronizable
+    }
+    var result: AnyObject?
+    let status = SecItemCopyMatching(query as CFDictionary, &result)
+    if status == errSecItemNotFound {
+      return []
+    }
+    guard status == errSecSuccess else {
+      throw AccountSessionBackupError.keychain(status)
+    }
+    return result as? [Data] ?? []
+  }
+
+  private func deleteSession(id: String, storage: Storage) throws {
+    if storage == .local {
+      try deleteSession(id: id, service: localService, synchronizable: false)
+      return
+    }
+    do {
+      try deleteSession(
+        id: id,
+        service: syncedService,
+        synchronizable: kSecAttrSynchronizableAny
+      )
+    } catch AccountSessionBackupError.keychain(let status)
+      where isSynchronizableUnsupported(status) {
+      try deleteSession(id: id, service: syncedService, synchronizable: nil)
+    }
+  }
+
+  private func deleteSession(
+    id: String,
+    service: String,
+    synchronizable: Any?
+  ) throws {
+    var query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: id
+    ]
+    if let synchronizable {
+      query[kSecAttrSynchronizable as String] = synchronizable
+    }
+    let status = SecItemDelete(query as CFDictionary)
+    guard status == errSecSuccess || status == errSecItemNotFound else {
+      throw AccountSessionBackupError.keychain(status)
+    }
+  }
+
+  private func deleteAllSessions(storage: Storage) throws {
+    if storage == .local {
+      try deleteAllSessions(service: localService, synchronizable: false)
+      return
+    }
+    do {
+      try deleteAllSessions(
+        service: syncedService,
+        synchronizable: kSecAttrSynchronizableAny
+      )
+    } catch AccountSessionBackupError.keychain(let status)
+      where isSynchronizableUnsupported(status) {
+      try deleteAllSessions(service: syncedService, synchronizable: nil)
+    }
+  }
+
+  private func deleteAllSessions(
+    service: String,
+    synchronizable: Any?
+  ) throws {
+    var query: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service
+    ]
+    if let synchronizable {
+      query[kSecAttrSynchronizable as String] = synchronizable
+    }
+    let status = SecItemDelete(query as CFDictionary)
+    guard status == errSecSuccess || status == errSecItemNotFound else {
+      throw AccountSessionBackupError.keychain(status)
+    }
+  }
+
+  private func isSynchronizableUnsupported(_ status: OSStatus) -> Bool {
+    status == errSecNotAvailable || status == errSecMissingEntitlement || status == errSecParam
+  }
+}
+
+private enum AccountSessionBackupError: LocalizedError {
+  case invalidArguments
+  case keychain(OSStatus)
+
+  var errorDescription: String? {
+    switch self {
+    case .invalidArguments:
+      return "Invalid account backup arguments"
+    case let .keychain(status):
+      return "Keychain error \(status)"
+    }
+  }
+}
+
+@available(iOS 18.0, *)
+@MainActor
+private final class NativeTranslationBridge {
+  private let coordinator = NativeTranslationCoordinator()
+  private var hostController: UIHostingController<NativeTranslationHostView>?
+
+  func handle(call: FlutterMethodCall, result: @escaping FlutterResult) {
+    guard call.method == "translate" else {
+      result(FlutterMethodNotImplemented)
+      return
+    }
+    guard
+      let args = call.arguments as? [String: Any],
+      let text = args["text"] as? String,
+      let targetLanguageCode = args["targetLanguageCode"] as? String,
+      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+      !targetLanguageCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else {
+      result(
+        FlutterError(
+          code: "invalid_arguments",
+          message: "缺少翻译文本或目标语言",
+          details: nil
+        )
+      )
+      return
+    }
+
+    attachHostIfNeeded()
+    guard hostController != nil else {
+      result(
+        FlutterError(
+          code: "translator_unavailable",
+          message: "本机翻译暂不可用",
+          details: nil
+        )
+      )
+      return
+    }
+
+    coordinator.enqueue(
+      text: text,
+      sourceLanguageCode: args["sourceLanguageCode"] as? String,
+      targetLanguageCode: targetLanguageCode,
+      result: result
+    )
+  }
+
+  func attachHostIfNeeded() {
+    guard hostController == nil else { return }
+    guard let root = Self.rootViewController() else { return }
+    let host = UIHostingController(
+      rootView: NativeTranslationHostView(coordinator: coordinator)
+    )
+    host.view.isHidden = true
+    host.view.backgroundColor = .clear
+    host.view.isUserInteractionEnabled = false
+    root.addChild(host)
+    root.view.addSubview(host.view)
+    host.view.frame = .zero
+    host.didMove(toParent: root)
+    hostController = host
+  }
+
+  private static func rootViewController() -> UIViewController? {
+    UIApplication.shared.connectedScenes
+      .compactMap { $0 as? UIWindowScene }
+      .flatMap(\.windows)
+      .first { $0.isKeyWindow }?
+      .rootViewController
+  }
+}
+
+@available(iOS 18.0, *)
+private struct NativeTranslationHostView: View {
+  @ObservedObject var coordinator: NativeTranslationCoordinator
+
+  var body: some View {
+    Color.clear
+      .frame(width: 0, height: 0)
+      .translationTask(coordinator.configuration) { session in
+        await coordinator.perform(session: session)
+      }
+  }
+}
+
+@available(iOS 18.0, *)
+@MainActor
+private final class NativeTranslationCoordinator: ObservableObject {
+  @Published var configuration: TranslationSession.Configuration?
+
+  private var queue: [NativeTranslationRequest] = []
+  private var activeRequestId: UUID?
+  private var configurationSourceKey: String?
+  private var configurationTargetKey: String?
+  private var timeoutTask: Task<Void, Never>?
+
+  func enqueue(
+    text: String,
+    sourceLanguageCode: String?,
+    targetLanguageCode: String,
+    result: @escaping FlutterResult
+  ) {
+    queue.append(
+      NativeTranslationRequest(
+        text: text,
+        sourceLanguageCode: sourceLanguageCode,
+        targetLanguageCode: targetLanguageCode,
+        result: result
+      )
+    )
+    startNextIfNeeded()
+  }
+
+  func perform(session: TranslationSession) async {
+    guard
+      let activeRequestId,
+      let request = queue.first(where: { $0.id == activeRequestId })
+    else { return }
+
+    do {
+      let response = try await session.translate(request.text)
+      guard self.activeRequestId == activeRequestId else { return }
+      request.result(response.targetText)
+    } catch {
+      guard self.activeRequestId == activeRequestId else { return }
+      request.result(
+        FlutterError(
+          code: "translation_failed",
+          message: error.localizedDescription,
+          details: nil
+        )
+      )
+    }
+
+    finishActiveRequest(activeRequestId)
+  }
+
+  private func startNextIfNeeded() {
+    guard activeRequestId == nil, let request = queue.first else { return }
+    let sourceKey = Self.normalizedLanguageKey(for: request.sourceLanguageCode)
+    guard
+      let targetKey = Self.normalizedLanguageKey(for: request.targetLanguageCode),
+      let target = Self.localeLanguage(for: targetKey)
+    else {
+      request.result(
+        FlutterError(
+          code: "unsupported_language",
+          message: "不支持目标语言 \(request.targetLanguageCode)",
+          details: nil
+        )
+      )
+      queue.removeFirst()
+      startNextIfNeeded()
+      return
+    }
+
+    activeRequestId = request.id
+    startTimeout(for: request.id)
+
+    if configuration == nil ||
+      configurationSourceKey != sourceKey ||
+      configurationTargetKey != targetKey
+    {
+      configuration = TranslationSession.Configuration(
+        source: Self.localeLanguage(for: sourceKey),
+        target: target
+      )
+      configurationSourceKey = sourceKey
+      configurationTargetKey = targetKey
+    } else {
+      configuration?.invalidate()
+    }
+  }
+
+  private func startTimeout(for requestId: UUID) {
+    timeoutTask?.cancel()
+    timeoutTask = Task { @MainActor in
+      try? await Task.sleep(nanoseconds: 55_000_000_000)
+      guard self.activeRequestId == requestId,
+        let request = self.queue.first(where: { $0.id == requestId })
+      else { return }
+      request.result(
+        FlutterError(
+          code: "translation_timeout",
+          message: "本机翻译已取消或超时",
+          details: nil
+        )
+      )
+      self.finishActiveRequest(requestId)
+    }
+  }
+
+  private func finishActiveRequest(_ requestId: UUID) {
+    timeoutTask?.cancel()
+    timeoutTask = nil
+    queue.removeAll { $0.id == requestId }
+    if activeRequestId == requestId {
+      activeRequestId = nil
+    }
+    if !queue.isEmpty {
+      Task { @MainActor in
+        self.startNextIfNeeded()
+      }
+    }
+  }
+
+  private static func localeLanguage(for code: String?) -> Locale.Language? {
+    guard let normalized = normalizedLanguageKey(for: code) else { return nil }
+    return Locale.Language(identifier: normalized)
+  }
+
+  private static func normalizedLanguageKey(for code: String?) -> String? {
+    guard
+      let code,
+      !code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    else { return nil }
+    let normalized = code
+      .replacingOccurrences(of: "_", with: "-")
+      .lowercased()
+    if normalized == "auto" || normalized == "autodetect" {
+      return nil
+    }
+    if normalized == "zh" || normalized == "zh-hans" || normalized == "zh-cn" {
+      return "zh-Hans"
+    }
+    if normalized == "zh-hant" || normalized == "zh-tw" || normalized == "zh-hk" {
+      return "zh-Hant"
+    }
+    return normalized.components(separatedBy: "-").first ?? normalized
+  }
+}
+
+private struct NativeTranslationRequest {
+  let id = UUID()
+  let text: String
+  let sourceLanguageCode: String?
+  let targetLanguageCode: String
+  let result: FlutterResult
+}
