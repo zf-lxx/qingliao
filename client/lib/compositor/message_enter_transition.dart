@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../cells/bubble_path.dart';
 import '../cells/message_layout.dart';
+import '../ui/motion/tg_motion.dart';
 import '../ui/theme/tg_tokens.dart';
 
 /// Overlay that interpolates the composer field into the outgoing bubble rect.
@@ -20,12 +21,7 @@ class MessageEnterLayer extends StatefulWidget {
     required this.to,
     required this.onDone,
     this.duration = const Duration(milliseconds: 250),
-    this.curve = const Cubic(
-      .19919472913616398,
-      .01064453125,
-      .27920937042459737,
-      .91025390625,
-    ),
+    this.curve = Curves.linear,
   });
   @override
   State<MessageEnterLayer> createState() => _MessageEnterLayerState();
@@ -61,7 +57,8 @@ class _MessageEnterLayerState extends State<MessageEnterLayer>
     return AnimatedBuilder(
       animation: _c,
       builder: (context, _) {
-        final t = widget.curve.transform(_c.value);
+        final linear = widget.curve.transform(_c.value);
+        final t = tgMessageCurve.transform(linear);
         final rect = Rect.lerp(widget.from, widget.to, t)!;
         final radius = 17.0 + (4.0 * (1 - t));
         return Positioned(

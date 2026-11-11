@@ -146,18 +146,20 @@ class TgIconButton extends StatelessWidget {
   );
 }
 
-/// Independently implemented navigation: full-width foreground, quarter-width
-/// background parallax. The latter is a Qingliao choice, not an upstream value.
+/// Navigation aligned to ActionBarLayout classic swipe (not predictive-back).
+/// Start after 0.4cm with |dx|/3 > dy. Finish unless x < width/3 AND
+/// (velX < 3500 || |velX| < |velY|). Snap durations from animateBackEndAnimation.
 class TgPageRoute<T> extends PageRoute<T> {
   final Widget page;
   final Duration duration;
   final Curve curve;
-  bool _dragging = false;
+  bool _dragging = false, _maybe = false;
+  double _startX = 0, _startY = 0;
   TgPageRoute({
     required this.page,
     super.settings,
     this.duration = TgDuration.page,
-    this.curve = tgEaseOutQuint,
+    this.curve = const AndroidDecelerate(1),
   });
   @override
   Duration get transitionDuration => duration;
@@ -195,97 +197,106 @@ class TgPageRoute<T> extends PageRoute<T> {
         final primary = _dragging
             ? animation.value
             : curve.transform(animation.value);
-        final secondary = navigator?.userGestureInProgress == true
-            ? secondaryAnimation.value
-            : tgEaseOutQuint.transform(secondaryAnimation.value);
-        final parallax = width * .25 * secondary;
-        final scrim = (120 / 255) * (secondary < .8 ? secondary / .8 : 1);
-        return Transform.translate(
-          offset: Offset(width * (1 - primary) - parallax, 0),
-          child: Stack(
-            children: [
-              Positioned.fill(child: child!),
-              if (secondary > 0)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: ColoredBox(
-                      color: Colors.black.withValues(alpha: scrim),
-                    ),
-                  ),
-                ),
-              if (canPop && isCurrent)
-                Positioned(
-                  top: 0,
-                  bottom: 0,
-                  left: 0,
-                  width: 24,
-                  child: GestureDetector(
-                    behavior: HitTestBehavior.translucent,
-                    dragStartBehavior: DragStartBehavior.down,
-                    onHorizontalDragStart: (_) {
-                      if (!isCurrent ||
-                          animation.status != AnimationStatus.completed ||
-                          popDisposition == RoutePopDisposition.doNotPop) {
+        final slide = 1 - primary;
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: Transform.translate(
+                offset: Offset(width * slide, 0),
+                child: child!,
+              ),
+            ),
+            if (canPop && isCurrent)
+              Positioned(
+                top: 0,
+                bottom: 0,
+                left: 0,
+                width: 40,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  dragStartBehavior: DragStartBehavior.down,
+                  onHorizontalDragStart: (d) {
+                    if (!isCurrent ||
+                        animation.status != AnimationStatus.completed ||
+                        popDisposition == RoutePopDisposition.doNotPop) {
+                      return;
+                    }
+                    _maybe = true;
+                    _dragging = false;
+                    _startX = d.globalPosition.dx;
+                    _startY = d.globalPosition.dy;
+                  },
+                  onHorizontalDragUpdate: (d) {
+                    final dx = d.globalPosition.dx - _startX;
+                    final dy = (d.globalPosition.dy - _startY).abs();
+                    final startPx =
+                        (0.4 / 2.54) *
+                        MediaQuery.devicePixelRatioOf(context) *
+                        160;
+                    if (_maybe && !_dragging) {
+                      if (dx >= startPx && dx.abs() / 3 > dy) {
+                        _dragging = true;
+                        _maybe = false;
+                        controller!.stop();
+                        navigator!.didStartUserGesture();
+                      } else if (dx.abs() > 24 && dy > dx.abs() / 3) {
+                        _maybe = false;
+                        return;
+                      } else {
                         return;
                       }
-                      _dragging = true;
-                      controller!.stop();
-                      navigator!.didStartUserGesture();
-                    },
-                    onHorizontalDragUpdate: (d) {
-                      if (_dragging) {
-                        controller!.value =
-                            (controller!.value - d.delta.dx / width).clamp(
-                              0.0,
-                              1.0,
-                            );
-                      }
-                    },
-                    onHorizontalDragEnd: (d) =>
-                        _finish(d.velocity.pixelsPerSecond.dx, width),
-                    onHorizontalDragCancel: () => _finish(-1000, width),
+                    }
+                    if (_dragging) {
+                      controller!.value =
+                          (1 - (d.globalPosition.dx - _startX) / width).clamp(
+                            0.0,
+                            1.0,
+                          );
+                    }
+                  },
+                  onHorizontalDragEnd: (d) => _finish(
+                    d.velocity.pixelsPerSecond.dx,
+                    d.velocity.pixelsPerSecond.dy,
+                    width,
                   ),
+                  onHorizontalDragCancel: () => _finish(-1000, 0, width),
                 ),
-            ],
-          ),
+              ),
+          ],
         );
       },
     );
   }
 
-  void _finish(double velocity, double width) {
+  void _finish(double velX, double velY, double width) {
+    _maybe = false;
     if (!_dragging) return;
-    final finish =
-        velocity > 700 || (velocity > -700 && controller!.value < .65);
-    if (finish) {
+    final x = width * (1 - controller!.value);
+    // Classic branch: cancel if x < width/3 AND (velX < 3500 || |velX| < |velY|).
+    final cancel = x < width / 3 && (velX < 3500 || velX.abs() < velY.abs());
+    if (!cancel) {
+      final remaining = (width - x).clamp(0, width);
       controller!.reverseDuration = Duration(
-        milliseconds: math.max(50, (200 * controller!.value).round()),
+        milliseconds: math.max(50, (200 * remaining / width).round()),
       );
       navigator!.pop();
-    } else {
-      controller!
-          .animateTo(
-            1,
-            duration: Duration(
-              milliseconds: math.max(
-                120,
-                (320 * (1 - controller!.value)).round(),
-              ),
-            ),
-            curve: tgEaseOutQuint,
-          )
-          .whenComplete(() {
-            if (_dragging) {
-              _dragging = false;
-              navigator?.didStopUserGesture();
-            }
-          });
+      animation!.addStatusListener(_gestureEnded);
       return;
     }
-    controller!.reverseDuration = Duration(
-      milliseconds: math.max(50, (200 * controller!.value).round()),
-    );
-    animation!.addStatusListener(_gestureEnded);
+    controller!
+        .animateTo(
+          1,
+          duration: Duration(
+            milliseconds: math.max(120, (320 * x / width).round()),
+          ),
+          curve: const AndroidDecelerate(1),
+        )
+        .whenComplete(() {
+          if (_dragging) {
+            _dragging = false;
+            navigator?.didStopUserGesture();
+          }
+        });
   }
 
   void _gestureEnded(AnimationStatus status) {
@@ -446,23 +457,20 @@ class TgBackdropTransitions extends PageTransitionsBuilder {
       builder: (context, child) {
         final p = Navigator.of(context).userGestureInProgress
             ? secondaryAnimation.value
-            : tgEaseOutQuint.transform(secondaryAnimation.value);
-        final scrim = (120 / 255) * (p < .8 ? p / .8 : 1);
-        return Transform.translate(
-          offset: Offset(-MediaQuery.sizeOf(context).width * .25 * p, 0),
-          child: Stack(
-            children: [
-              child!,
-              if (p > 0)
-                Positioned.fill(
-                  child: IgnorePointer(
-                    child: ColoredBox(
-                      color: Colors.black.withValues(alpha: scrim),
-                    ),
+            : const AndroidDecelerate(1).transform(secondaryAnimation.value);
+        final scrim = (120 / 255) * (p < .8 ? p : .8);
+        return Stack(
+          children: [
+            child!,
+            if (p > 0)
+              Positioned.fill(
+                child: IgnorePointer(
+                  child: ColoredBox(
+                    color: Colors.black.withValues(alpha: scrim),
                   ),
                 ),
-            ],
-          ),
+              ),
+          ],
         );
       },
     );
