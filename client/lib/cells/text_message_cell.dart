@@ -12,7 +12,7 @@ const _outgoing = Color(0xff24445e);
 class TextMessageCell extends StatelessWidget {
   final String text, stamp;
   final bool mine, grouped, pending, failed, read, edited;
-  final Widget? textWidget;
+  final Widget? textWidget, quote;
   final int? groupReads;
   const TextMessageCell({
     super.key,
@@ -25,6 +25,7 @@ class TextMessageCell extends StatelessWidget {
     this.read = false,
     this.edited = false,
     this.textWidget,
+    this.quote,
     this.groupReads,
   });
 
@@ -46,6 +47,7 @@ class TextMessageCell extends StatelessWidget {
       viewportWidth: MediaQuery.sizeOf(context).width,
       grouped: grouped,
       checksWidth: checks,
+      headerHeight: quote == null ? 0 : 44,
     );
     final stampLabel = edited ? '已编辑 · $stamp' : stamp;
     final innerW =
@@ -80,8 +82,11 @@ class TextMessageCell extends StatelessWidget {
                 children: [
                   Padding(
                     padding: layout.sameLine
-                        ? EdgeInsets.only(right: 0)
-                        : EdgeInsets.only(bottom: layout.stampHeight + 2),
+                        ? EdgeInsets.only(top: quote == null ? 0 : 44)
+                        : EdgeInsets.only(
+                            top: quote == null ? 0 : 44,
+                            bottom: layout.stampHeight + 2,
+                          ),
                     child: Semantics(
                       label: text,
                       child:
@@ -95,6 +100,8 @@ class TextMessageCell extends StatelessWidget {
                           ),
                     ),
                   ),
+                  if (quote != null)
+                    Positioned(left: 0, right: 0, top: 0, child: quote!),
                   Positioned(
                     right: 0,
                     bottom: 0,

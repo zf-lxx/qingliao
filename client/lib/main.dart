@@ -21,8 +21,10 @@ import 'ui/theme/tg_tokens.dart';
 import 'ui/profile/chat_info_page.dart';
 import 'cells/message_layout.dart';
 import 'cells/text_message_cell.dart';
+import 'cells/row_height.dart';
 import 'compositor/insert_shift.dart';
 import 'compositor/message_enter_transition.dart';
+import 'compositor/swipe_reply.dart';
 import 'media/chat_image.dart';
 import 'media/media_cache.dart';
 
@@ -1423,6 +1425,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   final _enter = MessageEnterController();
   int _insertGen = 0, _lastCount = 0;
   String? _lastTail;
+  double _insertAmount = 56;
   Json? reply, editing;
   Timer? draftTimer, _highlightTimer;
   final Map<String, GlobalKey> _messageKeys = {};
@@ -1627,7 +1630,13 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     final tail = items.isEmpty ? null : items.last['id'] as String?;
     final nearBottom = !scroll.hasClients || scroll.position.extentAfter < 130;
     final grew = count > _lastCount && tail != null && tail != _lastTail;
-    if (grew && !_positioning && _initialPositioned) _insertGen++;
+    if (grew && !_positioning && _initialPositioned) {
+      _insertGen++;
+      _insertAmount = estimateRowHeight(
+        items.last,
+        MediaQuery.sizeOf(context).width,
+      );
+    }
     _lastCount = count;
     _lastTail = tail;
     setState(() {});
@@ -2130,7 +2139,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                                             ),
                                           InsertShift(
                                             generation: _insertGen,
-                                            amount: 56,
+                                            amount: _insertAmount,
                                             enabled:
                                                 m['id'] != history.last['id'],
                                             child: AnimatedContainer(
@@ -2494,7 +2503,6 @@ class Bubble extends StatefulWidget {
 
 class _BubbleState extends State<Bubble> {
   bool reveal = false;
-  double dx = 0;
   Future<Uint8List>? image;
   String? mediaId;
   @override
@@ -2540,6 +2548,16 @@ class _BubbleState extends State<Bubble> {
                 )
                 .length
           : null,
+      quote: hasReplyQuote(m)
+          ? ReplyQuote(
+              engine: e,
+              conversationId: m['conversation_id'] ?? '',
+              messageId: m['reply_to'] as String,
+              parent: e.cachedMessage(m['reply_to'] as String),
+              before: number(m['conversation_seq']),
+              onTap: () => widget.onQuoteTap?.call(m['reply_to'] as String),
+            )
+          : null,
       textWidget: EntityText(
         text: m['text'] ?? '',
         entities: objects(m['entities']),
@@ -2550,20 +2568,11 @@ class _BubbleState extends State<Bubble> {
   }
 
   Widget _interactive({required Widget child}) {
-    final deleted = widget.message['deleted'] == true;
-    return GestureDetector(
+    return SwipeReply(
+      enabled: widget.message['deleted'] != true,
+      onReply: widget.onReply,
       onLongPress: widget.onLongPress,
-      onHorizontalDragUpdate: (d) {
-        if (!deleted) setState(() => dx = (dx + d.delta.dx).clamp(0, 70));
-      },
-      onHorizontalDragEnd: (_) {
-        if (dx > 48) {
-          HapticFeedback.selectionClick();
-          widget.onReply();
-        }
-        setState(() => dx = 0);
-      },
-      child: Transform.translate(offset: Offset(dx, 0), child: child),
+      child: child,
     );
   }
 
@@ -2611,7 +2620,7 @@ class _BubbleState extends State<Bubble> {
         opacity: value,
         child: Transform.translate(
           offset: Offset(
-            dx + (mine && pending ? 20 * (1 - value) : 0),
+            mine && pending ? 20 * (1 - value) : 0,
             (mine && pending ? 92 : 18) * (1 - value),
           ),
           child: child,
@@ -2619,18 +2628,10 @@ class _BubbleState extends State<Bubble> {
       ),
       child: Align(
         alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-        child: GestureDetector(
+        child: SwipeReply(
+          enabled: !deleted,
+          onReply: widget.onReply,
           onLongPress: widget.onLongPress,
-          onHorizontalDragUpdate: (d) {
-            if (!deleted) setState(() => dx = (dx + d.delta.dx).clamp(0, 70));
-          },
-          onHorizontalDragEnd: (_) {
-            if (dx > 48) {
-              HapticFeedback.selectionClick();
-              widget.onReply();
-            }
-            setState(() => dx = 0);
-          },
           child: AnimatedSize(
             duration: const Duration(milliseconds: 250),
             curve: slideCurve,

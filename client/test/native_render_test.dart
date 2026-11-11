@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qingliao/cells/message_layout.dart';
 import 'package:qingliao/cells/text_message_cell.dart';
+import 'package:qingliao/cells/row_height.dart';
 import 'package:qingliao/compositor/insert_shift.dart';
 import 'package:qingliao/compositor/message_enter_transition.dart';
+import 'package:qingliao/compositor/swipe_reply.dart';
 import 'package:qingliao/core/storage.dart';
 import 'package:qingliao/main.dart';
 import 'package:qingliao/media/chat_image.dart';
@@ -38,9 +40,14 @@ void main() {
     expect(usesNativeTextCell({'kind': 'image', 'text': ''}), isFalse);
     expect(
       usesNativeTextCell({'kind': 'text', 'text': 'hi', 'reply_to': 'm1'}),
-      isFalse,
+      isTrue,
     );
+    expect(hasReplyQuote({'kind': 'text', 'reply_to': 'm1'}), isTrue);
     expect(usesNativeTextCell({'kind': 'text', 'deleted': true}), isFalse);
+    expect(
+      estimateRowHeight({'kind': 'image'}, 360),
+      greaterThan(estimateRowHeight({'kind': 'text', 'text': 'hi'}, 360)),
+    );
   });
 
   testWidgets('plain text bubbles use the native cell with corner stamp', (
@@ -169,5 +176,39 @@ void main() {
     await tester.pump(const Duration(milliseconds: 250));
     final end = tester.getTopLeft(find.text('旧消息')).dy;
     expect(start, greaterThan(end));
+  });
+
+  testWidgets('swipe reply damps past the trigger and snaps back', (
+    tester,
+  ) async {
+    var replies = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: SwipeReply(
+              enabled: true,
+              onReply: () => replies++,
+              child: const SizedBox(
+                width: 200,
+                height: 80,
+                child: Text('可滑回复'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final start = tester.getTopLeft(find.text('可滑回复')).dx;
+    final g = await tester.startGesture(tester.getCenter(find.text('可滑回复')));
+    await g.moveBy(const Offset(90, 0));
+    await tester.pump();
+    final pulled = tester.getTopLeft(find.text('可滑回复')).dx;
+    expect(pulled - start, greaterThan(SwipeReply.trigger));
+    expect(pulled - start, lessThan(90));
+    await g.up();
+    await tester.pumpAndSettle();
+    expect(replies, 1);
+    expect(tester.getTopLeft(find.text('可滑回复')).dx, start);
   });
 }

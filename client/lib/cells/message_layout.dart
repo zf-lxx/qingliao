@@ -46,6 +46,7 @@ class StampLayout {
     TextStyle? textStyle,
     TextStyle? stampStyle,
     double checksWidth = 0,
+    double headerHeight = 0,
   }) {
     final maxBubble = maxBubbleWidth(viewportWidth);
     final tailInset = grouped ? 0.0 : tail;
@@ -74,7 +75,7 @@ class StampLayout {
         : textPainter.height + 2 + stampH;
     return StampLayout(
       bubbleWidth: innerWidth + padLeft + padRight + tailInset,
-      bubbleHeight: innerHeight + padTop + padBottom,
+      bubbleHeight: innerHeight + padTop + padBottom + headerHeight,
       innerWidth: inner,
       stampWidth: stampW,
       stampHeight: stampH,
@@ -88,10 +89,15 @@ bool usesNativeTextCell(Map<String, dynamic> message) {
   if (message['kind'] != 'text') return false;
   final media = message['media_id']?.toString() ?? '';
   if (media.isNotEmpty) return false;
-  final reply = message['reply_to']?.toString().trim() ?? '';
-  if (reply.isNotEmpty && reply != '0' && reply != 'null') return false;
   if (message['link_preview'] != null) return false;
   final markup = message['reply_markup'];
   if (markup is Map && markup.isNotEmpty) return false;
   return true;
+}
+
+bool hasReplyQuote(Map<String, dynamic> message) {
+  final raw = message['reply_to'];
+  if (raw is! String) return false;
+  final reply = raw.trim();
+  return reply.isNotEmpty && reply != '0' && reply != 'null';
 }
