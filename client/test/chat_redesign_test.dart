@@ -48,9 +48,14 @@ void main() {
           home: ChatPage(engine: engine, cid: 'chat', title: '测试聊天'),
         ),
       );
-      await tester.pumpAndSettle();
+      for (var i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(find.byKey(const Key('native-text-cell')), findsWidgets);
       await tester.longPress(find.text('测试消息1', findRichText: true));
-      await tester.pumpAndSettle();
+      for (var i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
       expect(find.text('选择'), findsOneWidget);
       await tester.tap(find.text('选择'));
       await tester.pumpAndSettle();

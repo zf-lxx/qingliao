@@ -20,6 +20,9 @@ import 'ui/home/chat_list_widgets.dart';
 import 'ui/chat/chat_widgets.dart';
 import 'ui/theme/tg_tokens.dart';
 import 'ui/profile/chat_info_page.dart';
+import 'cells/message_layout.dart';
+import 'cells/text_message_cell.dart';
+import 'compositor/message_enter_transition.dart';
 
 const bg = TgTokens.background,
     panel = TgTokens.card,
@@ -1413,6 +1416,9 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
 
   ChatEngine get e => widget.engine;
   final input = TextEditingController(), scroll = ScrollController();
+  final composerKey = GlobalKey();
+  final _shellKey = GlobalKey();
+  final _enter = MessageEnterController();
   Json? reply, editing;
   Timer? draftTimer, _highlightTimer;
   final Map<String, GlobalKey> _messageKeys = {};
@@ -1693,6 +1699,35 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     }
   }
 
+  Rect? _composerRect() {
+    final box = composerKey.currentContext?.findRenderObject() as RenderBox?;
+    final shell = _shellKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || shell == null || !box.hasSize || !shell.hasSize) {
+      return null;
+    }
+    final origin = box.localToGlobal(Offset.zero, ancestor: shell);
+    return origin & box.size;
+  }
+
+  void _beginEnter(String id, String text) {
+    if (skipEnterAnimation(context) || reply != null) return;
+    final from = _composerRect();
+    if (from == null) return;
+    final stamp = TextMessageCell.formatStamp(
+      DateTime.now().toUtc().toIso8601String(),
+    );
+    final to = estimateOutgoingRect(
+      viewport: MediaQuery.sizeOf(context),
+      viewPadding: MediaQuery.paddingOf(context),
+      text: text,
+      stamp: stamp,
+      composerTop: from.top,
+    );
+    setState(
+      () => _enter.begin(id: id, text: text, stamp: stamp, from: from, to: to),
+    );
+  }
+
   Future<void> send() async {
     if (input.text.trim().isEmpty || sending) return;
     final text = input.text.trim(), editingNow = editing;
@@ -1701,7 +1736,8 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
       if (editingNow != null) {
         await e.edit(editingNow, text);
       } else {
-        await e.send(widget.cid, text, replyTo: reply?['id'] ?? '');
+        final id = await e.send(widget.cid, text, replyTo: reply?['id'] ?? '');
+        if (mounted && editingNow == null) _beginEnter(id, text);
       }
       if (!mounted) return;
       draftTimer?.cancel();
@@ -1894,6 +1930,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
       child: Scaffold(
         appBar: header(typing),
         body: Stack(
+          key: _shellKey,
           children: [
             Positioned.fill(
               child: RepaintBoundary(
@@ -2100,26 +2137,31 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                                                 m['id'],
                                               ),
                                               onToggle: () => toggleSelected(m),
-                                              child: Bubble(
-                                                engine: e,
-                                                onQuoteTap: jumpToReply,
-                                                message: m,
-                                                grouped:
-                                                    index < history.length &&
-                                                    history[index]['sender_id'] ==
-                                                        m['sender_id'] &&
-                                                    messageDay(
-                                                          history[index],
-                                                        ) ==
-                                                        messageDay(m),
-                                                onLongPress: () => actions(m),
-                                                onReply: () {
-                                                  setState(() {
-                                                    reply = m;
-                                                    editing = null;
-                                                  });
-                                                  textChanged(input.text);
-                                                },
+                                              child: Opacity(
+                                                opacity: _enter.hides(m['id'])
+                                                    ? 0
+                                                    : 1,
+                                                child: Bubble(
+                                                  engine: e,
+                                                  onQuoteTap: jumpToReply,
+                                                  message: m,
+                                                  grouped:
+                                                      index < history.length &&
+                                                      history[index]['sender_id'] ==
+                                                          m['sender_id'] &&
+                                                      messageDay(
+                                                            history[index],
+                                                          ) ==
+                                                          messageDay(m),
+                                                  onLongPress: () => actions(m),
+                                                  onReply: () {
+                                                    setState(() {
+                                                      reply = m;
+                                                      editing = null;
+                                                    });
+                                                    textChanged(input.text);
+                                                  },
+                                                ),
                                               ),
                                             ),
                                           ),
@@ -2264,25 +2306,28 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                               size: 40,
                             ),
                             Expanded(
-                              child: TextField(
+                              child: KeyedSubtree(
                                 key: const Key('composer'),
-                                controller: input,
-                                minLines: 1,
-                                maxLines: 5,
-                                maxLength: 4000,
-                                enabled: !removed,
-                                onChanged: textChanged,
-                                decoration: const InputDecoration(
-                                  hintText: '消息',
-                                  counterText: '',
-                                  contentPadding: EdgeInsets.symmetric(
-                                    vertical: 13,
-                                    horizontal: 5,
+                                child: TextField(
+                                  key: composerKey,
+                                  controller: input,
+                                  minLines: 1,
+                                  maxLines: 5,
+                                  maxLength: 4000,
+                                  enabled: !removed,
+                                  onChanged: textChanged,
+                                  decoration: const InputDecoration(
+                                    hintText: '消息',
+                                    counterText: '',
+                                    contentPadding: EdgeInsets.symmetric(
+                                      vertical: 13,
+                                      horizontal: 5,
+                                    ),
+                                    filled: false,
+                                    border: InputBorder.none,
                                   ),
-                                  filled: false,
-                                  border: InputBorder.none,
+                                  onSubmitted: (_) => send(),
                                 ),
-                                onSubmitted: (_) => send(),
                               ),
                             ),
                             TgIconButton(
@@ -2315,6 +2360,17 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                 ],
               ),
             ),
+            if (_enter.active && _enter.from != null && _enter.to != null)
+              MessageEnterLayer(
+                key: ValueKey(_enter.id),
+                text: _enter.text,
+                stamp: _enter.stamp,
+                from: _enter.from!,
+                to: _enter.to!,
+                onDone: () {
+                  if (mounted) setState(_enter.complete);
+                },
+              ),
           ],
         ),
       ),
@@ -2431,6 +2487,67 @@ class _BubbleState extends State<Bubble> {
     }
   }
 
+  Widget nativeTextCell(
+    Json m,
+    ChatEngine e,
+    bool mine,
+    bool pending,
+    bool failed,
+    String stamp,
+  ) {
+    return TextMessageCell(
+      text: m['text'] ?? '',
+      stamp: stamp,
+      mine: mine,
+      grouped: widget.grouped,
+      pending: pending,
+      failed: failed,
+      read:
+          mine &&
+          e.dialogs[m['conversation_id']]?['kind'] == 'direct' &&
+          e.isRead(m),
+      edited: m['edited_at']?.toString().isNotEmpty == true,
+      groupReads:
+          mine &&
+              !pending &&
+              e.dialogs[m['conversation_id']]?['kind'] == 'group' &&
+              e.receipts
+          ? e.readPositions[m['conversation_id']]?.entries
+                .where(
+                  (r) =>
+                      r.key != e.uid &&
+                      r.value != null &&
+                      r.value! >= number(m['conversation_seq']),
+                )
+                .length
+          : null,
+      textWidget: EntityText(
+        text: m['text'] ?? '',
+        entities: objects(m['entities']),
+        revealed: reveal,
+        onReveal: () => setState(() => reveal = true),
+      ),
+    );
+  }
+
+  Widget _interactive({required Widget child}) {
+    final deleted = widget.message['deleted'] == true;
+    return GestureDetector(
+      onLongPress: widget.onLongPress,
+      onHorizontalDragUpdate: (d) {
+        if (!deleted) setState(() => dx = (dx + d.delta.dx).clamp(0, 70));
+      },
+      onHorizontalDragEnd: (_) {
+        if (dx > 48) {
+          HapticFeedback.selectionClick();
+          widget.onReply();
+        }
+        setState(() => dx = 0);
+      },
+      child: Transform.translate(offset: Offset(dx, 0), child: child),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final m = widget.message,
@@ -2458,6 +2575,11 @@ class _BubbleState extends State<Bubble> {
         id != mediaId) {
       mediaId = id;
       image = e.api!.media(id);
+    }
+    if (usesNativeTextCell(m) && reactions.isEmpty) {
+      return _interactive(
+        child: nativeTextCell(m, e, mine, pending, failed, stamp),
+      );
     }
     return TweenAnimationBuilder<double>(
       duration: Duration(
@@ -2737,12 +2859,14 @@ class EntityText extends StatefulWidget {
   final List<Json> entities;
   final bool revealed;
   final VoidCallback onReveal;
+  final InlineSpan? suffix;
   const EntityText({
     super.key,
     required this.text,
     required this.entities,
     required this.revealed,
     required this.onReveal,
+    this.suffix,
   });
   @override
   State<EntityText> createState() => _EntityTextState();
@@ -2785,7 +2909,7 @@ class _EntityTextState extends State<EntityText> {
       points.add(number(e['offset']) + number(e['length']));
     }
     final breaks = points.toList()..sort();
-    final spans = <TextSpan>[];
+    final spans = <InlineSpan>[];
     for (var i = 0; i + 1 < breaks.length; i++) {
       final start = breaks[i], end = breaks[i + 1];
       var style = TextStyle(
@@ -2860,6 +2984,7 @@ class _EntityTextState extends State<EntityText> {
         ),
       );
     }
+    if (widget.suffix != null) spans.add(widget.suffix!);
     return RichText(text: TextSpan(children: spans));
   }
 }

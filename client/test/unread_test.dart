@@ -16,6 +16,37 @@ class HistoryEngine extends ChatEngine {
   @override
   Future<void> loadPins(String cid) async {}
   @override
+  void retryPending() {}
+  @override
+  Future<String> send(
+    String cid,
+    String text, {
+    String kind = 'text',
+    String mediaId = '',
+    String replyTo = '',
+    List<Json> entities = const [],
+  }) async {
+    final id = 'local-${messages.length + 1}';
+    messages[id] = {
+      'id': id,
+      'client_msg_id': id,
+      'conversation_id': cid,
+      'conversation_seq': messages.length + 1,
+      'sender_id': uid,
+      'kind': kind,
+      'text': text,
+      'media_id': mediaId,
+      'reply_to': replyTo,
+      'entities': entities,
+      'created_at': DateTime.now().toUtc().toIso8601String(),
+      'deleted': false,
+      'status': 'stored',
+    };
+    notifyListeners();
+    return id;
+  }
+
+  @override
   Future<void> read(String cid, int seq) async {
     if (number(dialogs[cid]?['last_read_seq']) >= seq) return;
     dialogs[cid]!['last_read_seq'] = seq;

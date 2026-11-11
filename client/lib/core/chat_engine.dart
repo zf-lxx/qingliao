@@ -541,7 +541,7 @@ class ChatEngine extends ChangeNotifier {
     return '私聊';
   }
 
-  Future<void> send(
+  Future<String> send(
     String cid,
     String text, {
     String kind = 'text',
@@ -570,6 +570,7 @@ class ChatEngine extends ChangeNotifier {
     await persist(); // Never transmit before durable outbox write succeeds.
     notifyListeners();
     retryPending();
+    return id;
   }
 
   void retryPending() {
