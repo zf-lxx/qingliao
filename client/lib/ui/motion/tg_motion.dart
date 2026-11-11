@@ -203,6 +203,8 @@ class TgPageRoute<T> extends PageRoute<T> {
         final translationX = width * slide;
         final shrink = 0.05 * translationX / 56.0;
         final scale = 1 - (shrink > 0.25 ? 0.25 : shrink);
+        // Edge shadow on the moving page, alpha = clamp(255 * covered/20dp, 0, 255).
+        final shadowAlpha = (255 * (translationX / 20).clamp(0.0, 1.0) / 255);
         return Stack(
           children: [
             Positioned.fill(
@@ -211,7 +213,18 @@ class TgPageRoute<T> extends PageRoute<T> {
                 child: Transform.scale(
                   alignment: Alignment.centerLeft,
                   scale: scale,
-                  child: child!,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: shadowAlpha),
+                          blurRadius: 12,
+                          offset: const Offset(-6, 0),
+                        ),
+                      ],
+                    ),
+                    child: child!,
+                  ),
                 ),
               ),
             ),
@@ -464,10 +477,14 @@ class TgBackdropTransitions extends PageTransitionsBuilder {
       animation: secondaryAnimation,
       child: child,
       builder: (context, child) {
-        final p = Navigator.of(context).userGestureInProgress
+        final dragging = Navigator.of(context).userGestureInProgress;
+        final p = dragging
             ? secondaryAnimation.value
             : const AndroidDecelerate(1).transform(secondaryAnimation.value);
-        final scrim = (120 / 255) * (p < .8 ? p : .8);
+        // ActionBarLayout: scrim alpha = 120 * clamp(widthOffset/width, 0, .8).
+        // Background stays put (live previous route); only a dimmer overlays it.
+        final cover = p < .8 ? p : .8;
+        final scrim = (120 / 255) * cover;
         return Stack(
           children: [
             child!,

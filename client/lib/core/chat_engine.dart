@@ -104,6 +104,11 @@ class ChatEngine extends ChangeNotifier {
     return persist();
   }
 
+  static const homeScrollKey = '__home__';
+
+  Future<void> rememberHomeScroll(double offset) =>
+      rememberScroll(homeScrollKey, offset);
+
   Future<void> boot() async {
     session = await vault.read();
     if (session == null) return;

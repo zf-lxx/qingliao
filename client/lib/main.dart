@@ -450,6 +450,46 @@ class DialogsPage extends StatefulWidget {
 class _DialogsPageState extends State<DialogsPage> {
   int nav = 0;
   bool showCompose = true;
+  final homeScroll = ScrollController();
+  bool _homeRestored = false;
+
+  @override
+  void initState() {
+    super.initState();
+    homeScroll.addListener(() {
+      if (!homeScroll.hasClients) return;
+      e.scrollOffsets[ChatEngine.homeScrollKey] = homeScroll.offset;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _restoreHomeScroll());
+  }
+
+  void _restoreHomeScroll() {
+    if (_homeRestored || !homeScroll.hasClients) return;
+    final saved = e.scrollOffsets[ChatEngine.homeScrollKey];
+    if (saved == null) {
+      _homeRestored = true;
+      return;
+    }
+    homeScroll.jumpTo(saved.clamp(0.0, homeScroll.position.maxScrollExtent));
+    _homeRestored = true;
+  }
+
+  Future<void> _openChat(Widget page) {
+    if (homeScroll.hasClients) {
+      unawaited(e.rememberHomeScroll(homeScroll.offset));
+    }
+    return Navigator.push(context, chatRoute(page));
+  }
+
+  @override
+  void dispose() {
+    if (homeScroll.hasClients) {
+      unawaited(e.rememberHomeScroll(homeScroll.offset));
+    }
+    homeScroll.dispose();
+    super.dispose();
+  }
+
   void newChat() => Navigator.push(context, chatRoute(NewChatPage(engine: e)));
   void profile() => Navigator.push(context, chatRoute(ProfilePage(engine: e)));
   Future<void> openDirect(Json u) async {
@@ -462,14 +502,11 @@ class _DialogsPageState extends State<DialogsPage> {
       );
       await e.refreshDialogs();
       if (!mounted) return;
-      Navigator.push(
-        context,
-        chatRoute(
-          ChatPage(
-            engine: e,
-            cid: d['id'],
-            title: u['display_name'] ?? u['handle'] ?? '用户',
-          ),
+      await _openChat(
+        ChatPage(
+          engine: e,
+          cid: d['id'],
+          title: u['display_name'] ?? u['handle'] ?? '用户',
         ),
       );
     });
@@ -839,10 +876,8 @@ class _DialogsPageState extends State<DialogsPage> {
                   number(d['last_message_read_count']) > 0,
               draft: draft.isNotEmpty,
               onLongPress: () => menu(d),
-              onTap: () => Navigator.push(
-                context,
-                chatRoute(ChatPage(engine: e, cid: d['id'], title: name)),
-              ),
+              onTap: () =>
+                  _openChat(ChatPage(engine: e, cid: d['id'], title: name)),
             ),
           ),
         );
@@ -859,6 +894,7 @@ class _DialogsPageState extends State<DialogsPage> {
         child: RefreshIndicator(
           onRefresh: e.refreshDialogs,
           child: CustomScrollView(
+            controller: homeScroll,
             slivers: [
               SliverAppBar(
                 pinned: false,
