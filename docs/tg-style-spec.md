@@ -61,7 +61,7 @@
 |---|---|---|---|
 | 连接标题替换 | 220ms；无显式覆盖的 ViewPropertyAnimator 默认 AccelerateDecelerate | `ActionBar/ActionBar.setTitleOverlayText`：新标题 -20dp→0，旧标题 0→+20dp，alpha 同步交叉 | 0.1.1 自行重写；1s 去抖是轻聊策略，不冒称 TG 源值 |
 | 标题省略点 | 第一/二/三点分别延迟 0/150/300ms 淡入，各 300ms；1000ms 时统一淡出 400ms，停 300ms 再循环；DEFAULT | `Components/EllipsizeSpanAnimator`，每点 alpha 0↔255 | 0.1.1 使用该时间表，不再阶梯闪点 |
-| 图片从气泡展开/回收 | openPhoto/closePhoto 主分支 200ms，AnimatorSet 默认曲线；zoom/animateTo 250ms、Decelerate(1.5) | `PhotoViewer.java:17823–30,18486,19383–401`：clipping/rect/scale/translation + 背景和容器 alpha；缩放/回弹改 scale/X/Y | 0.1.1 Hero 200ms；缩放/回弹 250ms，同参数重写。最初 ~250ms 估计已按实际源码修正 |
+| 图片从气泡展开/回收 | openPhoto/closePhoto 主分支 200ms，AnimatorSet **未设 interpolator**（即 AccelerateDecelerate）；zoom/animateTo 250ms、Decelerate(1.5) | `PhotoViewer.java:17808–30`：clipping/rect/scale/translation + 背景和容器 alpha。Flutter Hero 默认 `fastOutSlowIn` 会叠到 RectTween 上，必须把 Hero.curve 设成 linear，只留 ImageRectTween 的 AccelerateDecelerate | `feat/native-render-layer`：Hero.curve=linear + ImageRectTween 200ms AccelerateDecelerate；缩放/回弹仍 250ms Decelerate(1.5) |
 | 图片拖动退出 | 跟手阶段不应缓动；结束后使用 closePhoto/animateTo 分支；阈值须按当前设备/source 分支复核 | `PhotoViewer`：translationY、背景 alpha、回到来源位置 | 0.1.1 已跟手及透明度、返回 Hero；阈值是轻聊值（100dp/850dp·s⁻¹），不声称与 TG 全同 |
 | 打开/关闭聊天 | 当前 `ActionBarLayout` 常规动画有 200ms 分支，预测返回也有 380ms/EASE_OUT_QUINT 分支；不能混成固定 250ms | `ActionBarLayout`：前景 X、innerTranslationX、背景 parallax/阴影；需要进一步定位实际手机常规路径 | 0.2 重做；0.1.0 旧 Flutter route 并非完整 TG 动画 |
 | 边缘滑回及取消 | 经典分支见 `ActionBarLayout.java:1546–1600`。predictive `drawChild` 缩放 `1 - min(0.25, 0.05 * translationX / 56dp)`，完成/取消下限 380/320ms、EASE_OUT_QUINT。`1226–1231,1721–1740` | `TgPageRoute`：经典起步/完成条件 + predictive 缩放与 380/320 下限 |
@@ -79,7 +79,7 @@
 | mic/camera↔send | `ChatActivityEnterView` runningAnimation 的当前两主分支均 220ms/EASE_OUT_QUINT；周边建议按钮 320ms 独立分支 | `Components/ChatActivityEnterView.java:8137–38,8359–60`：scale/alpha/位置的分层替换，空输入 mic、有文字 send（媒体模式 camera） | 0.2；不要误用录音取消200ms分支 |
 | 键盘/emoji 面板 | 250ms；`AdjustPanLayoutHelper.keyboardInterpolator = ChatListItemAnimator.DEFAULT_INTERPOLATOR`；能拿到平台 IME animation 时优先跟平台 | `ActionBar/AdjustPanLayoutHelper`、`ChatActivityEnterView.panelAnimation`：pan/translationY、面板高度/输入栏/列表联动 | 0.2；不每帧执行大规模布局或 decode 图片 |
 | 滚动浮动日期标签 | show/hide 各 150ms，未显式覆盖插值器；hide 另受 hideDateDelay 控制 | `ChatActivity.java:14165–208`：floatingDateView alpha；位置随 chatListView translationY，不硬编码延迟 | 0.1.1 只有分天列表日期胶囊；0.2 加滚动浮层 |
-| 多选模式行位移 | 200ms；进入 EASE_OUT、退出 EASE_IN | `Cells/ChatMessageCell.java:18007–32,23533–36`：checkBoxTranslation 0↔35dp，勾选框背景 alpha、全宽选择背景；不要错误地两边消息都同幅移动（上游有 outgoing 分支） | 0.2 |
+| 多选模式行位移 | 200ms；进入 EASE_OUT、退出 EASE_IN | `Cells/ChatMessageCell.java:18007–32,23518–20,17857–58`：checkBoxTranslation 0↔35dp。仅 `!isOutOwner() \|\| hasWideCode` 的行 `updateTranslation`；勾选 21dp，bounds `dp(8-35)+translation`、底边 `bottom-8`。选中换气泡 selected drawable，不是整行半透明罩 | `feat/native-render-layer`：对方气泡右移 35dp、自己的不动；勾选 21dp 钉在行左下；气泡用 outgoingSelected/incomingSelected |
 | 多选顶栏/底栏 | ActionBar show/hideActionMode 200ms，alpha/translation，默认 Android 插值器；具体 floating pill morph 是 screenshot 需求，需测独立布局分支 | `ActionBar/ActionBar.showActionMode/hideActionMode` + `ChatActivity`，选择数量按 NumberTextView；底部输入栏→回复/转发按钮 | 0.2 |
 
 ### 120Hz 性能验收（不能以桌面截图代替）

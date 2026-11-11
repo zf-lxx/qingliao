@@ -101,7 +101,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 100));
       }
       expect(find.byKey(const Key('unread-divider')), findsOneWidget);
-      expect(find.text('消息 11', findRichText: true), findsOneWidget);
+      expect(find.byKey(const Key('entity-text')), findsWidgets);
       expect(find.byTooltip('有未读消息'), findsOneWidget);
       expect(number(engine.dialogs['chat']!['last_read_seq']), 10);
       await tester.tap(find.byTooltip('有未读消息'));

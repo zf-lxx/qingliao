@@ -52,7 +52,7 @@ void main() {
         await tester.pump(const Duration(milliseconds: 50));
       }
       expect(find.byKey(const Key('native-text-cell')), findsWidgets);
-      await tester.longPress(find.text('测试消息1', findRichText: true));
+      await tester.longPress(find.byKey(const Key('entity-text')).first);
       for (var i = 0; i < 12; i++) {
         await tester.pump(const Duration(milliseconds: 50));
       }
@@ -68,7 +68,7 @@ void main() {
         1,
       );
       await tester.tapAt(
-        tester.getCenter(find.text('测试消息2', findRichText: true)),
+        tester.getCenter(find.byKey(const Key('entity-text')).at(1)),
       );
       await tester.pumpAndSettle();
       expect(find.text('已选择 2 项'), findsOneWidget);

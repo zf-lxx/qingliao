@@ -29,6 +29,7 @@ void main() {
                   ),
                   child: Hero(
                     tag: 'photo',
+                    curve: Curves.linear,
                     child: SizedBox(
                       width: 120,
                       height: 180,

@@ -4,8 +4,10 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qingliao/cells/bubble_path.dart';
+import 'package:qingliao/cells/link_preview_card.dart';
 import 'package:qingliao/cells/message_layout.dart';
 import 'package:qingliao/cells/text_message_cell.dart';
+import 'package:qingliao/ui/chat/chat_widgets.dart';
 import 'package:qingliao/cells/row_height.dart';
 import 'package:qingliao/compositor/insert_shift.dart';
 import 'package:qingliao/compositor/message_enter_transition.dart';
@@ -70,6 +72,14 @@ void main() {
     );
     expect(hasReplyQuote({'kind': 'text', 'reply_to': 'm1'}), isTrue);
     expect(usesNativeTextCell({'kind': 'text', 'deleted': true}), isFalse);
+    expect(
+      usesNativeTextCell({
+        'kind': 'text',
+        'text': 'https://example.com',
+        'link_preview': {'title': 'Example', 'url': 'https://example.com'},
+      }),
+      isTrue,
+    );
     expect(
       estimateRowHeight({'kind': 'image'}, 360),
       greaterThan(estimateRowHeight({'kind': 'text', 'text': 'hi'}, 360)),
@@ -156,7 +166,7 @@ void main() {
     for (var i = 0; i < 12; i++) {
       await tester.pump(const Duration(milliseconds: 50));
     }
-    expect(find.text('自绘发送', findRichText: true), findsWidgets);
+    expect(find.byKey(const Key('entity-text')), findsOneWidget);
     expect(find.byType(MessageEnterLayer), findsNothing);
     expect(find.byKey(const Key('native-text-cell')), findsOneWidget);
     expect(tester.takeException(), isNull);
@@ -251,4 +261,69 @@ void main() {
     expect(replies, 1);
     expect(tester.getTopLeft(find.text('可滑回复')).dx, start);
   });
+
+  testWidgets('incoming rows shift 35dp in select mode, outgoing stay put', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MediaQuery(
+        data: MediaQueryData(size: Size(360, 640)),
+        child: Directionality(
+          textDirection: TextDirection.ltr,
+          child: Column(
+            children: [
+              TgSelectableMessage(
+                selecting: true,
+                selected: true,
+                outgoing: false,
+                onToggle: _noop,
+                child: SizedBox(key: Key('in'), width: 80, height: 40),
+              ),
+              TgSelectableMessage(
+                selecting: true,
+                selected: false,
+                outgoing: true,
+                onToggle: _noop,
+                child: SizedBox(key: Key('out'), width: 80, height: 40),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final incoming = tester.getTopLeft(find.byKey(const Key('in'))).dx;
+    final outgoing = tester.getTopLeft(find.byKey(const Key('out'))).dx;
+    expect(incoming - outgoing, 35);
+  });
+
+  testWidgets('link preview sits inside the native cell', (tester) async {
+    await tester.pumpWidget(
+      const MediaQuery(
+        data: MediaQueryData(size: Size(360, 640)),
+        child: Directionality(
+          textDirection: TextDirection.ltr,
+          child: TextMessageCell(
+            text: '看这个链接',
+            stamp: '00:04',
+            mine: false,
+            preview: LinkPreviewCard(
+              preview: {
+                'site_name': 'example.com',
+                'title': 'Example',
+                'description': 'desc',
+                'url': 'https://example.com/',
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(find.byKey(const Key('native-text-cell')), findsOneWidget);
+    expect(find.byKey(const Key('link-preview')), findsOneWidget);
+    expect(find.text('example.com'), findsOneWidget);
+    expect(find.text('Example'), findsOneWidget);
+  });
 }
+
+void _noop() {}

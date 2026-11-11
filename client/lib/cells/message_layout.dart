@@ -89,7 +89,6 @@ bool usesNativeTextCell(Map<String, dynamic> message) {
   if (message['kind'] != 'text') return false;
   final media = message['media_id']?.toString() ?? '';
   if (media.isNotEmpty) return false;
-  if (message['link_preview'] != null) return false;
   final markup = message['reply_markup'];
   if (markup is Map && markup.isNotEmpty) return false;
   return true;

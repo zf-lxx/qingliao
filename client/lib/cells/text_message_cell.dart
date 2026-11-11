@@ -10,7 +10,7 @@ import 'message_layout.dart';
 class TextMessageCell extends StatelessWidget {
   final String text, stamp;
   final bool mine, grouped, pending, failed, read, edited;
-  final Widget? textWidget, quote, reactions;
+  final Widget? textWidget, quote, reactions, preview;
   final int? groupReads;
   final bool selected;
   const TextMessageCell({
@@ -27,6 +27,7 @@ class TextMessageCell extends StatelessWidget {
     this.textWidget,
     this.quote,
     this.reactions,
+    this.preview,
     this.groupReads,
   });
 
@@ -54,16 +55,20 @@ class TextMessageCell extends StatelessWidget {
       fontFamily: bodyFamily,
       fontFamilyFallback: bodyFallback,
     );
-    final layout = StampLayout.measure(
+    var layout = StampLayout.measure(
       text: text,
       stamp: stampLabel,
       viewportWidth: MediaQuery.sizeOf(context).width,
       grouped: grouped,
       checksWidth: checks,
-      headerHeight: (quote == null ? 0 : 44) + (reactions == null ? 0 : 28),
+      headerHeight:
+          (quote == null ? 0 : 44) +
+          (preview == null ? 0 : 96) +
+          (reactions == null ? 0 : 28),
       textStyle: bodyTextStyle,
       stampStyle: stampTextStyle,
     );
+    final sameLine = layout.sameLine && preview == null;
     final innerW =
         layout.bubbleWidth -
         StampLayout.padLeft -
@@ -97,12 +102,12 @@ class TextMessageCell extends StatelessWidget {
               child: Stack(
                 children: [
                   Padding(
-                    padding: layout.sameLine
-                        ? EdgeInsets.only(top: quote == null ? 0 : 44)
-                        : EdgeInsets.only(
-                            top: quote == null ? 0 : 44,
-                            bottom: layout.stampHeight + 2,
-                          ),
+                    padding: EdgeInsets.only(
+                      top: quote == null ? 0 : 44,
+                      bottom: sameLine
+                          ? 0
+                          : layout.stampHeight + 2 + (preview == null ? 0 : 96),
+                    ),
                     child: Semantics(
                       label: text,
                       child:
@@ -116,6 +121,18 @@ class TextMessageCell extends StatelessWidget {
                   ),
                   if (quote != null)
                     Positioned(left: 0, right: 0, top: 0, child: quote!),
+                  if (preview != null)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      top: quote == null ? null : 44,
+                      bottom:
+                          layout.stampHeight + 2 + (reactions == null ? 0 : 28),
+                      child: Align(
+                        alignment: Alignment.bottomLeft,
+                        child: preview!,
+                      ),
+                    ),
                   if (reactions != null)
                     Positioned(
                       left: 0,

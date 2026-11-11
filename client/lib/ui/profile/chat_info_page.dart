@@ -325,6 +325,7 @@ class _ChatInfoPageState extends State<ChatInfoPage> {
                           : null,
                       child: Hero(
                         tag: 'shared-${m['id']}',
+                        curve: Curves.linear,
                         child: snapshot.hasData
                             ? Image.memory(
                                 snapshot.data!,

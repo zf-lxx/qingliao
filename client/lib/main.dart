@@ -20,6 +20,7 @@ import 'ui/chat/chat_widgets.dart';
 import 'ui/theme/tg_tokens.dart';
 import 'ui/theme/desktop_fonts.dart';
 import 'ui/profile/chat_info_page.dart';
+import 'cells/link_preview_card.dart';
 import 'cells/message_layout.dart';
 import 'cells/text_message_cell.dart';
 import 'cells/row_height.dart';
@@ -2208,6 +2209,8 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                                                 selected: selection.contains(
                                                   m['id'],
                                                 ),
+                                                outgoing:
+                                                    m['sender_id'] == e.uid,
                                                 onToggle: () =>
                                                     toggleSelected(m),
                                                 child: Opacity(
@@ -2622,11 +2625,34 @@ class _BubbleState extends State<Bubble> {
               onTap: () => widget.onQuoteTap?.call(m['reply_to'] as String),
             )
           : null,
+      preview: m['link_preview'] == null
+          ? null
+          : LinkPreviewCard(
+              preview: obj(m['link_preview']),
+              onTap: () {
+                final url = obj(m['link_preview'])['url']?.toString() ?? '';
+                if (url.isNotEmpty) openLink(context, url);
+              },
+            ),
       textWidget: EntityText(
         text: m['text'] ?? '',
         entities: objects(m['entities']),
         revealed: reveal,
         onReveal: () => setState(() => reveal = true),
+        suffix: WidgetSpan(
+          alignment: PlaceholderAlignment.baseline,
+          baseline: TextBaseline.alphabetic,
+          child: StampSuffix(
+            width: StampLayout.measure(
+              text: m['text'] ?? '',
+              stamp: stamp,
+              viewportWidth: MediaQuery.sizeOf(context).width,
+              grouped: widget.grouped,
+              checksWidth: mine ? 18 : 0,
+            ).suffixWidth,
+            height: 1,
+          ),
+        ),
       ),
     );
   }
@@ -2798,27 +2824,13 @@ class _BubbleState extends State<Bubble> {
                       onReveal: () => setState(() => reveal = true),
                     ),
                   if (!deleted && m['link_preview'] != null)
-                    Container(
-                      margin: const EdgeInsets.only(top: 8),
-                      padding: const EdgeInsets.only(left: 8),
-                      decoration: const BoxDecoration(
-                        border: Border(left: BorderSide(color: blue, width: 2)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            obj(m['link_preview'])['title'] ?? '',
-                            style: const TextStyle(color: blue),
-                          ),
-                          Text(
-                            obj(m['link_preview'])['description'] ?? '',
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 12, color: muted),
-                          ),
-                        ],
-                      ),
+                    LinkPreviewCard(
+                      preview: obj(m['link_preview']),
+                      onTap: () {
+                        final url =
+                            obj(m['link_preview'])['url']?.toString() ?? '';
+                        if (url.isNotEmpty) openLink(context, url);
+                      },
                     ),
                   if (!deleted && reactions.isNotEmpty)
                     Padding(
@@ -3044,6 +3056,8 @@ class _EntityTextState extends State<EntityText> {
           case 'mention':
           case 'hashtag':
             style = style.copyWith(color: blue);
+          case 'custom_emoji':
+            style = style.copyWith(fontSize: 18, height: 1.2);
           case 'spoiler':
             spoiler = !widget.revealed;
         }
@@ -3076,7 +3090,10 @@ class _EntityTextState extends State<EntityText> {
       );
     }
     if (widget.suffix != null) spans.add(widget.suffix!);
-    return RichText(text: TextSpan(children: spans));
+    return RichText(
+      key: const Key('entity-text'),
+      text: TextSpan(children: spans),
+    );
   }
 }
 

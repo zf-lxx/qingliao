@@ -42,6 +42,7 @@ class ChatImage extends StatelessWidget {
                 ),
                 child: Hero(
                   tag: heroTag,
+                  curve: Curves.linear,
                   createRectTween: (begin, end) =>
                       ImageRectTween(begin: begin, end: end),
                   child: Image.memory(
