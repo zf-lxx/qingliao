@@ -492,7 +492,7 @@ class _DialogsPageState extends State<DialogsPage> {
             onTap: newChat,
           ),
           TgSettingsCell(
-            icon: Icons.group_add_rounded,
+            icon: Icons.groups_rounded,
             title: '新建群聊',
             divider: false,
             onTap: newChat,
@@ -988,7 +988,7 @@ class _DialogsPageState extends State<DialogsPage> {
                 )
               else
                 SliverPadding(
-                  padding: const EdgeInsets.only(bottom: 96),
+                  padding: const EdgeInsets.only(bottom: 72),
                   sliver: SliverList(
                     delegate: SliverChildBuilderDelegate(
                       (context, i) => dialogRow(i),
@@ -1039,33 +1039,37 @@ class _DialogsPageState extends State<DialogsPage> {
           badge: e.badge,
           onChanged: (i) => setState(() => nav = i),
         ),
+        floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
         floatingActionButton: nav == 0
-            ? AnimatedSlide(
-                duration: const Duration(milliseconds: 280),
-                curve: Curves.decelerate,
-                offset: showCompose ? Offset.zero : const Offset(0, 1.6),
-                child: AnimatedScale(
+            ? Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: AnimatedSlide(
                   duration: const Duration(milliseconds: 280),
-                  scale: showCompose ? 1 : .7,
-                  child: AnimatedOpacity(
+                  curve: Curves.decelerate,
+                  offset: showCompose ? Offset.zero : const Offset(0, 1.6),
+                  child: AnimatedScale(
                     duration: const Duration(milliseconds: 280),
-                    opacity: showCompose ? 1 : 0,
-                    child: IgnorePointer(
-                      ignoring: !showCompose,
-                      child: PressableScale(
-                        onTap: newChat,
-                        tooltip: '新建聊天',
-                        child: Container(
-                          width: 52,
-                          height: 52,
-                          decoration: const BoxDecoration(
-                            color: blue,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.edit_rounded,
-                            color: Colors.white,
-                            size: 26,
+                    scale: showCompose ? 1 : .7,
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 280),
+                      opacity: showCompose ? 1 : 0,
+                      child: IgnorePointer(
+                        ignoring: !showCompose,
+                        child: PressableScale(
+                          onTap: newChat,
+                          tooltip: '新建聊天',
+                          child: Container(
+                            width: 52,
+                            height: 52,
+                            decoration: const BoxDecoration(
+                              color: blue,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.edit_rounded,
+                              color: Colors.white,
+                              size: 26,
+                            ),
                           ),
                         ),
                       ),
@@ -1848,28 +1852,31 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     return origin & box.size;
   }
 
-  void _beginEnter(String id, String text) {
+  void _beginEnter(String id, String text, {Rect? from}) {
     if (skipEnterAnimation(context) || reply != null) return;
-    final from = _composerRect();
-    if (from == null) return;
+    final field = from ?? _composerRect();
+    if (field == null) return;
     final stamp = TextMessageCell.formatStamp(
       DateTime.now().toUtc().toIso8601String(),
     );
+    final start = composerTextRect(field: field, text: text);
     final to = estimateOutgoingRect(
       viewport: MediaQuery.sizeOf(context),
       viewPadding: MediaQuery.paddingOf(context),
       text: text,
       stamp: stamp,
-      composerTop: from.top,
+      composerTop: field.top,
     );
     setState(
       () => _enter.begin(
-        id: id,
-        text: text,
-        stamp: stamp,
-        from: from,
-        to: to,
-        fromTextSize: composerTextSize,
+        MessageEnterFlight(
+          id: id,
+          text: text,
+          stamp: stamp,
+          from: start,
+          to: to,
+          fromTextSize: composerTextSize,
+        ),
       ),
     );
   }
@@ -1877,13 +1884,16 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   Future<void> send() async {
     if (input.text.trim().isEmpty || sending) return;
     final text = input.text.trim(), editingNow = editing;
+    final from = _composerRect();
     setState(() => sending = true);
     await guard(context, () async {
       if (editingNow != null) {
         await e.edit(editingNow, text);
       } else {
         final id = await e.send(widget.cid, text, replyTo: reply?['id'] ?? '');
-        if (mounted && editingNow == null) _beginEnter(id, text);
+        if (mounted && editingNow == null) {
+          _beginEnter(id, text, from: from);
+        }
       }
       if (!mounted) return;
       draftTimer?.cancel();
@@ -2532,16 +2542,12 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                 ],
               ),
             ),
-            if (_enter.active && _enter.from != null && _enter.to != null)
+            for (final flight in _enter.flights)
               MessageEnterLayer(
-                key: ValueKey(_enter.id),
-                text: _enter.text,
-                stamp: _enter.stamp,
-                from: _enter.from!,
-                to: _enter.to!,
-                fromTextSize: _enter.fromTextSize,
+                key: ValueKey(flight.id),
+                flight: flight,
                 onDone: () {
-                  if (mounted) setState(_enter.complete);
+                  if (mounted) setState(() => _enter.complete(flight.id));
                 },
               ),
           ],

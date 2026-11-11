@@ -7,24 +7,32 @@ import '../ui/theme/tg_tokens.dart';
 
 const composerTextSize = 16.0;
 
-/// Overlay aligned to TextMessageEnterTransition progress mapping
-/// (linear animator, Y=message curve, X=EASE_OUT(QuINT), alpha to 0.4).
-/// Text starts at the composer size and scales to bubble 15sp (scaleFrom).
-class MessageEnterLayer extends StatefulWidget {
-  final String text, stamp;
+class MessageEnterFlight {
+  final String id, text, stamp;
   final Rect from, to;
   final double fromTextSize;
-  final Duration duration;
-  final Curve curve;
-  final VoidCallback onDone;
-  const MessageEnterLayer({
-    super.key,
+  const MessageEnterFlight({
+    required this.id,
     required this.text,
     required this.stamp,
     required this.from,
     required this.to,
-    required this.onDone,
     this.fromTextSize = composerTextSize,
+  });
+}
+
+/// Overlay aligned to TextMessageEnterTransition progress mapping
+/// (linear animator, Y=message curve, X=EASE_OUT(QuINT), alpha to 0.4).
+/// Text starts at the composer size and scales to bubble 15sp (scaleFrom).
+class MessageEnterLayer extends StatefulWidget {
+  final MessageEnterFlight flight;
+  final VoidCallback onDone;
+  final Duration duration;
+  final Curve curve;
+  const MessageEnterLayer({
+    super.key,
+    required this.flight,
+    required this.onDone,
     this.duration = const Duration(milliseconds: 250),
     this.curve = Curves.linear,
   });
@@ -59,8 +67,9 @@ class _MessageEnterLayerState extends State<MessageEnterLayer>
       WidgetsBinding.instance.addPostFrameCallback((_) => widget.onDone());
       return const SizedBox.shrink();
     }
+    final flight = widget.flight;
     final scaleFrom =
-        widget.fromTextSize / (StampLayout.textStyle.fontSize ?? 15);
+        flight.fromTextSize / (StampLayout.textStyle.fontSize ?? 15);
     return AnimatedBuilder(
       animation: _c,
       builder: (context, _) {
@@ -69,10 +78,10 @@ class _MessageEnterLayerState extends State<MessageEnterLayer>
         final xT = tgEaseOut.transform(tgEaseOutQuint.transform(linear));
         final alpha = linear > 0.4 ? 1.0 : linear / 0.4;
         final rect = Rect.fromLTRB(
-          widget.from.left + (widget.to.left - widget.from.left) * xT,
-          widget.from.top + (widget.to.top - widget.from.top) * yT,
-          widget.from.right + (widget.to.right - widget.from.right) * xT,
-          widget.from.bottom + (widget.to.bottom - widget.from.bottom) * yT,
+          flight.from.left + (flight.to.left - flight.from.left) * xT,
+          flight.from.top + (flight.to.top - flight.from.top) * yT,
+          flight.from.right + (flight.to.right - flight.from.right) * xT,
+          flight.from.bottom + (flight.to.bottom - flight.from.bottom) * yT,
         );
         final scale = scaleFrom + (1 - scaleFrom) * yT;
         return Positioned(
@@ -98,7 +107,7 @@ class _MessageEnterLayerState extends State<MessageEnterLayer>
                       alignment: Alignment.topLeft,
                       scale: scale,
                       child: Text(
-                        widget.text,
+                        flight.text,
                         maxLines: 6,
                         overflow: TextOverflow.ellipsis,
                         style: StampLayout.textStyle.copyWith(
@@ -167,36 +176,40 @@ Rect estimateOutgoingRect({
   );
 }
 
+Rect composerTextRect({
+  required Rect field,
+  required String text,
+  TextStyle? style,
+}) {
+  final painter = TextPainter(
+    text: TextSpan(
+      text: text,
+      style: style ?? const TextStyle(fontSize: composerTextSize, height: 1.45),
+    ),
+    maxLines: 5,
+    textDirection: TextDirection.ltr,
+  )..layout(maxWidth: (field.width - 10).clamp(24, 800));
+  const padX = 5.0, padY = 13.0;
+  return Rect.fromLTWH(
+    field.left + padX,
+    field.top + padY,
+    painter.width.clamp(24, field.width),
+    painter.height.clamp(20, field.height),
+  );
+}
+
 class MessageEnterController {
-  String? id;
-  Rect? from, to;
-  String text = '', stamp = '';
-  double fromTextSize = composerTextSize;
-  bool get active => id != null;
-  bool hides(String messageId) => id == messageId;
-  void begin({
-    required String id,
-    required String text,
-    required String stamp,
-    required Rect from,
-    required Rect to,
-    double fromTextSize = composerTextSize,
-  }) {
-    this.id = id;
-    this.text = text;
-    this.stamp = stamp;
-    this.from = from;
-    this.to = to;
-    this.fromTextSize = fromTextSize;
+  final List<MessageEnterFlight> flights = [];
+  bool get active => flights.isNotEmpty;
+  bool hides(String messageId) => flights.any((f) => f.id == messageId);
+
+  void begin(MessageEnterFlight flight) {
+    flights.removeWhere((f) => f.id == flight.id);
+    flights.add(flight);
   }
 
-  void complete() {
-    id = null;
-    from = null;
-    to = null;
-    text = '';
-    stamp = '';
-    fromTextSize = composerTextSize;
+  void complete(String id) {
+    flights.removeWhere((f) => f.id == id);
   }
 }
 

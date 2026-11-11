@@ -115,10 +115,13 @@ void main() {
           body: Stack(
             children: [
               MessageEnterLayer(
-                text: '发送飞入',
-                stamp: '00:04',
-                from: const Rect.fromLTWH(20, 500, 280, 48),
-                to: const Rect.fromLTWH(80, 200, 200, 56),
+                flight: const MessageEnterFlight(
+                  id: 'enter-1',
+                  text: '发送飞入',
+                  stamp: '00:04',
+                  from: Rect.fromLTWH(20, 500, 280, 48),
+                  to: Rect.fromLTWH(80, 200, 200, 56),
+                ),
                 onDone: () => done = true,
               ),
             ],
@@ -323,6 +326,41 @@ void main() {
     expect(find.byKey(const Key('link-preview')), findsOneWidget);
     expect(find.text('example.com'), findsOneWidget);
     expect(find.text('Example'), findsOneWidget);
+  });
+
+  test('composer text rect starts inside the field, not the whole bar', () {
+    final field = const Rect.fromLTWH(20, 500, 280, 48);
+    final start = composerTextRect(field: field, text: '你好');
+    expect(start.left, greaterThan(field.left));
+    expect(start.width, lessThan(field.width));
+    expect(start.height, lessThanOrEqualTo(field.height));
+  });
+
+  test('second send keeps the first flight until it completes', () {
+    final c = MessageEnterController();
+    c.begin(
+      const MessageEnterFlight(
+        id: 'a',
+        text: '一',
+        stamp: '00:01',
+        from: Rect.fromLTWH(0, 10, 40, 20),
+        to: Rect.fromLTWH(80, 0, 80, 40),
+      ),
+    );
+    c.begin(
+      const MessageEnterFlight(
+        id: 'b',
+        text: '二',
+        stamp: '00:02',
+        from: Rect.fromLTWH(0, 10, 40, 20),
+        to: Rect.fromLTWH(80, 0, 80, 40),
+      ),
+    );
+    expect(c.flights.map((f) => f.id), ['a', 'b']);
+    expect(c.hides('a'), isTrue);
+    c.complete('a');
+    expect(c.hides('a'), isFalse);
+    expect(c.hides('b'), isTrue);
   });
 }
 
