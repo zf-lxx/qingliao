@@ -179,6 +179,7 @@ class _ImageViewerState extends State<ImageViewer>
                     child: Center(
                       child: Hero(
                         tag: widget.tag,
+                        curve: Curves.linear,
                         createRectTween: (begin, end) =>
                             ImageRectTween(begin: begin, end: end),
                         child: Image.memory(widget.bytes, fit: BoxFit.contain),

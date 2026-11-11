@@ -2,7 +2,7 @@
 
 Android 客户端**不打包任何自带正文字体或 emoji 字体**，使用手机系统字体（如小米 MiSans / Noto CJK）与系统彩色表情；避免额外约 24 MB 字体压缩数据。
 
-Linux 桌面截图测试通过 `test/desktop_fonts.dart` 从 box 系统路径加载 Noto CJK 与 Noto Color Emoji，仅在测试进程注册 ChatSans/ChatEmoji 别名。这些文件不在 pubspec、不在 APK、当前客户端目录不保留字体二进制。
+Linux 桌面通过 `lib/ui/theme/desktop_fonts.dart` 从系统路径加载 Noto CJK 与 Noto Color Emoji，注册为 ChatSans/ChatEmoji。测试复用同一加载器。这些文件不在 pubspec、不在 APK；Android 仍用系统字体。
 
 Noto 字体遵循 SIL OFL 1.1；历史引用的许可文本保留在 `assets/fonts/CJK_LICENSE.txt`、`EMOJI_LICENSE.txt`。
 上游：https://github.com/notofonts/noto-cjk 、https://github.com/googlefonts/noto-emoji

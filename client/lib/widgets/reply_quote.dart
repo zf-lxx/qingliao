@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 
 import '../core/chat_engine.dart';
+import '../media/media_cache.dart';
 
 String replyPreview(Json? message) {
   if (message == null || message['deleted'] == true) return '消息已删除';
@@ -95,7 +96,7 @@ class _ReplyQuoteState extends State<ReplyQuote> {
           mediaId != _mediaId &&
           widget.engine.api != null) {
         _mediaId = mediaId;
-        _thumbnail = widget.engine.api!.media(mediaId);
+        _thumbnail = MediaCache.load(widget.engine.api!, mediaId);
       }
       const accent = Color(0xff5dade6);
       return GestureDetector(

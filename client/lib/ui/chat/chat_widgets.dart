@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../cells/bubble_path.dart';
 import '../motion/tg_motion.dart';
 
 /// Original procedural wallpaper, no external bitmap or Telegram artwork.
@@ -68,55 +69,17 @@ class TgWallpaper extends CustomPainter {
 }
 
 class TgBubbleShape extends ShapeBorder {
-  final bool mine, grouped;
-  const TgBubbleShape({required this.mine, this.grouped = false});
+  final bool mine, grouped, media;
+  const TgBubbleShape({
+    required this.mine,
+    this.grouped = false,
+    this.media = false,
+  });
   @override
   EdgeInsetsGeometry get dimensions => const EdgeInsets.all(0);
   @override
-  Path getOuterPath(Rect rect, {TextDirection? textDirection}) {
-    final inset = grouped ? 0.0 : 5.0;
-    final r = Rect.fromLTRB(
-      rect.left + (mine ? 0 : inset),
-      rect.top,
-      rect.right - (mine ? inset : 0),
-      rect.bottom,
-    );
-    final path = Path()
-      ..addRRect(
-        RRect.fromRectAndCorners(
-          r,
-          topLeft: const Radius.circular(17),
-          topRight: const Radius.circular(17),
-          bottomLeft: Radius.circular(!mine && grouped ? 5 : 17),
-          bottomRight: Radius.circular(mine && grouped ? 5 : 17),
-        ),
-      );
-    if (!grouped) {
-      final triangle = Path();
-      if (mine) {
-        triangle.moveTo(r.right - 11, r.bottom - 12);
-        triangle.quadraticBezierTo(
-          r.right - 2,
-          r.bottom - 3,
-          rect.right,
-          r.bottom,
-        );
-        triangle.lineTo(r.right - 16, r.bottom);
-      } else {
-        triangle.moveTo(r.left + 11, r.bottom - 12);
-        triangle.quadraticBezierTo(
-          r.left + 2,
-          r.bottom - 3,
-          rect.left,
-          r.bottom,
-        );
-        triangle.lineTo(r.left + 16, r.bottom);
-      }
-      triangle.close();
-      return Path.combine(PathOperation.union, path, triangle);
-    }
-    return path;
-  }
+  Path getOuterPath(Rect rect, {TextDirection? textDirection}) =>
+      qingliaoBubblePath(rect, mine: mine, grouped: grouped, media: media);
 
   @override
   Path getInnerPath(Rect rect, {TextDirection? textDirection}) =>
@@ -219,14 +182,15 @@ class TgComposerAction extends StatelessWidget {
           duration: const Duration(milliseconds: 220),
           switchInCurve: tgEaseOutQuint,
           switchOutCurve: tgEaseOutQuint,
+          layoutBuilder: (current, previous) => Stack(
+            alignment: Alignment.center,
+            children: [...previous, ?current],
+          ),
           transitionBuilder: (child, a) => FadeTransition(
             opacity: a,
             child: ScaleTransition(
               scale: Tween<double>(begin: .5, end: 1).animate(a),
-              child: RotationTransition(
-                turns: Tween<double>(begin: -.12, end: 0).animate(a),
-                child: child,
-              ),
+              child: child,
             ),
           ),
           child: sending
@@ -251,8 +215,33 @@ class TgComposerAction extends StatelessWidget {
   );
 }
 
+class TgAttachSlot extends StatelessWidget {
+  final bool visible;
+  final Widget child;
+  const TgAttachSlot({super.key, required this.visible, required this.child});
+  @override
+  Widget build(BuildContext context) => ClipRect(
+    child: AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: tgEaseOutQuint,
+      width: visible ? 38 : 0,
+      height: 46,
+      alignment: Alignment.centerRight,
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 220),
+        curve: tgEaseOutQuint,
+        opacity: visible ? 1 : 0,
+        child: SizedBox(
+          width: 38,
+          child: IgnorePointer(ignoring: !visible, child: child),
+        ),
+      ),
+    ),
+  );
+}
+
 class TgSelectableMessage extends StatelessWidget {
-  final bool selecting, selected;
+  final bool selecting, selected, outgoing;
   final VoidCallback onToggle;
   final Widget child;
   const TgSelectableMessage({
@@ -261,70 +250,70 @@ class TgSelectableMessage extends StatelessWidget {
     required this.selected,
     required this.onToggle,
     required this.child,
+    this.outgoing = false,
   });
   @override
-  Widget build(BuildContext context) => GestureDetector(
-    behavior: HitTestBehavior.translucent,
-    onTap: selecting ? onToggle : null,
-    child: AnimatedContainer(
-      duration: const Duration(milliseconds: 200),
-      color: selected
-          ? Theme.of(context).colorScheme.primary.withValues(alpha: .15)
-          : Colors.transparent,
-      child: Row(
-        children: [
-          AnimatedContainer(
-            duration: const Duration(milliseconds: 200),
-            curve: selecting ? Curves.easeOut : Curves.easeIn,
-            width: selecting ? 35 : 0,
-            height: 24,
-            clipBehavior: Clip.hardEdge,
-            decoration: const BoxDecoration(),
-            child: OverflowBox(
-              minWidth: 35,
-              maxWidth: 35,
-              child: AnimatedScale(
-                duration: const Duration(milliseconds: 200),
-                scale: selecting ? 1 : .6,
-                child: Container(
-                  width: 22,
-                  height: 22,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: selected
-                        ? const Color(0xff50ad82)
-                        : Colors.transparent,
-                    border: Border.all(
-                      width: 1.5,
-                      color: selected
-                          ? const Color(0xff50ad82)
-                          : Colors.white38,
-                    ),
-                  ),
-                  child: selected
-                      ? const Icon(
-                          Icons.check_rounded,
-                          size: 16,
-                          color: Colors.white,
-                        )
-                      : null,
+  Widget build(BuildContext context) {
+    // ChatMessageCell: 200ms, EASE_OUT in / EASE_IN out, 35dp. Incoming
+    // rows translate; outgoing stays put. Checkbox at left dp(8-35)+dx.
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: selecting ? onToggle : null,
+      child: TweenAnimationBuilder<double>(
+        duration: const Duration(milliseconds: 200),
+        curve: selecting ? tgEaseOut : tgEaseIn,
+        tween: Tween(begin: 0, end: selecting ? 1 : 0),
+        builder: (context, t, _) {
+          final dx = outgoing ? 0.0 : 35 * t;
+          return Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                child: Transform.translate(
+                  offset: Offset(dx, 0),
+                  child: IgnorePointer(ignoring: selecting, child: child),
                 ),
               ),
-            ),
-          ),
-          Expanded(
-            child: IgnorePointer(
-              ignoring: selecting,
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                child: child,
+              Positioned(
+                left: 8 - 35 + dx,
+                bottom: 8,
+                child: Opacity(
+                  opacity: t,
+                  child: Transform.scale(
+                    scale: .6 + .4 * t,
+                    child: Container(
+                      width: 21,
+                      height: 21,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: selected
+                            ? const Color(0xff50ad82)
+                            : Colors.transparent,
+                        border: Border.all(
+                          width: 1.5,
+                          color: selected
+                              ? const Color(0xff50ad82)
+                              : Colors.white38,
+                        ),
+                      ),
+                      child: selected
+                          ? const Icon(
+                              Icons.check_rounded,
+                              size: 14,
+                              color: Colors.white,
+                            )
+                          : null,
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ),
-        ],
+            ],
+          );
+        },
       ),
-    ),
-  );
+    );
+  }
 }
 
 class TgSideButtons extends StatelessWidget {

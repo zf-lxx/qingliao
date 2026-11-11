@@ -12,6 +12,7 @@
   - glass 模式标题 17sp；非 glass 标题和副标题有横竖屏/平板分支，不能把聊天列表的大标题也统一成 17sp。
 - 下轮继续逐文件核对：`DialogsActivity.java`、`Cells/DialogCell.java`、`ChatActivity.java`、`Cells/ChatMessageCell.java`、`Components/ChatActivityEnterView.java`、`PhotoViewer.java`、`ActionBar/Theme.java`。**未核实数值不得标为“TG 原值”**。
 - 主题色采用 semantic token，浅/深主题各一套；以截图和 `Theme` 当前主题对应值校准，不全局硬编码单一蓝色。
+- 文字气泡外形（2026-11-11 只读 `MessageDrawable.generatePath`）：`SharedConfig.bubbleRadius=17`；近邻/尾巴小圆 `min(6, bubbleRadius)`；padding 2dp；非媒体尾巴从 `right-2.6` 起，侧边内收 8dp，尾巴为 **83° arc**（发出 -83，收到 +83），不是三角形。分组时该侧底角用 6dp、无尾巴。
 
 ## 聊天列表
 - [x] 标题左对齐，连接状态在标题位置替换，动态省略点；没有横幅/额外行（0.1.1）。
@@ -21,7 +22,7 @@
 - [ ] 58dp 头像（截图需求值；待 DialogCell 源码校准），名称/时间/置顶/静音/双勾/未读数对齐。
 - [ ] 明确区分已读双勾、送达、待发时钟、失败；@ 标记独立于普通未读数。
 - [ ] 草稿优先预览、媒体摘要、输入状态；长按与侧滑归档/静音/标记未读。
-- [ ] 悬浮胶囊底部导航：聊天 / 联系人 / 设置 / 个人资料；聊天 badge。
+- [x] 全宽底栏：聊天 / 联系人 / 设置 / 个人资料 + 文字标签；聊天 badge（产品四栏，不是 TG 三栏）。会话行 70dp、联系人 58dp、设置单元格 50dp（DialogCell/UserCell/TextSettingsCell 只读参数）。
 - [ ] Compose FAB + camera mini-FAB；滚动显隐但不覆盖最后一行。
 
 ## 聊天页
@@ -60,25 +61,25 @@
 |---|---|---|---|
 | 连接标题替换 | 220ms；无显式覆盖的 ViewPropertyAnimator 默认 AccelerateDecelerate | `ActionBar/ActionBar.setTitleOverlayText`：新标题 -20dp→0，旧标题 0→+20dp，alpha 同步交叉 | 0.1.1 自行重写；1s 去抖是轻聊策略，不冒称 TG 源值 |
 | 标题省略点 | 第一/二/三点分别延迟 0/150/300ms 淡入，各 300ms；1000ms 时统一淡出 400ms，停 300ms 再循环；DEFAULT | `Components/EllipsizeSpanAnimator`，每点 alpha 0↔255 | 0.1.1 使用该时间表，不再阶梯闪点 |
-| 图片从气泡展开/回收 | openPhoto/closePhoto 主分支 200ms，AnimatorSet 默认曲线；zoom/animateTo 250ms、Decelerate(1.5) | `PhotoViewer.java:17823–30,18486,19383–401`：clipping/rect/scale/translation + 背景和容器 alpha；缩放/回弹改 scale/X/Y | 0.1.1 Hero 200ms；缩放/回弹 250ms，同参数重写。最初 ~250ms 估计已按实际源码修正 |
+| 图片从气泡展开/回收 | openPhoto/closePhoto 主分支 200ms，AnimatorSet **未设 interpolator**（即 AccelerateDecelerate）；zoom/animateTo 250ms、Decelerate(1.5) | `PhotoViewer.java:17808–30`：clipping/rect/scale/translation + 背景和容器 alpha。Flutter Hero 默认 `fastOutSlowIn` 会叠到 RectTween 上，必须把 Hero.curve 设成 linear，只留 ImageRectTween 的 AccelerateDecelerate | `feat/native-render-layer`：Hero.curve=linear + ImageRectTween 200ms AccelerateDecelerate；缩放/回弹仍 250ms Decelerate(1.5) |
 | 图片拖动退出 | 跟手阶段不应缓动；结束后使用 closePhoto/animateTo 分支；阈值须按当前设备/source 分支复核 | `PhotoViewer`：translationY、背景 alpha、回到来源位置 | 0.1.1 已跟手及透明度、返回 Hero；阈值是轻聊值（100dp/850dp·s⁻¹），不声称与 TG 全同 |
-| 打开/关闭聊天 | 当前 `ActionBarLayout` 常规动画有 200ms 分支，预测返回也有 380ms/EASE_OUT_QUINT 分支；不能混成固定 250ms | `ActionBarLayout`：前景 X、innerTranslationX、背景 parallax/阴影；需要进一步定位实际手机常规路径 | 0.2 重做；0.1.0 旧 Flutter route 并非完整 TG 动画 |
-| 边缘滑回及取消 | `animateBackEndAnimation` 完成 max(200×剩余距离/宽,50)ms；取消 max(320×距离/宽,120)ms；预测返回下限分别 380/320ms，EASE_OUT_QUINT | `ActionBarLayout.java:1710–40`，手势期间直接设置位移，松手才补间 | 0.2；需连同背景列表视差和速度判定实现 |
-| 自己发送气泡 | `ChatListItemAnimator.DEFAULT_DURATION=250ms`；TextMessageEnterTransition animator 线性驱动，内部有各自映射 | `TextMessageEnterTransition`、`MessageEnterTransitionContainer`：输入区域文本/气泡 rect 飞向列表位置，scale/alpha/translation 分层；不能只给最终气泡做淡入 | 0.2；当前仅最终气泡进入，不宣称已做飞入 |
+| 打开/关闭聊天 | 当前 `ActionBarLayout` 常规动画有 200ms 分支，预测返回也有 380ms/EASE_OUT_QUINT 分支；不能混成固定 250ms | 前景 X + predictive 缩放已在 `TgPageRoute`（opaque:false, maintainState）。背后页 live + scrim `120*clamp(wOffset/w,0,.8)`。会话列表滚动写入 `scrollOffsets[__home__]`，返回后 jumpTo | `feat/native-render-layer`：滑回时 DialogsPage 仍在栈上；背景不再整页重建 |
+| 边缘滑回及取消 | 经典分支见 `ActionBarLayout.java:1546–1600`。predictive `drawChild` 缩放 `1 - min(0.25, 0.05 * translationX / 56dp)`，完成/取消下限 380/320ms、EASE_OUT_QUINT。`1226–1231,1721–1740` | `TgPageRoute`：经典起步/完成条件 + predictive 缩放与 380/320 下限 |
+| 自己发送气泡 | animator **LinearInterpolator** 250ms。onDraw：`progress`=消息贝塞尔（Y/背景高度），`p2`=EASE_OUT_QUINT 再 `progressX`=EASE_OUT（X），`alphaProgress = p>0.4 ? 1 : p/0.4`。`TextMessageEnterTransition.java:389–390,471–475` | Overlay 按三套进度映射，并从输入框 16sp 缩到气泡 15sp（scaleFrom）。未做 bitmap crossfade / emoji-only 字号表 |
 | 新收到消息插入 | 默认 250ms，ChatListItemAnimator 默认消息曲线；特殊 greeting/sticker 350ms/Overshoot | `recyclerview/ChatListItemAnimator` add/move：translationY/邻居 reflow，部分 X、alpha 分支 | 0.1.1 保留旧 250ms 进入；0.2 补邻居连续 reflow |
 | 会话移到列表顶部 | `DialogsItemAnimator` move/change 180ms；Decelerate 默认（文件 sDefaultInterpolator） | `Components/DialogsItemAnimator`，行 translationX/Y，删/增 alpha、clip | 0.2；不通过重建整个列表假装动画 |
 | 未读徽标数字变化 | `DialogCell`：从无到有 220ms/Overshoot；归零 150ms/DEFAULT；有→有 430ms/DEFAULT | `Cells/DialogCell` countAnimator：背景宽度、scale、数字上下替换/alpha、稳定字位不移动 | 0.2；不能全部套用 NumberTextView 150ms |
 | 选择计数等通用数字 | `NumberTextView` addNumber 分支 180ms，否则 150ms；未覆盖插值器即 Android 默认 | `Components/NumberTextView`：按位 progress -1或1→0，字位上下位移和 alpha | 0.2 |
 | 正在输入三点 | 三点初始延迟 0/150/300ms；每点放大 320ms + 缩小 320ms，到 800ms 重新开始；Decelerate 默认 | `Components/TypingDotsDrawable`：圆点 radius 1.33→2.33→1.33dp；中心间距 6dp，不是普通省略号闪烁 | 0.2；连接省略点和 typing dots 不混用 |
-| 右滑回复 + 震动 | 手势直接跟手，无固定入场时长；回复触发/回弹分支需继续锁定 `ChatActivity` touch callback，不能杜撰统一数值 | `ChatActivity` + 消息 cell：translationX、回复箭头 alpha/scale，达到阈值只震一次（KEYBOARD_TAP 等分支） | 0.1.1 保留轻聊原有回复手势；0.2 精确量测 |
+| 滑动回复 + 震动 | **左滑**（负 X）。上限 `dp(-80)`；开始跟踪：`dx <= -0.4cm` 且 `|dx|/3 > dy`（列表须 SCROLL_STATE_IDLE）。触发回复/震动 `dp(50)`，越过后再回到 50dp 内会重置震动旗标。松手回弹 180ms、`AndroidUtilities.decelerateInterpolator`（Decelerate factor 1）。箭头在 `dx <= -20dp` 出现，圆环进度 `(-x-20)/30`。发出消息箭头 X 乘 0.5。`ChatActivity.java:5067–5137,5270–5297`（2026-11-11 只读） | `feat/native-render-layer` 的 `SwipeReply` 按上述参数独立重写；禁止再使用右滑 48dp 轻聊值 |
 | 长按上下文/反应条 | 通用 `ActionBarPopupWindow` 展开 = 150+16×可见项数 ms，child 项级 180ms/Decelerate；dismiss 默认 150ms。聊天 reaction 专用弹层需额外核对 | `ActionBar/ActionBarPopupWindow`：backScaleY、backAlpha、item -6dp→0/alpha 级联；reaction bar 另有缩放弹出 | 0.2；不能把此菜单参数当成所有反应条的唯一参数 |
 | 反应爆发 | `ReactionsEffectOverlay`：ONLY_MOVE 350ms、其他退出 220ms；avatar particle progress 350ms；主体长度随实际动画资源时长 | `Components/Reactions/ReactionsEffectOverlay`：位置/scale/alpha，粒子独立；禁止复制 TG Lottie/TGS，需原创/许可素材 | 0.2；资源相关部分不得写成固定总时长 |
 | 到底部/@浮钮显隐 | 280ms，AnimatorUtils.DECELERATE_INTERPOLATOR（其库 factor 尚待核，不能虚构 cubic）；附件按钮另 300ms/EASE_OUT_QUINT | `Components/chat/layouts/ChatActivitySideControlsButtonsLayout`：alpha 0→1、scale .7→1、Y 80dp→0；计数显示同280ms | 0.1.1 有按钮和定位功能，显隐还不是完整 TG 补间；0.2 对齐 |
 | 文件夹 tab 指示器 | 320ms，EASE_OUT_QUINT；重排使用 getMoveDuration，不等同于指示器时长 | `Components/FilterTabsView`：indicator rect X/宽度/文字颜色和邻居状态 | 0.2 |
-| mic/camera↔send | `ChatActivityEnterView` runningAnimation 的当前两主分支均 220ms/EASE_OUT_QUINT；周边建议按钮 320ms 独立分支 | `Components/ChatActivityEnterView.java:8137–38,8359–60`：scale/alpha/位置的分层替换，空输入 mic、有文字 send（媒体模式 camera） | 0.2；不要误用录音取消200ms分支 |
-| 键盘/emoji 面板 | 250ms；`AdjustPanLayoutHelper.keyboardInterpolator = ChatListItemAnimator.DEFAULT_INTERPOLATOR`；能拿到平台 IME animation 时优先跟平台 | `ActionBar/AdjustPanLayoutHelper`、`ChatActivityEnterView.panelAnimation`：pan/translationY、面板高度/输入栏/列表联动 | 0.2；不每帧执行大规模布局或 decode 图片 |
+| mic/camera↔send | `ChatActivityEnterView` runningAnimation 的当前两主分支均 220ms/EASE_OUT_QUINT；周边建议按钮 320ms 独立分支 | `Components/ChatActivityEnterView.java:8137–38,8359–60`：scale/alpha/位置的分层替换，空输入 mic、有文字 send（媒体模式 camera） | `feat/native-render-layer`：camera↔send 220ms EASE_OUT_QUINT 叠化；有字时附件 220ms 宽/alpha 收起。空态仍是 camera 不是 mic（录音未做） |
+| 键盘/emoji 面板 | 250ms；`AdjustPanLayoutHelper.keyboardInterpolator = ChatListItemAnimator.DEFAULT_INTERPOLATOR`；能拿到平台 IME animation 时优先跟平台 | `ActionBar/AdjustPanLayoutHelper`、`ChatActivityEnterView.panelAnimation`：pan/translationY、面板高度/输入栏/列表联动 | 表情改为输入栏下方面板（250ms 消息曲线），打开时收键盘；键盘 inset>80 时关面板。高度暂用 max(220, inset)，不是完整 IME 跟手 |
 | 滚动浮动日期标签 | show/hide 各 150ms，未显式覆盖插值器；hide 另受 hideDateDelay 控制 | `ChatActivity.java:14165–208`：floatingDateView alpha；位置随 chatListView translationY，不硬编码延迟 | 0.1.1 只有分天列表日期胶囊；0.2 加滚动浮层 |
-| 多选模式行位移 | 200ms；进入 EASE_OUT、退出 EASE_IN | `Cells/ChatMessageCell.java:18007–32,23533–36`：checkBoxTranslation 0↔35dp，勾选框背景 alpha、全宽选择背景；不要错误地两边消息都同幅移动（上游有 outgoing 分支） | 0.2 |
+| 多选模式行位移 | 200ms；进入 EASE_OUT、退出 EASE_IN | `Cells/ChatMessageCell.java:18007–32,23518–20,17857–58`：checkBoxTranslation 0↔35dp。仅 `!isOutOwner() \|\| hasWideCode` 的行 `updateTranslation`；勾选 21dp，bounds `dp(8-35)+translation`、底边 `bottom-8`。选中换气泡 selected drawable，不是整行半透明罩 | `feat/native-render-layer`：对方气泡右移 35dp、自己的不动；勾选 21dp 钉在行左下；气泡用 outgoingSelected/incomingSelected |
 | 多选顶栏/底栏 | ActionBar show/hideActionMode 200ms，alpha/translation，默认 Android 插值器；具体 floating pill morph 是 screenshot 需求，需测独立布局分支 | `ActionBar/ActionBar.showActionMode/hideActionMode` + `ChatActivity`，选择数量按 NumberTextView；底部输入栏→回复/转发按钮 | 0.2 |
 
 ### 120Hz 性能验收（不能以桌面截图代替）

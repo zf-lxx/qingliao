@@ -59,7 +59,7 @@ class TgFolderTabs extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final style = DefaultTextStyle.of(context).style
-        .copyWith(fontWeight: FontWeight.w600);
+        .copyWith(fontWeight: FontWeight.w600, fontSize: 15);
     final widths = tabs.map((tab) {
       final t = TextPainter(
         text: TextSpan(text: tab.label, style: style),
@@ -83,9 +83,9 @@ class TgFolderTabs extends StatelessWidget {
     final color = Theme.of(context).colorScheme.primary;
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+      padding: const EdgeInsets.fromLTRB(16, 2, 8, 4),
       child: SizedBox(
-        height: 48,
+        height: 36,
         width: widths.fold<double>(0, (a, b) => a + b) + 7 * (tabs.length - 1),
         child: Stack(
           children: [
@@ -93,9 +93,9 @@ class TgFolderTabs extends StatelessWidget {
               duration: const Duration(milliseconds: 320),
               curve: tgEaseOutQuint,
               left: left,
-              top: 1,
+              top: 0,
               width: widths[target],
-              height: 45,
+              height: 34,
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: color.withValues(alpha: .14),
@@ -126,7 +126,7 @@ class TgFolderTabs extends StatelessWidget {
                     ),
                     child: SizedBox(
                       width: widths[i],
-                      height: 48,
+                      height: 36,
                       child: PressableScale(
                         radius: 24,
                         onTap: () => onSelected(tabs[i].id),
@@ -194,9 +194,10 @@ class TgChatRow extends StatelessWidget {
       onLongPress: onLongPress,
       splashFactory: InkRipple.splashFactory,
       child: SizedBox(
-        height: 82,
+        // DialogCell heightDefault = 70dp; avatarStart 11, paddingStart 72.
+        height: 70,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 10, 16, 10),
+          padding: const EdgeInsets.fromLTRB(11, 0, 16, 0),
           child: Row(
             children: [
               avatar,
@@ -214,37 +215,37 @@ class TgChatRow extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontSize: 17,
-                              fontWeight: FontWeight.w700,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                         ),
                         if (muted)
                           const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 4),
+                            padding: EdgeInsets.only(right: 4),
                             child: Icon(
                               Icons.volume_off_rounded,
-                              size: 15,
-                              color: Colors.grey,
+                              size: 14,
+                              color: Color(0xff7d91a5),
                             ),
                           ),
                         if (outgoing)
                           Padding(
-                            padding: const EdgeInsets.only(right: 4),
+                            padding: const EdgeInsets.only(right: 3),
                             child: Icon(
                               read
                                   ? Icons.done_all_rounded
                                   : Icons.done_rounded,
-                              size: 17,
+                              size: 16,
                               color: Theme.of(context).colorScheme.primary,
                             ),
                           ),
                         Text(
                           time,
                           style: TextStyle(
-                            fontSize: 12,
+                            fontSize: 13,
                             color: unread > 0
                                 ? Theme.of(context).colorScheme.primary
-                                : Colors.grey,
+                                : const Color(0xff7d91a5),
                           ),
                         ),
                       ],
@@ -258,12 +259,10 @@ class TgChatRow extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 14,
+                              fontSize: 15,
                               color: draft
-                                  ? Theme.of(context).colorScheme.error
-                                  : Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant,
+                                  ? const Color(0xff5dade6)
+                                  : const Color(0xff7d91a5),
                             ),
                           ),
                         ),
@@ -317,7 +316,7 @@ class _TgReorderItemState extends State<TgReorderItem>
   void didUpdateWidget(TgReorderItem old) {
     super.didUpdateWidget(old);
     if (old.index != widget.index) {
-      _from = ((old.index - widget.index) * 82.0).clamp(-800, 800);
+      _from = ((old.index - widget.index) * 70.0).clamp(-800, 800);
       _controller.forward(from: 0);
     }
   }
@@ -343,6 +342,19 @@ class _TgReorderItemState extends State<TgReorderItem>
 }
 
 class TgBottomNav extends StatelessWidget {
+  static const labels = ['聊天', '联系人', '设置', '个人资料'];
+  static const icons = [
+    Icons.chat_bubble_outline_rounded,
+    Icons.people_outline_rounded,
+    Icons.settings_outlined,
+    Icons.person_outline_rounded,
+  ];
+  static const selectedIcons = [
+    Icons.chat_bubble_rounded,
+    Icons.people_rounded,
+    Icons.settings_rounded,
+    Icons.person_rounded,
+  ];
   final int selected, badge;
   final ValueChanged<int> onChanged;
   const TgBottomNav({
@@ -352,30 +364,20 @@ class TgBottomNav extends StatelessWidget {
     required this.onChanged,
   });
   @override
-  Widget build(BuildContext context) => SafeArea(
-    top: false,
-    minimum: const EdgeInsets.fromLTRB(18, 4, 18, 10),
-    child: TgGlass(
-      child: Container(
-        height: 66,
-        padding: const EdgeInsets.all(5),
-        child: Row(
-          children: [
-            for (var i = 0; i < 4; i++)
-              Expanded(
-                child: PressableScale(
-                  onTap: () => onChanged(i),
-                  radius: 30,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 220),
-                    curve: tgEaseOutQuint,
-                    decoration: BoxDecoration(
-                      color: selected == i
-                          ? Theme.of(context).colorScheme.primary
-                                .withValues(alpha: .13)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(30),
-                    ),
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.primary;
+    return Material(
+      color: TgTokens.card,
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 56,
+          child: Row(
+            children: [
+              for (var i = 0; i < 4; i++)
+                Expanded(
+                  child: InkWell(
+                    onTap: () => onChanged(i),
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -383,39 +385,287 @@ class TgBottomNav extends StatelessWidget {
                           isLabelVisible: i == 0 && badge > 0,
                           label: Text('$badge'),
                           child: Icon(
-                            [
-                              Icons.chat_bubble_rounded,
-                              Icons.contacts_rounded,
-                              Icons.settings_rounded,
-                              Icons.person_rounded,
-                            ][i],
-                            size: 23,
-                            color: selected == i
-                                ? Theme.of(context).colorScheme.primary
-                                : Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
+                            selected == i ? selectedIcons[i] : icons[i],
+                            size: 24,
+                            color: selected == i ? color : TgTokens.muted,
                           ),
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          ['聊天', '联系人', '设置', '个人资料'][i],
+                          labels[i],
                           style: TextStyle(
                             fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: selected == i
-                                ? Theme.of(context).colorScheme.primary
-                                : null,
+                            height: 1.1,
+                            fontWeight: selected == i
+                                ? FontWeight.w600
+                                : FontWeight.w400,
+                            color: selected == i ? color : TgTokens.muted,
                           ),
                         ),
                       ],
                     ),
                   ),
                 ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class TgSectionHeader extends StatelessWidget {
+  final String text;
+  const TgSectionHeader(this.text, {super.key});
+  @override
+  Widget build(BuildContext context) => Container(
+    height: 40,
+    alignment: Alignment.bottomLeft,
+    padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+    color: TgTokens.background,
+    child: Text(
+      text,
+      style: const TextStyle(
+        fontSize: 14,
+        fontWeight: FontWeight.w600,
+        color: TgTokens.accent,
+      ),
+    ),
+  );
+}
+
+class TgSettingsCell extends StatelessWidget {
+  final IconData? icon;
+  final String title;
+  final String? value, subtitle;
+  final bool destructive, divider;
+  final Widget? trailing;
+  final VoidCallback? onTap;
+  const TgSettingsCell({
+    super.key,
+    this.icon,
+    required this.title,
+    this.value,
+    this.subtitle,
+    this.destructive = false,
+    this.divider = true,
+    this.trailing,
+    this.onTap,
+  });
+  @override
+  Widget build(BuildContext context) {
+    final tall = subtitle != null;
+    return Material(
+      color: TgTokens.card,
+      child: InkWell(
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minHeight: tall ? 64 : 50),
+          child: CustomPaint(
+            painter: divider ? const _CellDivider() : null,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: Row(
+                children: [
+                  if (icon != null) ...[
+                    Icon(
+                      icon,
+                      size: 24,
+                      color: destructive
+                          ? const Color(0xffe05c5c)
+                          : TgTokens.accent,
+                    ),
+                    const SizedBox(width: 20),
+                  ],
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          title,
+                          style: TextStyle(
+                            fontSize: 16,
+                            height: 1.2,
+                            color: destructive
+                                ? const Color(0xffe05c5c)
+                                : const Color(0xffeef4fa),
+                          ),
+                        ),
+                        if (subtitle != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 3),
+                            child: Text(
+                              subtitle!,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                height: 1.25,
+                                color: TgTokens.muted,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  if (value != null)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 8),
+                      child: Text(
+                        value!,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          color: TgTokens.muted,
+                        ),
+                      ),
+                    ),
+                  ?trailing,
+                ],
               ),
-          ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class TgCheckCell extends StatelessWidget {
+  final String title, subtitle;
+  final bool value, divider;
+  final ValueChanged<bool>? onChanged;
+  const TgCheckCell({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    required this.value,
+    this.divider = true,
+    this.onChanged,
+  });
+  @override
+  Widget build(BuildContext context) => Material(
+    color: TgTokens.card,
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 64),
+      child: CustomPaint(
+        painter: divider ? const _CellDivider() : null,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 16,
+                        color: Color(0xffeef4fa),
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      subtitle,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: TgTokens.muted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(value: value, onChanged: onChanged),
+            ],
+          ),
         ),
       ),
     ),
   );
+}
+
+class TgUserRow extends StatelessWidget {
+  final Widget avatar;
+  final String name, status;
+  final bool online, divider;
+  final VoidCallback? onTap;
+  const TgUserRow({
+    super.key,
+    required this.avatar,
+    required this.name,
+    required this.status,
+    this.online = false,
+    this.divider = true,
+    this.onTap,
+  });
+  @override
+  Widget build(BuildContext context) => Material(
+    color: TgTokens.card,
+    child: InkWell(
+      onTap: onTap,
+      child: CustomPaint(
+        painter: divider ? const _CellDivider(indent: 72) : null,
+        child: SizedBox(
+          height: 58,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(7, 0, 16, 0),
+            child: Row(
+              children: [
+                avatar,
+                const SizedBox(width: 11),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          height: 1.2,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        status,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 15,
+                          color: online
+                              ? Theme.of(context).colorScheme.primary
+                              : TgTokens.muted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _CellDivider extends CustomPainter {
+  final double indent;
+  const _CellDivider({this.indent = 16});
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawLine(
+      Offset(indent, size.height - 0.5),
+      Offset(size.width, size.height - 0.5),
+      Paint()
+        ..color = const Color(0x14ffffff)
+        ..strokeWidth = 0.5,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_CellDivider old) => indent != old.indent;
 }

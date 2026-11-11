@@ -48,9 +48,14 @@ void main() {
           home: ChatPage(engine: engine, cid: 'chat', title: '测试聊天'),
         ),
       );
-      await tester.pumpAndSettle();
-      await tester.longPress(find.text('测试消息1', findRichText: true));
-      await tester.pumpAndSettle();
+      for (var i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(find.byKey(const Key('native-text-cell')), findsWidgets);
+      await tester.longPress(find.byKey(const Key('entity-text')).first);
+      for (var i = 0; i < 12; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+      }
       expect(find.text('选择'), findsOneWidget);
       await tester.tap(find.text('选择'));
       await tester.pumpAndSettle();
@@ -63,7 +68,7 @@ void main() {
         1,
       );
       await tester.tapAt(
-        tester.getCenter(find.text('测试消息2', findRichText: true)),
+        tester.getCenter(find.byKey(const Key('entity-text')).at(1)),
       );
       await tester.pumpAndSettle();
       expect(find.text('已选择 2 项'), findsOneWidget);
@@ -80,7 +85,7 @@ void main() {
       expect(find.byType(ChatInfoPage), findsOneWidget);
       expect(find.text('媒体'), findsOneWidget);
       expect(find.textContaining('非全部历史统计'), findsOneWidget);
-      await tester.tap(find.byTooltip('返回'));
+      await tester.tap(find.byTooltip('返回').last);
       await tester.pumpAndSettle();
       expect(find.byType(ChatInfoPage), findsNothing);
       expect(tester.takeException(), isNull);
@@ -151,4 +156,97 @@ void main() {
     expect(find.text('菜单内容'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('home tabs use TG row heights and labelled bottom nav', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              TgChatRow(
+                avatar: const SizedBox(width: 52, height: 52),
+                title: '会话',
+                preview: '预览',
+                time: '12:00',
+                unread: 2,
+                onTap: () {},
+                onLongPress: () {},
+              ),
+              TgUserRow(
+                avatar: const SizedBox(width: 46, height: 46),
+                name: '联系人甲',
+                status: '在线',
+                online: true,
+                onTap: () {},
+              ),
+              const TgSettingsCell(title: '隐私与已读回执', value: '开启'),
+              const TgSectionHeader('账号'),
+            ],
+          ),
+          bottomNavigationBar: TgBottomNav(
+            selected: 0,
+            badge: 3,
+            onChanged: (_) {},
+          ),
+        ),
+      ),
+    );
+    expect(tester.getSize(find.byType(TgChatRow)).height, 70);
+    expect(tester.getSize(find.byType(TgUserRow)).height, 58);
+    expect(tester.getSize(find.byType(TgSettingsCell)).height, 50);
+    expect(find.text('聊天'), findsOneWidget);
+    expect(find.text('联系人'), findsOneWidget);
+    expect(find.text('设置'), findsOneWidget);
+    expect(find.text('个人资料'), findsOneWidget);
+    expect(find.text('账号'), findsOneWidget);
+  });
+
+  testWidgets(
+    'composer hides attach when typing and emoji panel replaces sheet',
+    (tester) async {
+      sqfliteFfiInit();
+      final store = (await tester.runAsync(
+        () => LocalStore.open(
+          factory: databaseFactoryFfi,
+          path: inMemoryDatabasePath,
+        ),
+      ))!;
+      final engine = HistoryEngine(store, MemoryVault())
+        ..session = {'user_id': 'me'}
+        ..online = true;
+      engine.dialogs['chat'] = {'id': 'chat', 'kind': 'direct'};
+      await tester.pumpWidget(
+        MaterialApp(
+          home: ChatPage(engine: engine, cid: 'chat', title: '测试聊天'),
+        ),
+      );
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 40));
+      }
+      expect(find.byTooltip('添加图片'), findsOneWidget);
+      await tester.enterText(find.byKey(const Key('composer')), '有字');
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 230));
+      expect(tester.getSize(find.byType(TgAttachSlot)).width, lessThan(8));
+      await tester.tap(find.byTooltip('表情'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 260));
+      expect(find.text('😀'), findsOneWidget);
+      await tester.tap(find.text('😀'), warnIfMissed: false);
+      await tester.pump();
+      expect(
+        tester
+            .widget<TextField>(find.byType(TextField).first)
+            .controller!
+            .text,
+        contains('😀'),
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+      await engine.shutdown();
+      await tester.runAsync(store.close);
+    },
+  );
 }

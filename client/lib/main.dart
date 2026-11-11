@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/foundation.dart';
@@ -14,12 +15,21 @@ import 'core/storage.dart';
 import 'core/push.dart';
 import 'widgets/connection_title.dart';
 import 'widgets/reply_quote.dart';
-import 'widgets/image_viewer.dart';
 import 'ui/motion/tg_motion.dart';
 import 'ui/home/chat_list_widgets.dart';
 import 'ui/chat/chat_widgets.dart';
 import 'ui/theme/tg_tokens.dart';
+import 'ui/theme/desktop_fonts.dart';
 import 'ui/profile/chat_info_page.dart';
+import 'cells/link_preview_card.dart';
+import 'cells/message_layout.dart';
+import 'cells/text_message_cell.dart';
+import 'cells/row_height.dart';
+import 'compositor/insert_shift.dart';
+import 'compositor/message_enter_transition.dart';
+import 'compositor/swipe_reply.dart';
+import 'media/chat_image.dart';
+import 'media/media_cache.dart';
 
 const bg = TgTokens.background,
     panel = TgTokens.card,
@@ -36,6 +46,7 @@ List<String>? get emojiFallback =>
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await loadDesktopFonts();
   final engine = ChatEngine(await LocalStore.open(), SecureSessionVault());
   try {
     await engine.boot();
@@ -424,7 +435,7 @@ class Avatar extends StatelessWidget {
       backgroundColor: colors[name.hashCode.abs() % colors.length],
       child: Text(
         name.isEmpty ? '聊' : String.fromCharCode(name.runes.first),
-        style: const TextStyle(color: Colors.white, fontSize: 20),
+        style: TextStyle(color: Colors.white, fontSize: radius >= 28 ? 20 : 18),
       ),
     );
   }
@@ -440,99 +451,211 @@ class DialogsPage extends StatefulWidget {
 class _DialogsPageState extends State<DialogsPage> {
   int nav = 0;
   bool showCompose = true;
+  final homeScroll = ScrollController();
+  bool _homeRestored = false;
+
+  @override
+  void initState() {
+    super.initState();
+    homeScroll.addListener(() {
+      if (!homeScroll.hasClients) return;
+      e.scrollOffsets[ChatEngine.homeScrollKey] = homeScroll.offset;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) => _restoreHomeScroll());
+  }
+
+  void _restoreHomeScroll() {
+    if (_homeRestored || !homeScroll.hasClients) return;
+    final saved = e.scrollOffsets[ChatEngine.homeScrollKey];
+    if (saved == null) {
+      _homeRestored = true;
+      return;
+    }
+    homeScroll.jumpTo(saved.clamp(0.0, homeScroll.position.maxScrollExtent));
+    _homeRestored = true;
+  }
+
+  Future<void> _openChat(Widget page) {
+    if (homeScroll.hasClients) {
+      unawaited(e.rememberHomeScroll(homeScroll.offset));
+    }
+    return Navigator.push(context, chatRoute(page));
+  }
+
+  @override
+  void dispose() {
+    if (homeScroll.hasClients) {
+      unawaited(e.rememberHomeScroll(homeScroll.offset));
+    }
+    homeScroll.dispose();
+    super.dispose();
+  }
+
   void newChat() => Navigator.push(context, chatRoute(NewChatPage(engine: e)));
   void profile() => Navigator.push(context, chatRoute(ProfilePage(engine: e)));
-  Widget navigationBody() {
-    final users = e.users.values.where((u) => u['id'] != e.uid).toList();
-    if (nav == 1) {
-      return ListView(
+  Future<void> openDirect(Json u) async {
+    await guard(context, () async {
+      final d = obj(
+        await e.api!.call('POST', '/conversations', {
+          'kind': 'direct',
+          'member_ids': [u['id']],
+        }),
+      );
+      await e.refreshDialogs();
+      if (!mounted) return;
+      await _openChat(
+        ChatPage(
+          engine: e,
+          cid: d['id'],
+          title: u['display_name'] ?? u['handle'] ?? '用户',
+        ),
+      );
+    });
+  }
+
+  Widget contactsBody() {
+    final users = e.users.values.where((u) => u['id'] != e.uid).toList()
+      ..sort(
+        (a, b) => '${a['display_name'] ?? a['handle']}'.compareTo(
+          '${b['display_name'] ?? b['handle']}',
+        ),
+      );
+    return ColoredBox(
+      color: bg,
+      child: ListView(
         children: [
-          ListTile(
-            leading: const Icon(Icons.person_add_alt_1_rounded),
-            title: const Text('搜索用户 / 新建群聊'),
+          TgSettingsCell(
+            icon: Icons.person_add_alt_1_rounded,
+            title: '添加联系人',
             onTap: newChat,
           ),
-          const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text('最近联系人', style: TextStyle(color: muted)),
+          TgSettingsCell(
+            icon: Icons.groups_rounded,
+            title: '新建群聊',
+            divider: false,
+            onTap: newChat,
           ),
-          for (final u in users)
-            ListTile(
-              leading: Avatar(u['display_name'] ?? u['handle'] ?? '?'),
-              title: Text(u['display_name'] ?? u['handle'] ?? '用户'),
-              subtitle: Text('@${u['handle'] ?? ''}'),
-              onTap: () => guard(context, () async {
-                final d = obj(
-                  await e.api!.call('POST', '/conversations', {
-                    'kind': 'direct',
-                    'member_ids': [u['id']],
-                  }),
-                );
-                await e.refreshDialogs();
-                if (!mounted) return;
-                Navigator.push(
-                  context,
-                  chatRoute(
-                    ChatPage(
-                      engine: e,
-                      cid: d['id'],
-                      title: u['display_name'] ?? u['handle'] ?? '用户',
-                    ),
-                  ),
-                );
-              }),
-            ),
+          const TgSectionHeader('最近联系人'),
           if (users.isEmpty)
             const Padding(
-              padding: EdgeInsets.all(24),
-              child: Text('搜索用户名开始新的聊天，常用联系人会显示在这里。'),
-            ),
+              padding: EdgeInsets.fromLTRB(16, 24, 16, 24),
+              child: Text(
+                '搜索用户名开始新的聊天，常用联系人会显示在这里。',
+                style: TextStyle(color: muted),
+              ),
+            )
+          else
+            for (var i = 0; i < users.length; i++)
+              TgUserRow(
+                avatar: Avatar(
+                  users[i]['display_name'] ?? users[i]['handle'] ?? '?',
+                  radius: 23,
+                ),
+                name: users[i]['display_name'] ?? users[i]['handle'] ?? '用户',
+                status: users[i]['online'] == true
+                    ? '在线'
+                    : '@${users[i]['handle'] ?? ''}',
+                online: users[i]['online'] == true,
+                divider: i != users.length - 1,
+                onTap: () => openDirect(users[i]),
+              ),
         ],
-      );
-    }
-    return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-      children: [
-        Center(
-          child: Avatar(
-            e.me['display_name'] ?? e.me['handle'] ?? '我',
-            radius: 44,
-          ),
-        ),
-        const SizedBox(height: 16),
-        Center(
-          child: Text(
-            e.me['display_name'] ?? e.me['handle'] ?? '我',
-            style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w700),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Center(
-          child: Text(
-            '@${e.me['handle'] ?? ''}',
-            style: const TextStyle(color: muted),
-          ),
-        ),
-        const SizedBox(height: 24),
-        ListTile(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          tileColor: Theme.of(context).colorScheme.surfaceContainer,
-          leading: const Icon(Icons.manage_accounts_rounded),
-          title: Text(nav == 2 ? '账号、隐私与回执' : '编辑个人资料'),
-          subtitle: const Text('昵称、简介、已读回执和退出登录'),
-          trailing: const Icon(Icons.chevron_right_rounded),
-          onTap: profile,
-        ),
-        const SizedBox(height: 20),
-        const ListTile(
-          leading: Icon(Icons.info_outline_rounded),
-          title: Text('轻聊 0.2.0'),
-          subtitle: Text('界面重绘 · 自主实现的 Telegram 风格动效'),
-        ),
-      ],
+      ),
     );
+  }
+
+  Widget settingsBody() {
+    return ColoredBox(
+      color: bg,
+      child: ListView(
+        children: [
+          const TgSectionHeader('账号'),
+          TgSettingsCell(
+            icon: Icons.person_rounded,
+            title: e.me['display_name'] ?? e.me['handle'] ?? '我',
+            subtitle: '@${e.me['handle'] ?? ''}',
+            onTap: profile,
+          ),
+          TgSettingsCell(
+            icon: Icons.lock_outline_rounded,
+            title: '隐私与已读回执',
+            value: e.privacy['read_receipts_enabled'] == true ? '开启' : '关闭',
+            onTap: profile,
+          ),
+          TgSettingsCell(
+            icon: Icons.dns_outlined,
+            title: '服务器',
+            value: Uri.tryParse('${e.session?['server'] ?? ''}')?.host ?? '',
+            divider: false,
+            onTap: profile,
+          ),
+          const TgSectionHeader('关于'),
+          const TgSettingsCell(
+            icon: Icons.info_outline_rounded,
+            title: '轻聊 0.2.0',
+            subtitle: '独立协议客户端 · 非 Telegram',
+            divider: false,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget meBody() {
+    return ColoredBox(
+      color: bg,
+      child: ListView(
+        children: [
+          const SizedBox(height: 18),
+          Center(
+            child: Avatar(
+              e.me['display_name'] ?? e.me['handle'] ?? '我',
+              radius: 44,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Center(
+            child: Text(
+              e.me['display_name'] ?? e.me['handle'] ?? '我',
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Center(
+            child: Text(
+              '@${e.me['handle'] ?? ''}',
+              style: const TextStyle(color: muted, fontSize: 15),
+            ),
+          ),
+          const SizedBox(height: 18),
+          TgSettingsCell(
+            icon: Icons.edit_outlined,
+            title: '编辑资料',
+            onTap: profile,
+          ),
+          TgSettingsCell(
+            icon: Icons.alternate_email_rounded,
+            title: '用户名',
+            value: '@${e.me['handle'] ?? ''}',
+            divider: false,
+            onTap: profile,
+          ),
+          const TgSectionHeader('设置'),
+          TgSettingsCell(
+            icon: Icons.settings_outlined,
+            title: '账号、隐私与回执',
+            onTap: profile,
+            divider: false,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget navigationBody() {
+    if (nav == 1) return contactsBody();
+    if (nav == 2) return settingsBody();
+    return meBody();
   }
 
   ChatEngine get e => widget.engine;
@@ -684,283 +807,306 @@ class _DialogsPageState extends State<DialogsPage> {
       final archivedCount = e.dialogs.values
           .where((d) => d['archived'] == true)
           .length;
-      final list = Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
-            child: TextField(
-              onChanged: (v) => setState(() => query = v),
-              decoration: InputDecoration(
-                hintText: '搜索会话',
-                prefixIcon: const Icon(Icons.search_rounded),
-                isDense: true,
-                filled: true,
-                fillColor: Theme.of(context).colorScheme.surfaceContainerHighest
-                    .withValues(alpha: .6),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(28),
-                  borderSide: BorderSide.none,
+      Widget dialogRow(int i) {
+        final d = items[i],
+            last = obj(d['last_message']),
+            draft = obj(d['draft']);
+        final name = title(d);
+        final unread = number(d['unread_count']);
+        final isMuted =
+            number(d['notification_mute_until']) >
+            DateTime.now().millisecondsSinceEpoch ~/ 1000;
+        final preview = draft['text']?.toString().isNotEmpty == true
+            ? '草稿：${draft['text']}'
+            : last['deleted'] == true
+            ? '消息已撤回'
+            : last['kind'] == 'image'
+            ? '图片 ${last['text'] ?? ''}'
+            : last['text'] ?? '开始对话';
+        return TgReorderItem(
+          key: ValueKey(d['id']),
+          index: i,
+          child: Dismissible(
+            key: ValueKey('swipe-${d['id']}'),
+            confirmDismiss: (direction) async {
+              await guard(
+                context,
+                () => e.state(
+                  d['id'],
+                  direction == DismissDirection.endToStart
+                      ? {'archived': d['archived'] != true}
+                      : {'manual_unread': d['manual_unread'] != true},
                 ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(28),
-                  borderSide: BorderSide.none,
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(28),
-                  borderSide: BorderSide(color: blue.withValues(alpha: .5)),
-                ),
+              );
+              return false;
+            },
+            background: Container(
+              alignment: Alignment.centerLeft,
+              padding: const EdgeInsets.only(left: 24),
+              color: blue,
+              child: const Icon(
+                Icons.mark_chat_unread_rounded,
+                color: Colors.white,
               ),
             ),
-          ),
-          Row(
-            children: [
-              Expanded(
-                child: TgFolderTabs(
-                  selected: folder,
-                  onSelected: (id) => setState(() => folder = id),
-                  tabs: [
-                    (id: '', label: '全部', count: e.badge),
-                    for (final f in e.folders)
-                      (
-                        id: '${f['id']}',
-                        label: '${f['name']}',
-                        count: number(f['unread_count']),
-                      ),
-                  ],
-                ),
-              ),
-              TgIconButton(
-                tooltip: '新建文件夹',
-                icon: Icons.add_rounded,
-                onPressed: makeFolder,
-                size: 38,
-              ),
-              const SizedBox(width: 8),
-            ],
-          ),
-          if (archivedCount > 0 || archived)
-            ListTile(
-              dense: true,
-              leading: Container(
-                width: 48,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(22),
-                ),
-                child: Icon(
-                  archived ? Icons.inbox_rounded : Icons.archive_rounded,
-                  color: muted,
-                ),
-              ),
-              title: Text(
-                archived ? '返回全部聊天' : '已归档的聊天',
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              trailing: Text(
-                '$archivedCount',
-                style: const TextStyle(color: muted),
-              ),
-              onTap: () => setState(() => archived = !archived),
-            ),
-          Expanded(
-            child: NotificationListener<ScrollUpdateNotification>(
-              onNotification: (n) {
-                if (n.depth == 0 && (n.scrollDelta ?? 0).abs() > 3) {
-                  final v = (n.scrollDelta ?? 0) < 0;
-                  if (v != showCompose) setState(() => showCompose = v);
-                }
-                return false;
-              },
-              child: RefreshIndicator(
-                onRefresh: e.refreshDialogs,
-                child: items.isEmpty
-                    ? ListView(
-                        children: const [
-                          SizedBox(height: 100),
-                          Icon(Icons.forum_outlined, size: 50, color: muted),
-                          SizedBox(height: 18),
-                          Center(
-                            child: Text(
-                              '还没有对话，点右下角开始聊天',
-                              style: TextStyle(color: muted),
-                            ),
-                          ),
-                        ],
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.only(bottom: 88),
-                        itemCount: items.length,
-                        findChildIndexCallback: (key) {
-                          final i = items.indexWhere(
-                            (d) => ValueKey(d['id']) == key,
-                          );
-                          return i < 0 ? null : i;
-                        },
-                        itemBuilder: (context, i) {
-                          final d = items[i],
-                              last = obj(d['last_message']),
-                              draft = obj(d['draft']);
-                          final name = title(d);
-                          final unread = number(d['unread_count']);
-                          final isMuted =
-                              number(d['notification_mute_until']) >
-                              DateTime.now().millisecondsSinceEpoch ~/ 1000;
-                          final preview =
-                              draft['text']?.toString().isNotEmpty == true
-                              ? '草稿：${draft['text']}'
-                              : last['deleted'] == true
-                              ? '消息已撤回'
-                              : last['kind'] == 'image'
-                              ? '图片 ${last['text'] ?? ''}'
-                              : last['text'] ?? '开始对话';
-                          return TgReorderItem(
-                            key: ValueKey(d['id']),
-                            index: i,
-                            child: Dismissible(
-                              key: ValueKey('swipe-${d['id']}'),
-                              confirmDismiss: (direction) async {
-                                await guard(
-                                  context,
-                                  () => e.state(
-                                    d['id'],
-                                    direction == DismissDirection.endToStart
-                                        ? {'archived': d['archived'] != true}
-                                        : {
-                                            'manual_unread':
-                                                d['manual_unread'] != true,
-                                          },
-                                  ),
-                                );
-                                return false;
-                              },
-                              background: Container(
-                                alignment: Alignment.centerLeft,
-                                padding: const EdgeInsets.only(left: 24),
-                                color: blue,
-                                child: const Icon(
-                                  Icons.mark_chat_unread_rounded,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              secondaryBackground: Container(
-                                alignment: Alignment.centerRight,
-                                padding: const EdgeInsets.only(right: 24),
-                                color: const Color(0xff7793a5),
-                                child: Icon(
-                                  archived
-                                      ? Icons.unarchive_rounded
-                                      : Icons.archive_rounded,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              child: TgChatRow(
-                                avatar: Avatar(name, radius: 29),
-                                title: name,
-                                preview: preview,
-                                time: last.isEmpty
-                                    ? ''
-                                    : shortTime(last['created_at']),
-                                unread: unread > 0
-                                    ? unread
-                                    : d['manual_unread'] == true
-                                    ? 1
-                                    : 0,
-                                muted: isMuted,
-                                pinned: number(d['pinned_order']) > 0,
-                                mention: number(d['unread_mention_count']) > 0,
-                                outgoing:
-                                    last['sender_id'] == e.uid && draft.isEmpty,
-                                read:
-                                    d['read_receipts_visible'] == true &&
-                                    number(d['last_message_read_count']) > 0,
-                                draft: draft.isNotEmpty,
-                                onLongPress: () => menu(d),
-                                onTap: () => Navigator.push(
-                                  context,
-                                  chatRoute(
-                                    ChatPage(
-                                      engine: e,
-                                      cid: d['id'],
-                                      title: name,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
+            secondaryBackground: Container(
+              alignment: Alignment.centerRight,
+              padding: const EdgeInsets.only(right: 24),
+              color: const Color(0xff7793a5),
+              child: Icon(
+                archived ? Icons.unarchive_rounded : Icons.archive_rounded,
+                color: Colors.white,
               ),
             ),
+            child: TgChatRow(
+              avatar: Avatar(name, radius: 26),
+              title: name,
+              preview: preview,
+              time: last.isEmpty ? '' : shortTime(last['created_at']),
+              unread: unread > 0
+                  ? unread
+                  : d['manual_unread'] == true
+                  ? 1
+                  : 0,
+              muted: isMuted,
+              pinned: number(d['pinned_order']) > 0,
+              mention: number(d['unread_mention_count']) > 0,
+              outgoing: last['sender_id'] == e.uid && draft.isEmpty,
+              read:
+                  d['read_receipts_visible'] == true &&
+                  number(d['last_message_read_count']) > 0,
+              draft: draft.isNotEmpty,
+              onLongPress: () => menu(d),
+              onTap: () =>
+                  _openChat(ChatPage(engine: e, cid: d['id'], title: name)),
+            ),
           ),
-        ],
-      );
-      return Scaffold(
-        extendBody: true,
-        appBar: AppBar(
-          toolbarHeight: 78,
-          centerTitle: false,
-          titleSpacing: 20,
-          title: nav == 0
-              ? ConnectionTitle(
+        );
+      }
+
+      final list = NotificationListener<ScrollUpdateNotification>(
+        onNotification: (n) {
+          if (n.depth == 0 && (n.scrollDelta ?? 0).abs() > 3) {
+            final v = (n.scrollDelta ?? 0) < 0;
+            if (v != showCompose) setState(() => showCompose = v);
+          }
+          return false;
+        },
+        child: RefreshIndicator(
+          onRefresh: e.refreshDialogs,
+          child: CustomScrollView(
+            controller: homeScroll,
+            slivers: [
+              SliverAppBar(
+                pinned: false,
+                floating: false,
+                backgroundColor: bg,
+                elevation: 0,
+                toolbarHeight: 52,
+                titleSpacing: 16,
+                title: ConnectionTitle(
                   engine: e,
                   title: archived ? '归档聊天' : '轻聊',
                   style: const TextStyle(
-                    fontSize: 34,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -.8,
-                  ),
-                )
-              : Text(
-                  ['轻聊', '联系人', '设置', '个人资料'][nav],
-                  style: const TextStyle(
-                    fontSize: 30,
-                    fontWeight: FontWeight.w800,
+                    fontSize: 26,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -.4,
                   ),
                 ),
-          actions: [
-            TgIconButton(
-              tooltip: '个人资料',
-              icon: Icons.person_outline_rounded,
-              onPressed: profile,
-            ),
-            const SizedBox(width: 12),
-          ],
+              ),
+              SliverPersistentHeader(
+                pinned: true,
+                delegate: _SearchHeader(
+                  child: ColoredBox(
+                    color: bg,
+                    child: Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                          child: SizedBox(
+                            height: 40,
+                            child: TextField(
+                              onChanged: (v) => setState(() => query = v),
+                              style: const TextStyle(fontSize: 16),
+                              decoration: InputDecoration(
+                                hintText: '搜索',
+                                prefixIcon: const Icon(
+                                  Icons.search_rounded,
+                                  size: 22,
+                                ),
+                                isDense: true,
+                                filled: true,
+                                fillColor: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest
+                                    .withValues(alpha: .55),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  vertical: 8,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(22),
+                                  borderSide: BorderSide.none,
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(22),
+                                  borderSide: BorderSide.none,
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(22),
+                                  borderSide: BorderSide(
+                                    color: blue.withValues(alpha: .5),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TgFolderTabs(
+                                selected: folder,
+                                onSelected: (id) => setState(() => folder = id),
+                                tabs: [
+                                  (id: '', label: '全部', count: e.badge),
+                                  for (final f in e.folders)
+                                    (
+                                      id: '${f['id']}',
+                                      label: '${f['name']}',
+                                      count: number(f['unread_count']),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            TgIconButton(
+                              tooltip: '新建文件夹',
+                              icon: Icons.add_rounded,
+                              onPressed: makeFolder,
+                              size: 32,
+                            ),
+                            const SizedBox(width: 6),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              if (archivedCount > 0 || archived)
+                SliverToBoxAdapter(
+                  child: TgChatRow(
+                    avatar: CircleAvatar(
+                      radius: 26,
+                      backgroundColor: Theme.of(context)
+                          .colorScheme
+                          .surfaceContainerHighest,
+                      child: Icon(
+                        archived ? Icons.inbox_rounded : Icons.archive_rounded,
+                        color: muted,
+                      ),
+                    ),
+                    title: archived ? '返回全部聊天' : '已归档的聊天',
+                    preview: archivedCount > 0 ? '$archivedCount 个对话' : '',
+                    time: '',
+                    unread: 0,
+                    onTap: () => setState(() => archived = !archived),
+                    onLongPress: () {},
+                  ),
+                ),
+              if (items.isEmpty)
+                const SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(
+                    child: Text(
+                      '还没有对话，点右下角开始聊天',
+                      style: TextStyle(color: muted),
+                    ),
+                  ),
+                )
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.only(bottom: 72),
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, i) => dialogRow(i),
+                      childCount: items.length,
+                      findChildIndexCallback: (key) {
+                        final i = items.indexWhere(
+                          (d) => ValueKey(d['id']) == key,
+                        );
+                        return i < 0 ? null : i;
+                      },
+                    ),
+                  ),
+                ),
+            ],
+          ),
         ),
+      );
+      return Scaffold(
+        backgroundColor: bg,
+        appBar: nav == 0
+            ? null
+            : AppBar(
+                backgroundColor: panel,
+                elevation: 0,
+                toolbarHeight: 56,
+                centerTitle: false,
+                titleSpacing: 16,
+                title: Text(
+                  ['轻聊', '联系人', '设置', '个人资料'][nav],
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                actions: nav == 1
+                    ? [
+                        IconButton(
+                          tooltip: '搜索用户',
+                          onPressed: newChat,
+                          icon: const Icon(Icons.search_rounded),
+                        ),
+                      ]
+                    : null,
+              ),
         body: nav == 0 ? list : navigationBody(),
         bottomNavigationBar: TgBottomNav(
           selected: nav,
           badge: e.badge,
           onChanged: (i) => setState(() => nav = i),
         ),
+        floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
         floatingActionButton: nav == 0
-            ? AnimatedSlide(
-                duration: const Duration(milliseconds: 280),
-                curve: Curves.decelerate,
-                offset: showCompose ? Offset.zero : const Offset(0, 1.6),
-                child: AnimatedScale(
+            ? Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: AnimatedSlide(
                   duration: const Duration(milliseconds: 280),
-                  scale: showCompose ? 1 : .7,
-                  child: AnimatedOpacity(
+                  curve: Curves.decelerate,
+                  offset: showCompose ? Offset.zero : const Offset(0, 1.6),
+                  child: AnimatedScale(
                     duration: const Duration(milliseconds: 280),
-                    opacity: showCompose ? 1 : 0,
-                    child: IgnorePointer(
-                      ignoring: !showCompose,
-                      child: PressableScale(
-                        onTap: newChat,
-                        tooltip: '新建聊天',
-                        child: Container(
-                          width: 60,
-                          height: 60,
-                          decoration: const BoxDecoration(
-                            color: blue,
-                            shape: BoxShape.circle,
-                          ),
-                          child: const Icon(
-                            Icons.edit_rounded,
-                            color: Colors.white,
-                            size: 26,
+                    scale: showCompose ? 1 : .7,
+                    child: AnimatedOpacity(
+                      duration: const Duration(milliseconds: 280),
+                      opacity: showCompose ? 1 : 0,
+                      child: IgnorePointer(
+                        ignoring: !showCompose,
+                        child: PressableScale(
+                          onTap: newChat,
+                          tooltip: '新建聊天',
+                          child: Container(
+                            width: 52,
+                            height: 52,
+                            decoration: const BoxDecoration(
+                              color: blue,
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(
+                              Icons.edit_rounded,
+                              color: Colors.white,
+                              size: 26,
+                            ),
                           ),
                         ),
                       ),
@@ -972,6 +1118,23 @@ class _DialogsPageState extends State<DialogsPage> {
       );
     },
   );
+}
+
+class _SearchHeader extends SliverPersistentHeaderDelegate {
+  final Widget child;
+  const _SearchHeader({required this.child});
+  @override
+  double get minExtent => 92;
+  @override
+  double get maxExtent => 92;
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) => child;
+  @override
+  bool shouldRebuild(covariant _SearchHeader old) => child != old.child;
 }
 
 class ChatPage extends StatefulWidget {
@@ -1047,49 +1210,53 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     });
   }
 
-  void emojiPanel() => showTgSheet(
-    context: context,
-    builder: (c) => Padding(
-      padding: const EdgeInsets.all(24),
-      child: Wrap(
-        spacing: 16,
-        runSpacing: 16,
-        children: [
-          for (final emoji in [
-            '😀',
-            '😂',
-            '🥰',
-            '👍',
-            '❤️',
-            '🎉',
-            '🔥',
-            '🥹',
-            '🙏',
-            '👌',
-            '✨',
-            '💯',
-          ])
-            PressableScale(
-              onTap: () {
-                input.text += emoji;
-                input.selection = TextSelection.collapsed(
-                  offset: input.text.length,
-                );
-                textChanged(input.text);
-                Navigator.pop(c);
-              },
-              child: Text(
-                emoji,
-                style: TextStyle(
-                  fontSize: 30,
-                  fontFamilyFallback: emojiFallback,
-                ),
-              ),
-            ),
-        ],
-      ),
-    ),
-  );
+  static const _quickEmoji = [
+    '😀',
+    '😂',
+    '🥰',
+    '👍',
+    '❤️',
+    '🎉',
+    '🔥',
+    '🥹',
+    '🙏',
+    '👌',
+    '✨',
+    '💯',
+  ];
+
+  void insertEmoji(String emoji) {
+    final sel = input.selection;
+    final text = input.text;
+    final start = sel.isValid ? sel.start : text.length;
+    final end = sel.isValid ? sel.end : text.length;
+    input.value = TextEditingValue(
+      text: text.replaceRange(start, end, emoji),
+      selection: TextSelection.collapsed(offset: start + emoji.length),
+    );
+    textChanged(input.text);
+  }
+
+  Future<void> toggleEmoji() async {
+    if (_emojiOpen) {
+      setState(() => _emojiOpen = false);
+      _focus.requestFocus();
+      return;
+    }
+    FocusManager.instance.primaryFocus?.unfocus();
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    if (mounted) setState(() => _emojiOpen = true);
+  }
+
+  @override
+  void didChangeMetrics() {
+    super.didChangeMetrics();
+    final inset = View.of(context).viewInsets.bottom;
+    if (inset > 80 && _emojiOpen) {
+      setState(() => _emojiOpen = false);
+    }
+  }
+
   void localSearch() {
     String q = '';
     showTgSheet(
@@ -1413,6 +1580,14 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
 
   ChatEngine get e => widget.engine;
   final input = TextEditingController(), scroll = ScrollController();
+  final composerKey = GlobalKey();
+  final _focus = FocusNode();
+  bool _emojiOpen = false;
+  final _shellKey = GlobalKey();
+  final _enter = MessageEnterController();
+  int _insertGen = 0, _lastCount = 0;
+  String? _lastTail;
+  double _insertAmount = 56;
   Json? reply, editing;
   Timer? draftTimer, _highlightTimer;
   final Map<String, GlobalKey> _messageKeys = {};
@@ -1476,6 +1651,11 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
           await jumpToReply(first['id'], highlight: false);
           return;
         }
+      }
+      final saved = e.scrollOffsets[widget.cid];
+      if (saved != null && scroll.hasClients) {
+        scroll.jumpTo(saved.clamp(0.0, scroll.position.maxScrollExtent));
+        return;
       }
       bottom(false);
     } catch (_) {
@@ -1550,17 +1730,21 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
       older = false,
       draftDirty = false;
   String? loadError;
-  int _lastLength = 0;
   @override
   void initState() {
     super.initState();
     _entryReadSeq = number(e.dialogs[widget.cid]?['last_read_seq']);
     _hadUnread = number(e.dialogs[widget.cid]?['unread_count']) > 0;
     scroll.addListener(() {
-      final up = scroll.hasClients && scroll.position.extentAfter > 160;
+      if (!scroll.hasClients) return;
+      final up = scroll.position.extentAfter > 160;
       if (mounted && up != _scrolledUp) setState(() => _scrolledUp = up);
+      e.scrollOffsets[widget.cid] = scroll.offset;
     });
     WidgetsBinding.instance.addObserver(this);
+    _focus.addListener(() {
+      if (_focus.hasFocus && _emojiOpen) setState(() => _emojiOpen = false);
+    });
     input.text = obj(e.dialogs[widget.cid]?['draft'])['text'] ?? '';
     e.addListener(changed);
     unawaited(load());
@@ -1613,10 +1797,22 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
 
   void changed() {
     if (!mounted) return;
-    final count = e.history(widget.cid).length;
+    final items = e.history(widget.cid);
+    final count = items.length;
+    final tail = items.isEmpty ? null : items.last['id'] as String?;
     final nearBottom = !scroll.hasClients || scroll.position.extentAfter < 130;
+    final grew = count > _lastCount && tail != null && tail != _lastTail;
+    if (grew && !_positioning && _initialPositioned) {
+      _insertGen++;
+      _insertAmount = estimateRowHeight(
+        items.last,
+        MediaQuery.sizeOf(context).width,
+      );
+    }
+    _lastCount = count;
+    _lastTail = tail;
     setState(() {});
-    if (count != _lastLength &&
+    if (grew &&
         nearBottom &&
         !older &&
         !loading &&
@@ -1624,8 +1820,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
         _initialPositioned) {
       bottom();
     }
-    _lastLength = count;
-    if (!loading && nearBottom) markRead();
+    if (!loading && nearBottom && !_hadUnread) markRead();
   }
 
   void bottom([bool animated = true]) {
@@ -1640,7 +1835,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
       } else {
         scroll.jumpTo(scroll.position.maxScrollExtent);
       }
-      markRead();
+      if (!_hadUnread) markRead();
     });
   }
 
@@ -1693,15 +1888,58 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     }
   }
 
+  Rect? _composerRect() {
+    final box = composerKey.currentContext?.findRenderObject() as RenderBox?;
+    final shell = _shellKey.currentContext?.findRenderObject() as RenderBox?;
+    if (box == null || shell == null || !box.hasSize || !shell.hasSize) {
+      return null;
+    }
+    final origin = box.localToGlobal(Offset.zero, ancestor: shell);
+    return origin & box.size;
+  }
+
+  void _beginEnter(String id, String text, {Rect? from}) {
+    if (skipEnterAnimation(context) || reply != null) return;
+    final field = from ?? _composerRect();
+    if (field == null) return;
+    final stamp = TextMessageCell.formatStamp(
+      DateTime.now().toUtc().toIso8601String(),
+    );
+    final start = composerTextRect(field: field, text: text);
+    final to = estimateOutgoingRect(
+      viewport: MediaQuery.sizeOf(context),
+      viewPadding: MediaQuery.paddingOf(context),
+      text: text,
+      stamp: stamp,
+      composerTop: field.top,
+    );
+    setState(
+      () => _enter.begin(
+        MessageEnterFlight(
+          id: id,
+          text: text,
+          stamp: stamp,
+          from: start,
+          to: to,
+          fromTextSize: composerTextSize,
+        ),
+      ),
+    );
+  }
+
   Future<void> send() async {
     if (input.text.trim().isEmpty || sending) return;
     final text = input.text.trim(), editingNow = editing;
+    final from = _composerRect();
     setState(() => sending = true);
     await guard(context, () async {
       if (editingNow != null) {
         await e.edit(editingNow, text);
       } else {
-        await e.send(widget.cid, text, replyTo: reply?['id'] ?? '');
+        final id = await e.send(widget.cid, text, replyTo: reply?['id'] ?? '');
+        if (mounted && editingNow == null) {
+          _beginEnter(id, text, from: from);
+        }
       }
       if (!mounted) return;
       draftTimer?.cancel();
@@ -1875,7 +2113,11 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     e.removeListener(changed);
     draftTimer?.cancel();
     if (draftDirty) unawaited(flushDraft());
+    if (scroll.hasClients) {
+      unawaited(e.rememberScroll(widget.cid, scroll.offset));
+    }
     input.dispose();
+    _focus.dispose();
     _highlightTimer?.cancel();
     scroll.dispose();
     super.dispose();
@@ -1894,6 +2136,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
       child: Scaffold(
         appBar: header(typing),
         body: Stack(
+          key: _shellKey,
           children: [
             Positioned.fill(
               child: RepaintBoundary(
@@ -2083,43 +2326,63 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                                                 ),
                                               ),
                                             ),
-                                          AnimatedContainer(
-                                            duration: const Duration(
-                                              milliseconds: 200,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: _highlighted == m['id']
-                                                  ? blue.withValues(alpha: .18)
-                                                  : Colors.transparent,
-                                              borderRadius:
-                                                  BorderRadius.circular(14),
-                                            ),
-                                            child: TgSelectableMessage(
-                                              selecting: selection.isNotEmpty,
-                                              selected: selection.contains(
-                                                m['id'],
+                                          InsertShift(
+                                            generation: _insertGen,
+                                            amount: _insertAmount,
+                                            enabled:
+                                                m['id'] != history.last['id'],
+                                            child: AnimatedContainer(
+                                              duration: const Duration(
+                                                milliseconds: 200,
                                               ),
-                                              onToggle: () => toggleSelected(m),
-                                              child: Bubble(
-                                                engine: e,
-                                                onQuoteTap: jumpToReply,
-                                                message: m,
-                                                grouped:
-                                                    index < history.length &&
-                                                    history[index]['sender_id'] ==
-                                                        m['sender_id'] &&
-                                                    messageDay(
-                                                          history[index],
-                                                        ) ==
-                                                        messageDay(m),
-                                                onLongPress: () => actions(m),
-                                                onReply: () {
-                                                  setState(() {
-                                                    reply = m;
-                                                    editing = null;
-                                                  });
-                                                  textChanged(input.text);
-                                                },
+                                              decoration: BoxDecoration(
+                                                color: _highlighted == m['id']
+                                                    ? blue.withValues(
+                                                        alpha: .18,
+                                                      )
+                                                    : Colors.transparent,
+                                                borderRadius:
+                                                    BorderRadius.circular(14),
+                                              ),
+                                              child: TgSelectableMessage(
+                                                selecting: selection.isNotEmpty,
+                                                selected: selection.contains(
+                                                  m['id'],
+                                                ),
+                                                outgoing:
+                                                    m['sender_id'] == e.uid,
+                                                onToggle: () =>
+                                                    toggleSelected(m),
+                                                child: Opacity(
+                                                  opacity: _enter.hides(m['id'])
+                                                      ? 0
+                                                      : 1,
+                                                  child: Bubble(
+                                                    engine: e,
+                                                    onQuoteTap: jumpToReply,
+                                                    selected: selection
+                                                        .contains(m['id']),
+                                                    message: m,
+                                                    grouped:
+                                                        index <
+                                                            history.length &&
+                                                        history[index]['sender_id'] ==
+                                                            m['sender_id'] &&
+                                                        messageDay(
+                                                              history[index],
+                                                            ) ==
+                                                            messageDay(m),
+                                                    onLongPress: () =>
+                                                        actions(m),
+                                                    onReply: () {
+                                                      setState(() {
+                                                        reply = m;
+                                                        editing = null;
+                                                      });
+                                                      textChanged(input.text);
+                                                    },
+                                                  ),
+                                                ),
                                               ),
                                             ),
                                           ),
@@ -2176,8 +2439,16 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                                   ),
                                   child: FloatingActionButton.small(
                                     heroTag: 'bottom',
-                                    tooltip: '回到最新消息',
-                                    onPressed: bottom,
+                                    tooltip: _unreadId == null
+                                        ? '回到最新消息'
+                                        : '有未读消息',
+                                    onPressed: () {
+                                      setState(() {
+                                        _hadUnread = false;
+                                        _unreadId = null;
+                                      });
+                                      bottom();
+                                    },
                                     child: const Icon(
                                       Icons.keyboard_arrow_down,
                                     ),
@@ -2257,42 +2528,54 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
                             TgIconButton(
-                              tooltip: '表情',
-                              icon: Icons.emoji_emotions_outlined,
-                              onPressed: removed ? null : emojiPanel,
+                              tooltip: _emojiOpen ? '键盘' : '表情',
+                              icon: _emojiOpen
+                                  ? Icons.keyboard_alt_outlined
+                                  : Icons.emoji_emotions_outlined,
+                              onPressed: removed ? null : toggleEmoji,
                               color: muted,
                               size: 40,
                             ),
                             Expanded(
-                              child: TextField(
+                              child: KeyedSubtree(
                                 key: const Key('composer'),
-                                controller: input,
-                                minLines: 1,
-                                maxLines: 5,
-                                maxLength: 4000,
-                                enabled: !removed,
-                                onChanged: textChanged,
-                                decoration: const InputDecoration(
-                                  hintText: '消息',
-                                  counterText: '',
-                                  contentPadding: EdgeInsets.symmetric(
-                                    vertical: 13,
-                                    horizontal: 5,
+                                child: TextField(
+                                  key: composerKey,
+                                  controller: input,
+                                  focusNode: _focus,
+                                  minLines: 1,
+                                  maxLines: 5,
+                                  maxLength: 4000,
+                                  enabled: !removed,
+                                  onChanged: textChanged,
+                                  decoration: const InputDecoration(
+                                    hintText: '消息',
+                                    counterText: '',
+                                    contentPadding: EdgeInsets.symmetric(
+                                      vertical: 13,
+                                      horizontal: 5,
+                                    ),
+                                    filled: false,
+                                    border: InputBorder.none,
                                   ),
-                                  filled: false,
-                                  border: InputBorder.none,
+                                  onSubmitted: (_) => send(),
                                 ),
-                                onSubmitted: (_) => send(),
                               ),
                             ),
-                            TgIconButton(
-                              tooltip: '添加图片',
-                              icon: Icons.attach_file_rounded,
-                              onPressed: sending || removed || !e.online
-                                  ? null
-                                  : image,
-                              color: muted,
-                              size: 38,
+                            ValueListenableBuilder<TextEditingValue>(
+                              valueListenable: input,
+                              builder: (context, value, _) => TgAttachSlot(
+                                visible: value.text.trim().isEmpty,
+                                child: TgIconButton(
+                                  tooltip: '添加图片',
+                                  icon: Icons.attach_file_rounded,
+                                  onPressed: sending || removed || !e.online
+                                      ? null
+                                      : image,
+                                  color: muted,
+                                  size: 38,
+                                ),
+                              ),
                             ),
                             const SizedBox(width: 4),
                             ValueListenableBuilder<TextEditingValue>(
@@ -2312,9 +2595,67 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                         ),
                       ),
                     ),
+                  AnimatedSize(
+                    duration: const Duration(milliseconds: 250),
+                    curve: tgMessageCurve,
+                    child: _emojiOpen
+                        ? ColoredBox(
+                            color: panel,
+                            child: SafeArea(
+                              top: false,
+                              child: SizedBox(
+                                height: math.max(
+                                  220,
+                                  MediaQuery.viewInsetsOf(context).bottom,
+                                ),
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    12,
+                                    8,
+                                    12,
+                                    8,
+                                  ),
+                                  child: Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    children: [
+                                      for (final emoji in _quickEmoji)
+                                        SizedBox(
+                                          width: 40,
+                                          height: 40,
+                                          child: PressableScale(
+                                            onTap: () => insertEmoji(emoji),
+                                            child: Center(
+                                              child: Text(
+                                                emoji,
+                                                style: TextStyle(
+                                                  fontSize: 26,
+                                                  fontFamilyFallback:
+                                                      emojiFallback,
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          )
+                        : const SizedBox.shrink(),
+                  ),
                 ],
               ),
             ),
+            for (final flight in _enter.flights)
+              MessageEnterLayer(
+                key: ValueKey(flight.id),
+                flight: flight,
+                onDone: () {
+                  if (mounted) setState(() => _enter.complete(flight.id));
+                },
+              ),
           ],
         ),
       ),
@@ -2403,7 +2744,7 @@ class Bubble extends StatefulWidget {
   final Json message;
   final VoidCallback onLongPress, onReply;
   final ValueChanged<String>? onQuoteTap;
-  final bool grouped;
+  final bool grouped, selected;
   const Bubble({
     super.key,
     required this.engine,
@@ -2412,6 +2753,7 @@ class Bubble extends StatefulWidget {
     required this.onReply,
     this.onQuoteTap,
     this.grouped = false,
+    this.selected = false,
   });
   @override
   State<Bubble> createState() => _BubbleState();
@@ -2419,7 +2761,6 @@ class Bubble extends StatefulWidget {
 
 class _BubbleState extends State<Bubble> {
   bool reveal = false;
-  double dx = 0;
   Future<Uint8List>? image;
   String? mediaId;
   @override
@@ -2429,6 +2770,122 @@ class _BubbleState extends State<Bubble> {
       image = null;
       mediaId = null;
     }
+  }
+
+  Widget nativeTextCell(
+    Json m,
+    ChatEngine e,
+    bool mine,
+    bool pending,
+    bool failed,
+    String stamp,
+  ) {
+    return TextMessageCell(
+      text: m['text'] ?? '',
+      stamp: stamp,
+      mine: mine,
+      grouped: widget.grouped,
+      pending: pending,
+      failed: failed,
+      read:
+          mine &&
+          e.dialogs[m['conversation_id']]?['kind'] == 'direct' &&
+          e.isRead(m),
+      edited: m['edited_at']?.toString().isNotEmpty == true,
+      groupReads:
+          mine &&
+              !pending &&
+              e.dialogs[m['conversation_id']]?['kind'] == 'group' &&
+              e.receipts
+          ? e.readPositions[m['conversation_id']]?.entries
+                .where(
+                  (r) =>
+                      r.key != e.uid &&
+                      r.value != null &&
+                      r.value! >= number(m['conversation_seq']),
+                )
+                .length
+          : null,
+      selected: widget.selected,
+      reactions: (e.reactions[m['id']] ?? []).isEmpty
+          ? null
+          : reactionChips(e.reactions[m['id']] ?? [], m),
+      quote: hasReplyQuote(m)
+          ? ReplyQuote(
+              engine: e,
+              conversationId: m['conversation_id'] ?? '',
+              messageId: m['reply_to'] as String,
+              parent: e.cachedMessage(m['reply_to'] as String),
+              before: number(m['conversation_seq']),
+              onTap: () => widget.onQuoteTap?.call(m['reply_to'] as String),
+            )
+          : null,
+      preview: m['link_preview'] == null
+          ? null
+          : LinkPreviewCard(
+              preview: obj(m['link_preview']),
+              onTap: () {
+                final url = obj(m['link_preview'])['url']?.toString() ?? '';
+                if (url.isNotEmpty) openLink(context, url);
+              },
+            ),
+      textWidget: EntityText(
+        text: m['text'] ?? '',
+        entities: objects(m['entities']),
+        revealed: reveal,
+        onReveal: () => setState(() => reveal = true),
+        suffix: WidgetSpan(
+          alignment: PlaceholderAlignment.baseline,
+          baseline: TextBaseline.alphabetic,
+          child: StampSuffix(
+            width: StampLayout.measure(
+              text: m['text'] ?? '',
+              stamp: stamp,
+              viewportWidth: MediaQuery.sizeOf(context).width,
+              grouped: widget.grouped,
+              checksWidth: mine ? 18 : 0,
+            ).suffixWidth,
+            height: 1,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget reactionChips(List<Json> reactions, Json m) {
+    return Wrap(
+      spacing: 5,
+      children: [
+        for (final emoji in reactions.map((r) => r['emoji']).toSet())
+          InkWell(
+            onTap: () => guard(context, () => widget.engine.react(m, emoji)),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: bg.withValues(alpha: .4),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '$emoji ${reactions.where((r) => r['emoji'] == emoji).length}',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontFamilyFallback: emojiFallback,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _interactive({required Widget child}) {
+    return SwipeReply(
+      enabled: widget.message['deleted'] != true,
+      outgoing: widget.message['sender_id'] == widget.engine.uid,
+      onReply: widget.onReply,
+      onLongPress: widget.onLongPress,
+      child: child,
+    );
   }
 
   @override
@@ -2455,40 +2912,42 @@ class _BubbleState extends State<Bubble> {
         m['kind'] == 'image' &&
         id != null &&
         id.isNotEmpty &&
-        id != mediaId) {
+        id != mediaId &&
+        e.api != null) {
       mediaId = id;
-      image = e.api!.media(id);
+      image = MediaCache.load(e.api!, id);
     }
+    if (usesNativeTextCell(m)) {
+      return _interactive(
+        child: nativeTextCell(m, e, mine, pending, failed, stamp),
+      );
+    }
+    final enter = pending && mine;
     return TweenAnimationBuilder<double>(
       duration: Duration(
-        milliseconds: MediaQuery.disableAnimationsOf(context) ? 1 : 250,
+        milliseconds: MediaQuery.disableAnimationsOf(context) || !enter
+            ? 1
+            : 250,
       ),
       curve: sendCurve,
-      tween: Tween(begin: 0, end: 1),
+      tween: Tween(begin: enter ? 0 : 1, end: 1),
       builder: (context, value, child) => Opacity(
         opacity: value,
         child: Transform.translate(
           offset: Offset(
-            dx + (mine && pending ? 20 * (1 - value) : 0),
-            (mine && pending ? 92 : 18) * (1 - value),
+            enter ? 20 * (1 - value) : 0,
+            enter ? 92 * (1 - value) : 0,
           ),
           child: child,
         ),
       ),
       child: Align(
         alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-        child: GestureDetector(
+        child: SwipeReply(
+          enabled: !deleted,
+          outgoing: mine,
+          onReply: widget.onReply,
           onLongPress: widget.onLongPress,
-          onHorizontalDragUpdate: (d) {
-            if (!deleted) setState(() => dx = (dx + d.delta.dx).clamp(0, 70));
-          },
-          onHorizontalDragEnd: (_) {
-            if (dx > 48) {
-              HapticFeedback.selectionClick();
-              widget.onReply();
-            }
-            setState(() => dx = 0);
-          },
           child: AnimatedSize(
             duration: const Duration(milliseconds: 250),
             curve: slideCurve,
@@ -2500,7 +2959,11 @@ class _BubbleState extends State<Bubble> {
               padding: const EdgeInsets.fromLTRB(12, 9, 10, 6),
               decoration: ShapeDecoration(
                 color: mine ? const Color(0xff24445e) : panel,
-                shape: TgBubbleShape(mine: mine, grouped: widget.grouped),
+                shape: TgBubbleShape(
+                  mine: mine,
+                  grouped: widget.grouped,
+                  media: m['kind'] == 'image',
+                ),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -2528,46 +2991,17 @@ class _BubbleState extends State<Bubble> {
                       onTap: () => widget.onQuoteTap?.call(replyId),
                     ),
                   if (!deleted && image != null)
-                    FutureBuilder<Uint8List>(
-                      future: image,
-                      builder: (_, s) => s.hasData
-                          ? GestureDetector(
-                              onTap: () => openImageViewer(
-                                context,
-                                bytes: s.data!,
-                                tag: 'media-${m['id']}',
-                                sender:
-                                    e.users[m['sender_id']]?['display_name'] ??
-                                    (mine ? '你' : '成员'),
-                                time: '$stamp · 中国标准时间 UTC+8',
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: Hero(
-                                  tag: 'media-${m['id']}',
-                                  createRectTween: (begin, end) =>
-                                      ImageRectTween(begin: begin, end: end),
-                                  child: Image.memory(
-                                    s.data!,
-                                    width: 240,
-                                    fit: BoxFit.contain,
-                                  ),
-                                ),
-                              ),
-                            )
-                          : Padding(
-                              padding: const EdgeInsets.all(25),
-                              child: s.hasError
-                                  ? TextButton(
-                                      onPressed: () => setState(
-                                        () => image = e.api!.media(mediaId!),
-                                      ),
-                                      child: const Text('图片加载失败，重试'),
-                                    )
-                                  : const CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                            ),
+                    ChatImage(
+                      future: image!,
+                      heroTag: 'media-${m['id']}',
+                      sender:
+                          e.users[m['sender_id']]?['display_name'] ??
+                          (mine ? '你' : '成员'),
+                      time: '$stamp · 中国标准时间 UTC+8',
+                      onRetry: () => setState(() {
+                        MediaCache.forget(mediaId!);
+                        image = MediaCache.load(e.api!, mediaId!);
+                      }),
                     ),
                   if (deleted)
                     const Text(
@@ -2585,27 +3019,13 @@ class _BubbleState extends State<Bubble> {
                       onReveal: () => setState(() => reveal = true),
                     ),
                   if (!deleted && m['link_preview'] != null)
-                    Container(
-                      margin: const EdgeInsets.only(top: 8),
-                      padding: const EdgeInsets.only(left: 8),
-                      decoration: const BoxDecoration(
-                        border: Border(left: BorderSide(color: blue, width: 2)),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            obj(m['link_preview'])['title'] ?? '',
-                            style: const TextStyle(color: blue),
-                          ),
-                          Text(
-                            obj(m['link_preview'])['description'] ?? '',
-                            maxLines: 3,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 12, color: muted),
-                          ),
-                        ],
-                      ),
+                    LinkPreviewCard(
+                      preview: obj(m['link_preview']),
+                      onTap: () {
+                        final url =
+                            obj(m['link_preview'])['url']?.toString() ?? '';
+                        if (url.isNotEmpty) openLink(context, url);
+                      },
                     ),
                   if (!deleted && reactions.isNotEmpty)
                     Padding(
@@ -2737,12 +3157,14 @@ class EntityText extends StatefulWidget {
   final List<Json> entities;
   final bool revealed;
   final VoidCallback onReveal;
+  final InlineSpan? suffix;
   const EntityText({
     super.key,
     required this.text,
     required this.entities,
     required this.revealed,
     required this.onReveal,
+    this.suffix,
   });
   @override
   State<EntityText> createState() => _EntityTextState();
@@ -2785,7 +3207,7 @@ class _EntityTextState extends State<EntityText> {
       points.add(number(e['offset']) + number(e['length']));
     }
     final breaks = points.toList()..sort();
-    final spans = <TextSpan>[];
+    final spans = <InlineSpan>[];
     for (var i = 0; i + 1 < breaks.length; i++) {
       final start = breaks[i], end = breaks[i + 1];
       var style = TextStyle(
@@ -2829,6 +3251,8 @@ class _EntityTextState extends State<EntityText> {
           case 'mention':
           case 'hashtag':
             style = style.copyWith(color: blue);
+          case 'custom_emoji':
+            style = style.copyWith(fontSize: 18, height: 1.2);
           case 'spoiler':
             spoiler = !widget.revealed;
         }
@@ -2860,7 +3284,11 @@ class _EntityTextState extends State<EntityText> {
         ),
       );
     }
-    return RichText(text: TextSpan(children: spans));
+    if (widget.suffix != null) spans.add(widget.suffix!);
+    return RichText(
+      key: const Key('entity-text'),
+      text: TextSpan(children: spans),
+    );
   }
 }
 
@@ -3034,127 +3462,136 @@ class _ProfilePageState extends State<ProfilePage> {
     super.dispose();
   }
 
+  Future<void> saveName() => guard(context, () async {
+    await e.api!.call('PATCH', '/me', {
+      'display_name': name.text.trim(),
+      'avatar_media_id': e.me['avatar_media_id'] ?? '',
+    });
+    e.me = obj(await e.api!.call('GET', '/me'));
+    await e.persist();
+    if (mounted) setState(() {});
+  });
+
+  Future<void> setReceipts(bool v) => guard(context, () async {
+    await e.api!.call('PUT', '/me/privacy', {'read_receipts_enabled': v});
+    e.privacy = obj(await e.api!.call('GET', '/me/privacy'));
+    e.readPositions.clear();
+    await e.refreshDialogs();
+    if (mounted) setState(() {});
+  });
+
+  Future<void> confirmLogout({bool localOnly = false}) async {
+    final ok = await showTgDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('退出当前账号？'),
+        content: const Text('将撤销本设备登录并清理本地缓存，未发送的消息也会清除。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('退出'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && mounted) {
+      await guard(context, () async {
+        await e.logout(localOnly: localOnly);
+        if (mounted) Navigator.pop(context);
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: e,
     builder: (_, _) => Scaffold(
-      appBar: AppBar(title: const Text('个人资料与设置')),
+      backgroundColor: bg,
+      appBar: AppBar(backgroundColor: panel, title: const Text('编辑资料')),
       body: ListView(
-        padding: const EdgeInsets.all(20),
         children: [
-          Center(child: Avatar(e.me['display_name'] ?? '我', radius: 34)),
-          const SizedBox(height: 12),
+          const SizedBox(height: 18),
+          Center(child: Avatar(e.me['display_name'] ?? '我', radius: 44)),
+          const SizedBox(height: 8),
           Center(
             child: Text(
               '@${e.me['handle'] ?? ''}',
-              style: const TextStyle(color: muted),
+              style: const TextStyle(color: muted, fontSize: 15),
             ),
           ),
-          const SizedBox(height: 24),
-          TextField(
-            controller: name,
-            decoration: const InputDecoration(labelText: '昵称'),
-          ),
-          TextButton(
-            onPressed: () => guard(context, () async {
-              await e.api!.call('PATCH', '/me', {
-                'display_name': name.text.trim(),
-                'avatar_media_id': e.me['avatar_media_id'] ?? '',
-              });
-              e.me = obj(await e.api!.call('GET', '/me'));
-              await e.persist();
-              if (mounted) setState(() {});
-            }),
-            child: const Text('保存昵称'),
-          ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('公开已读回执'),
-            subtitle: Text(
-              e.privacy['global_read_receipts_enabled'] == false
-                  ? '管理员已全局关闭回执'
-                  : '互惠设置：关闭后也看不到他人的已读',
+          const TgSectionHeader('资料'),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: TextField(
+              controller: name,
+              onSubmitted: (_) => saveName(),
+              decoration: const InputDecoration(labelText: '昵称', isDense: true),
             ),
+          ),
+          TgSettingsCell(
+            icon: Icons.check_rounded,
+            title: '保存昵称',
+            divider: false,
+            onTap: saveName,
+          ),
+          const TgSectionHeader('隐私'),
+          TgCheckCell(
+            title: '公开已读回执',
+            subtitle: e.privacy['global_read_receipts_enabled'] == false
+                ? '管理员已全局关闭回执'
+                : '互惠设置：关闭后也看不到他人的已读',
             value: e.privacy['read_receipts_enabled'] == true,
-            onChanged: (v) => guard(context, () async {
-              await e.api!.call('PUT', '/me/privacy', {
-                'read_receipts_enabled': v,
-              });
-              e.privacy = obj(await e.api!.call('GET', '/me/privacy'));
-              e.readPositions.clear();
-              await e.refreshDialogs();
-              if (mounted) setState(() {});
-            }),
+            divider: false,
+            onChanged: setReceipts,
           ),
-          const Divider(),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('连接诊断'),
-            subtitle: Text(
-              '${e.connectionStage}${e.lastConnectionFailure.isEmpty ? '' : '\n最近失败：${e.lastConnectionFailure}'}',
+          const TgSectionHeader('连接'),
+          TgSettingsCell(
+            icon: Icons.wifi_tethering_rounded,
+            title: '连接诊断',
+            subtitle:
+                '${e.connectionStage}${e.lastConnectionFailure.isEmpty ? '' : '\n最近失败：${e.lastConnectionFailure}'}',
+          ),
+          TgSettingsCell(
+            icon: Icons.notifications_off_outlined,
+            title: '推送通道：未启用',
+            subtitle:
+                plan?.explanation ??
+                'Mi Push / FCM 为适配接口，未接入 SDK。无后台常驻服务，不承诺锁屏送达。',
+            divider: false,
+          ),
+          const TgSectionHeader('安全边界'),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: Text(
+              '这是一款独立的云端聊天应用。没有端到端加密；服务器可访问消息内容。登录令牌保存在 Android 加密存储；消息缓存位于应用私有 SQLite。所有时间显示为中国标准时间 CST（UTC+8）。',
+              style: TextStyle(color: muted, height: 1.6, fontSize: 13),
             ),
           ),
-          const ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text('推送通道：未启用'),
-            subtitle: Text(
-              'Mi Push / FCM 为适配接口，未接入 SDK、凭据和通知权限。无后台常驻服务，不承诺锁屏送达。',
-            ),
+          TgSettingsCell(
+            title: e.session?['server'] ?? '',
+            subtitle: '当前服务器',
+            divider: false,
           ),
-          if (plan != null)
-            Text(
-              plan!.explanation,
-              style: const TextStyle(color: muted, fontSize: 12),
-            ),
-          const SizedBox(height: 18),
-          const Text('安全边界', style: TextStyle(color: blue)),
-          const SizedBox(height: 8),
-          const Text(
-            '这是一款独立的云端聊天应用。\n没有端到端加密；服务器可访问消息内容。\n登录令牌保存在 Android 加密存储；消息缓存位于应用私有 SQLite（未额外加密）。\n所有时间显示为中国标准时间 CST（UTC+8）。',
-            style: TextStyle(color: muted, height: 1.7, fontSize: 13),
-          ),
-          const SizedBox(height: 20),
-          Text(
-            e.session?['server'] ?? '',
-            style: const TextStyle(color: muted, fontSize: 12),
-          ),
-          const SizedBox(height: 20),
-          OutlinedButton(
-            onPressed: () async {
-              final ok = await showTgDialog<bool>(
-                context: context,
-                builder: (c) => AlertDialog(
-                  title: const Text('退出当前账号？'),
-                  content: const Text('将撤销本设备登录并清理本地缓存，未发送的消息也会清除。'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(c),
-                      child: const Text('取消'),
-                    ),
-                    TextButton(
-                      onPressed: () => Navigator.pop(c, true),
-                      child: const Text('退出'),
-                    ),
-                  ],
-                ),
-              );
-              if (ok == true && context.mounted) {
-                await guard(context, () async {
-                  await e.logout();
-                  if (context.mounted) Navigator.pop(context);
-                });
-              }
-            },
-            child: const Text('退出登录'),
+          const TgSectionHeader('账号'),
+          TgSettingsCell(
+            icon: Icons.logout_rounded,
+            title: '退出登录',
+            destructive: true,
+            divider: false,
+            onTap: confirmLogout,
           ),
           if (e.suspended && e.error.contains('登录'))
-            TextButton(
-              onPressed: () => guard(context, () async {
-                await e.logout(localOnly: true);
-                if (context.mounted) Navigator.pop(context);
-              }),
-              child: const Text('登录失效：仅清除本地会话'),
+            TgSettingsCell(
+              title: '登录失效：仅清除本地会话',
+              destructive: true,
+              divider: false,
+              onTap: () => confirmLogout(localOnly: true),
             ),
+          const SizedBox(height: 24),
         ],
       ),
     ),
