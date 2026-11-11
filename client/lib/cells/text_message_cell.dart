@@ -42,15 +42,28 @@ class TextMessageCell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final checks = mine ? 18.0 : 0.0;
+    final stampLabel = edited ? '已编辑 · $stamp' : stamp;
+    final theme = Theme.of(context);
+    final bodyFamily = theme.textTheme.bodyMedium?.fontFamily;
+    final bodyFallback = theme.textTheme.bodyMedium?.fontFamilyFallback;
+    final stampTextStyle = StampLayout.stampStyle.copyWith(
+      fontFamily: bodyFamily,
+      fontFamilyFallback: bodyFallback,
+    );
+    final bodyTextStyle = StampLayout.textStyle.copyWith(
+      fontFamily: bodyFamily,
+      fontFamilyFallback: bodyFallback,
+    );
     final layout = StampLayout.measure(
       text: text,
-      stamp: edited ? '已编辑 $stamp' : stamp,
+      stamp: stampLabel,
       viewportWidth: MediaQuery.sizeOf(context).width,
       grouped: grouped,
       checksWidth: checks,
       headerHeight: (quote == null ? 0 : 44) + (reactions == null ? 0 : 28),
+      textStyle: bodyTextStyle,
+      stampStyle: stampTextStyle,
     );
-    final stampLabel = edited ? '已编辑 · $stamp' : stamp;
     final innerW =
         layout.bubbleWidth -
         StampLayout.padLeft -
@@ -97,9 +110,7 @@ class TextMessageCell extends StatelessWidget {
                           Text(
                             text,
                             key: const Key('native-text'),
-                            style: StampLayout.textStyle.copyWith(
-                              fontFamily: defaultTargetPlatformFont(context),
-                            ),
+                            style: bodyTextStyle,
                           ),
                     ),
                   ),
@@ -118,7 +129,7 @@ class TextMessageCell extends StatelessWidget {
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(stampLabel, style: StampLayout.stampStyle),
+                        Text(stampLabel, style: stampTextStyle),
                         if (mine) ...[
                           const SizedBox(width: 3),
                           Icon(
@@ -136,10 +147,7 @@ class TextMessageCell extends StatelessWidget {
                           ),
                         ],
                         if (groupReads != null)
-                          Text(
-                            ' $groupReads人已读',
-                            style: StampLayout.stampStyle,
-                          ),
+                          Text(' $groupReads人已读', style: stampTextStyle),
                       ],
                     ),
                   ),

@@ -18,6 +18,7 @@ import 'ui/motion/tg_motion.dart';
 import 'ui/home/chat_list_widgets.dart';
 import 'ui/chat/chat_widgets.dart';
 import 'ui/theme/tg_tokens.dart';
+import 'ui/theme/desktop_fonts.dart';
 import 'ui/profile/chat_info_page.dart';
 import 'cells/message_layout.dart';
 import 'cells/text_message_cell.dart';
@@ -43,6 +44,7 @@ List<String>? get emojiFallback =>
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await loadDesktopFonts();
   final engine = ChatEngine(await LocalStore.open(), SecureSessionVault());
   try {
     await engine.boot();
