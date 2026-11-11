@@ -8,7 +8,10 @@ abstract final class TgTokens {
       card = Color(0xff17212b),
       raised = Color(0xff22303d),
       accent = Color(0xff5dade6),
-      muted = Color(0xff7d91a5);
+      muted = Color(0xff7d91a5),
+      outgoing = Color(0xff24445e),
+      outgoingSelected = Color(0xff2b5278),
+      incomingSelected = Color(0xff1e2c3a);
   static const pill = 100.0,
       cardRadius = 20.0,
       smallRadius = 11.0,

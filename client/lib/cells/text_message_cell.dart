@@ -4,16 +4,15 @@ import '../ui/theme/tg_tokens.dart';
 import 'bubble_path.dart';
 import 'message_layout.dart';
 
-const _outgoing = Color(0xff24445e);
-
 /// Text bubble with the timestamp (and ticks) reserved on the last line via a
 /// trailing spacer, then painted in the corner. Incoming/outgoing still use
 /// the shared path. Not a copy of Telegram source.
 class TextMessageCell extends StatelessWidget {
   final String text, stamp;
   final bool mine, grouped, pending, failed, read, edited;
-  final Widget? textWidget, quote;
+  final Widget? textWidget, quote, reactions;
   final int? groupReads;
+  final bool selected;
   const TextMessageCell({
     super.key,
     required this.text,
@@ -24,8 +23,10 @@ class TextMessageCell extends StatelessWidget {
     this.failed = false,
     this.read = false,
     this.edited = false,
+    this.selected = false,
     this.textWidget,
     this.quote,
+    this.reactions,
     this.groupReads,
   });
 
@@ -47,7 +48,7 @@ class TextMessageCell extends StatelessWidget {
       viewportWidth: MediaQuery.sizeOf(context).width,
       grouped: grouped,
       checksWidth: checks,
-      headerHeight: quote == null ? 0 : 44,
+      headerHeight: (quote == null ? 0 : 44) + (reactions == null ? 0 : 28),
     );
     final stampLabel = edited ? '已编辑 · $stamp' : stamp;
     final innerW =
@@ -67,7 +68,9 @@ class TextMessageCell extends StatelessWidget {
           painter: QingliaoBubblePainter(
             mine: mine,
             grouped: grouped,
-            color: mine ? _outgoing : TgTokens.card,
+            color: selected
+                ? (mine ? TgTokens.outgoingSelected : TgTokens.incomingSelected)
+                : (mine ? TgTokens.outgoing : TgTokens.card),
           ),
           child: Padding(
             padding: EdgeInsets.fromLTRB(
@@ -102,6 +105,13 @@ class TextMessageCell extends StatelessWidget {
                   ),
                   if (quote != null)
                     Positioned(left: 0, right: 0, top: 0, child: quote!),
+                  if (reactions != null)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: layout.stampHeight + 2,
+                      child: reactions!,
+                    ),
                   Positioned(
                     right: 0,
                     bottom: 0,

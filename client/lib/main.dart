@@ -1741,7 +1741,14 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
       composerTop: from.top,
     );
     setState(
-      () => _enter.begin(id: id, text: text, stamp: stamp, from: from, to: to),
+      () => _enter.begin(
+        id: id,
+        text: text,
+        stamp: stamp,
+        from: from,
+        to: to,
+        fromTextSize: composerTextSize,
+      ),
     );
   }
 
@@ -2169,6 +2176,8 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                                                   child: Bubble(
                                                     engine: e,
                                                     onQuoteTap: jumpToReply,
+                                                    selected: selection
+                                                        .contains(m['id']),
                                                     message: m,
                                                     grouped:
                                                         index <
@@ -2395,6 +2404,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                 stamp: _enter.stamp,
                 from: _enter.from!,
                 to: _enter.to!,
+                fromTextSize: _enter.fromTextSize,
                 onDone: () {
                   if (mounted) setState(_enter.complete);
                 },
@@ -2487,7 +2497,7 @@ class Bubble extends StatefulWidget {
   final Json message;
   final VoidCallback onLongPress, onReply;
   final ValueChanged<String>? onQuoteTap;
-  final bool grouped;
+  final bool grouped, selected;
   const Bubble({
     super.key,
     required this.engine,
@@ -2496,6 +2506,7 @@ class Bubble extends StatefulWidget {
     required this.onReply,
     this.onQuoteTap,
     this.grouped = false,
+    this.selected = false,
   });
   @override
   State<Bubble> createState() => _BubbleState();
@@ -2548,6 +2559,10 @@ class _BubbleState extends State<Bubble> {
                 )
                 .length
           : null,
+      selected: widget.selected,
+      reactions: (e.reactions[m['id']] ?? []).isEmpty
+          ? null
+          : reactionChips(e.reactions[m['id']] ?? [], m),
       quote: hasReplyQuote(m)
           ? ReplyQuote(
               engine: e,
@@ -2564,6 +2579,32 @@ class _BubbleState extends State<Bubble> {
         revealed: reveal,
         onReveal: () => setState(() => reveal = true),
       ),
+    );
+  }
+
+  Widget reactionChips(List<Json> reactions, Json m) {
+    return Wrap(
+      spacing: 5,
+      children: [
+        for (final emoji in reactions.map((r) => r['emoji']).toSet())
+          InkWell(
+            onTap: () => guard(context, () => widget.engine.react(m, emoji)),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: bg.withValues(alpha: .4),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '$emoji ${reactions.where((r) => r['emoji'] == emoji).length}',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontFamilyFallback: emojiFallback,
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -2606,7 +2647,7 @@ class _BubbleState extends State<Bubble> {
       mediaId = id;
       image = MediaCache.load(e.api!, id);
     }
-    if (usesNativeTextCell(m) && reactions.isEmpty) {
+    if (usesNativeTextCell(m)) {
       return _interactive(
         child: nativeTextCell(m, e, mine, pending, failed, stamp),
       );

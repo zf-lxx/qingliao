@@ -5,11 +5,15 @@ import '../cells/message_layout.dart';
 import '../ui/motion/tg_motion.dart';
 import '../ui/theme/tg_tokens.dart';
 
-/// Overlay that interpolates the composer field into the outgoing bubble rect.
-/// Independent implementation; not a port of Telegram Java.
+const composerTextSize = 16.0;
+
+/// Overlay aligned to TextMessageEnterTransition progress mapping
+/// (linear animator, Y=message curve, X=EASE_OUT(QuINT), alpha to 0.4).
+/// Text starts at the composer size and scales to bubble 15sp (scaleFrom).
 class MessageEnterLayer extends StatefulWidget {
   final String text, stamp;
   final Rect from, to;
+  final double fromTextSize;
   final Duration duration;
   final Curve curve;
   final VoidCallback onDone;
@@ -20,6 +24,7 @@ class MessageEnterLayer extends StatefulWidget {
     required this.from,
     required this.to,
     required this.onDone,
+    this.fromTextSize = composerTextSize,
     this.duration = const Duration(milliseconds: 250),
     this.curve = Curves.linear,
   });
@@ -54,6 +59,8 @@ class _MessageEnterLayerState extends State<MessageEnterLayer>
       WidgetsBinding.instance.addPostFrameCallback((_) => widget.onDone());
       return const SizedBox.shrink();
     }
+    final scaleFrom =
+        widget.fromTextSize / (StampLayout.textStyle.fontSize ?? 15);
     return AnimatedBuilder(
       animation: _c,
       builder: (context, _) {
@@ -67,6 +74,7 @@ class _MessageEnterLayerState extends State<MessageEnterLayer>
           widget.from.right + (widget.to.right - widget.from.right) * xT,
           widget.from.bottom + (widget.to.bottom - widget.from.bottom) * yT,
         );
+        final scale = scaleFrom + (1 - scaleFrom) * yT;
         return Positioned(
           left: rect.left,
           top: rect.top,
@@ -86,15 +94,19 @@ class _MessageEnterLayerState extends State<MessageEnterLayer>
                   ),
                   child: Align(
                     alignment: Alignment.topLeft,
-                    child: Text(
-                      widget.text,
-                      maxLines: 6,
-                      overflow: TextOverflow.ellipsis,
-                      style: StampLayout.textStyle.copyWith(
-                        color: Color.lerp(
-                          TgTokens.muted,
-                          const Color(0xffeef4fa),
-                          yT,
+                    child: Transform.scale(
+                      alignment: Alignment.topLeft,
+                      scale: scale,
+                      child: Text(
+                        widget.text,
+                        maxLines: 6,
+                        overflow: TextOverflow.ellipsis,
+                        style: StampLayout.textStyle.copyWith(
+                          color: Color.lerp(
+                            TgTokens.muted,
+                            const Color(0xffeef4fa),
+                            yT,
+                          ),
                         ),
                       ),
                     ),
@@ -155,11 +167,11 @@ Rect estimateOutgoingRect({
   );
 }
 
-/// Keeps one outgoing enter animation at a time per chat page.
 class MessageEnterController {
   String? id;
   Rect? from, to;
   String text = '', stamp = '';
+  double fromTextSize = composerTextSize;
   bool get active => id != null;
   bool hides(String messageId) => id == messageId;
   void begin({
@@ -168,12 +180,14 @@ class MessageEnterController {
     required String stamp,
     required Rect from,
     required Rect to,
+    double fromTextSize = composerTextSize,
   }) {
     this.id = id;
     this.text = text;
     this.stamp = stamp;
     this.from = from;
     this.to = to;
+    this.fromTextSize = fromTextSize;
   }
 
   void complete() {
@@ -182,6 +196,7 @@ class MessageEnterController {
     to = null;
     text = '';
     stamp = '';
+    fromTextSize = composerTextSize;
   }
 }
 

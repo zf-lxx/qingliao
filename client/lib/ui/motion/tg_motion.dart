@@ -198,12 +198,21 @@ class TgPageRoute<T> extends PageRoute<T> {
             ? animation.value
             : curve.transform(animation.value);
         final slide = 1 - primary;
+        // Predictive-back scale from ActionBarLayout.drawChild (non-gesture
+        // newBack branch): 1 - min(0.25, 0.05 * translationX / 56dp).
+        final translationX = width * slide;
+        final shrink = 0.05 * translationX / 56.0;
+        final scale = 1 - (shrink > 0.25 ? 0.25 : shrink);
         return Stack(
           children: [
             Positioned.fill(
               child: Transform.translate(
-                offset: Offset(width * slide, 0),
-                child: child!,
+                offset: Offset(translationX, 0),
+                child: Transform.scale(
+                  alignment: Alignment.centerLeft,
+                  scale: scale,
+                  child: child!,
+                ),
               ),
             ),
             if (canPop && isCurrent)
@@ -277,7 +286,7 @@ class TgPageRoute<T> extends PageRoute<T> {
     if (!cancel) {
       final remaining = (width - x).clamp(0, width);
       controller!.reverseDuration = Duration(
-        milliseconds: math.max(50, (200 * remaining / width).round()),
+        milliseconds: math.max(380, (200 * remaining / width).round()),
       );
       navigator!.pop();
       animation!.addStatusListener(_gestureEnded);
@@ -287,9 +296,9 @@ class TgPageRoute<T> extends PageRoute<T> {
         .animateTo(
           1,
           duration: Duration(
-            milliseconds: math.max(120, (320 * x / width).round()),
+            milliseconds: math.max(320, (320 * x / width).round()),
           ),
-          curve: const AndroidDecelerate(1),
+          curve: tgEaseOutQuint,
         )
         .whenComplete(() {
           if (_dragging) {
