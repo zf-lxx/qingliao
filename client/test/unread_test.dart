@@ -102,9 +102,9 @@ void main() {
       }
       expect(find.byKey(const Key('unread-divider')), findsOneWidget);
       expect(find.text('消息 11', findRichText: true), findsOneWidget);
-      expect(find.byTooltip('回到最新消息'), findsOneWidget);
+      expect(find.byTooltip('有未读消息'), findsOneWidget);
       expect(number(engine.dialogs['chat']!['last_read_seq']), 10);
-      await tester.tap(find.byTooltip('回到最新消息'));
+      await tester.tap(find.byTooltip('有未读消息'));
       for (var i = 0; i < 10; i++) {
         await tester.pump(const Duration(milliseconds: 100));
       }

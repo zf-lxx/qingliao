@@ -1521,6 +1521,11 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
           return;
         }
       }
+      final saved = e.scrollOffsets[widget.cid];
+      if (saved != null && scroll.hasClients) {
+        scroll.jumpTo(saved.clamp(0.0, scroll.position.maxScrollExtent));
+        return;
+      }
       bottom(false);
     } catch (_) {
       if (mounted) {
@@ -1600,8 +1605,10 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     _entryReadSeq = number(e.dialogs[widget.cid]?['last_read_seq']);
     _hadUnread = number(e.dialogs[widget.cid]?['unread_count']) > 0;
     scroll.addListener(() {
-      final up = scroll.hasClients && scroll.position.extentAfter > 160;
+      if (!scroll.hasClients) return;
+      final up = scroll.position.extentAfter > 160;
       if (mounted && up != _scrolledUp) setState(() => _scrolledUp = up);
+      e.scrollOffsets[widget.cid] = scroll.offset;
     });
     WidgetsBinding.instance.addObserver(this);
     input.text = obj(e.dialogs[widget.cid]?['draft'])['text'] ?? '';
@@ -1679,7 +1686,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
         _initialPositioned) {
       bottom();
     }
-    if (!loading && nearBottom) markRead();
+    if (!loading && nearBottom && !_hadUnread) markRead();
   }
 
   void bottom([bool animated = true]) {
@@ -1694,7 +1701,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
       } else {
         scroll.jumpTo(scroll.position.maxScrollExtent);
       }
-      markRead();
+      if (!_hadUnread) markRead();
     });
   }
 
@@ -1966,6 +1973,9 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     e.removeListener(changed);
     draftTimer?.cancel();
     if (draftDirty) unawaited(flushDraft());
+    if (scroll.hasClients) {
+      unawaited(e.rememberScroll(widget.cid, scroll.offset));
+    }
     input.dispose();
     _highlightTimer?.cancel();
     scroll.dispose();
@@ -2286,8 +2296,16 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                                   ),
                                   child: FloatingActionButton.small(
                                     heroTag: 'bottom',
-                                    tooltip: '回到最新消息',
-                                    onPressed: bottom,
+                                    tooltip: _unreadId == null
+                                        ? '回到最新消息'
+                                        : '有未读消息',
+                                    onPressed: () {
+                                      setState(() {
+                                        _hadUnread = false;
+                                        _unreadId = null;
+                                      });
+                                      bottom();
+                                    },
                                     child: const Icon(
                                       Icons.keyboard_arrow_down,
                                     ),
@@ -2683,18 +2701,21 @@ class _BubbleState extends State<Bubble> {
         child: nativeTextCell(m, e, mine, pending, failed, stamp),
       );
     }
+    final enter = pending && mine;
     return TweenAnimationBuilder<double>(
       duration: Duration(
-        milliseconds: MediaQuery.disableAnimationsOf(context) ? 1 : 250,
+        milliseconds: MediaQuery.disableAnimationsOf(context) || !enter
+            ? 1
+            : 250,
       ),
       curve: sendCurve,
-      tween: Tween(begin: 0, end: 1),
+      tween: Tween(begin: enter ? 0 : 1, end: 1),
       builder: (context, value, child) => Opacity(
         opacity: value,
         child: Transform.translate(
           offset: Offset(
-            mine && pending ? 20 * (1 - value) : 0,
-            (mine && pending ? 92 : 18) * (1 - value),
+            enter ? 20 * (1 - value) : 0,
+            enter ? 92 * (1 - value) : 0,
           ),
           child: child,
         ),

@@ -28,6 +28,7 @@ class ChatEngine extends ChangeNotifier {
   Json? session;
   Json me = {}, privacy = {};
   final Map<String, Json> dialogs = {}, messages = {}, outbox = {}, users = {};
+  final Map<String, double> scrollOffsets = {};
   final Map<String, Json> draftOutbox = {};
   bool _flushingDrafts = false;
   List<Json> folders = [];
@@ -65,6 +66,7 @@ class ChatEngine extends ChangeNotifier {
     'draft_outbox': draftOutbox,
     'reactions': reactions,
     'users': users,
+    'scroll': scrollOffsets,
   };
   Future<void> persist() => store.save(account, snapshot());
   void restore(Json v) {
@@ -90,6 +92,16 @@ class ChatEngine extends ChangeNotifier {
       ..clear()
       ..addAll(obj(v['reactions']).map((k, x) => MapEntry(k, objects(x))));
     folders = objects(v['folders']);
+    scrollOffsets
+      ..clear()
+      ..addAll(
+        obj(v['scroll']).map((k, x) => MapEntry(k, (x as num).toDouble())),
+      );
+  }
+
+  Future<void> rememberScroll(String cid, double offset) {
+    scrollOffsets[cid] = offset;
+    return persist();
   }
 
   Future<void> boot() async {
@@ -643,6 +655,9 @@ class ChatEngine extends ChangeNotifier {
   Future<void> read(String cid, int seq) async {
     if (!online || seq <= number(dialogs[cid]?['last_read_seq'])) return;
     await api!.call('POST', '/conversations/$cid/read', {'last_read_seq': seq});
+    dialogs[cid]?['last_read_seq'] = seq;
+    dialogs[cid]?['unread_count'] = 0;
+    notifyListeners();
   }
 
   void typing(String cid, bool value) {
