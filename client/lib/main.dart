@@ -907,8 +907,11 @@ class _DialogsPageState extends State<DialogsPage> {
       );
       return Scaffold(
         extendBody: true,
+        backgroundColor: bg,
         appBar: AppBar(
-          toolbarHeight: 78,
+          backgroundColor: bg,
+          elevation: 0,
+          toolbarHeight: 72,
           centerTitle: false,
           titleSpacing: 20,
           title: nav == 0
@@ -928,14 +931,7 @@ class _DialogsPageState extends State<DialogsPage> {
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-          actions: [
-            TgIconButton(
-              tooltip: '个人资料',
-              icon: Icons.person_outline_rounded,
-              onPressed: profile,
-            ),
-            const SizedBox(width: 12),
-          ],
+          actions: const [SizedBox(width: 8)],
         ),
         body: nav == 0 ? list : navigationBody(),
         bottomNavigationBar: TgBottomNav(

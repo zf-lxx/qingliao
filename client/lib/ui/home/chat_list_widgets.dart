@@ -214,37 +214,37 @@ class TgChatRow extends StatelessWidget {
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
                               fontSize: 17,
-                              fontWeight: FontWeight.w700,
+                              fontWeight: FontWeight.w600,
                             ),
                           ),
                         ),
                         if (muted)
                           const Padding(
-                            padding: EdgeInsets.symmetric(horizontal: 4),
+                            padding: EdgeInsets.only(right: 4),
                             child: Icon(
                               Icons.volume_off_rounded,
-                              size: 15,
-                              color: Colors.grey,
+                              size: 14,
+                              color: Color(0xff7d91a5),
                             ),
                           ),
                         if (outgoing)
                           Padding(
-                            padding: const EdgeInsets.only(right: 4),
+                            padding: const EdgeInsets.only(right: 3),
                             child: Icon(
                               read
                                   ? Icons.done_all_rounded
                                   : Icons.done_rounded,
-                              size: 17,
+                              size: 16,
                               color: Theme.of(context).colorScheme.primary,
                             ),
                           ),
                         Text(
                           time,
                           style: TextStyle(
-                            fontSize: 12,
+                            fontSize: 13,
                             color: unread > 0
                                 ? Theme.of(context).colorScheme.primary
-                                : Colors.grey,
+                                : const Color(0xff7d91a5),
                           ),
                         ),
                       ],
@@ -258,12 +258,10 @@ class TgChatRow extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 14,
+                              fontSize: 15,
                               color: draft
-                                  ? Theme.of(context).colorScheme.error
-                                  : Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant,
+                                  ? const Color(0xff5dade6)
+                                  : const Color(0xff7d91a5),
                             ),
                           ),
                         ),
@@ -354,61 +352,34 @@ class TgBottomNav extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SafeArea(
     top: false,
-    minimum: const EdgeInsets.fromLTRB(18, 4, 18, 10),
+    minimum: const EdgeInsets.fromLTRB(72, 0, 72, 12),
     child: TgGlass(
-      child: Container(
-        height: 66,
-        padding: const EdgeInsets.all(5),
+      radius: 28,
+      child: SizedBox(
+        height: 52,
         child: Row(
           children: [
             for (var i = 0; i < 4; i++)
               Expanded(
                 child: PressableScale(
                   onTap: () => onChanged(i),
-                  radius: 30,
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 220),
-                    curve: tgEaseOutQuint,
-                    decoration: BoxDecoration(
-                      color: selected == i
-                          ? Theme.of(context).colorScheme.primary
-                                .withValues(alpha: .13)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(30),
-                    ),
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Badge(
-                          isLabelVisible: i == 0 && badge > 0,
-                          label: Text('$badge'),
-                          child: Icon(
-                            [
-                              Icons.chat_bubble_rounded,
-                              Icons.contacts_rounded,
-                              Icons.settings_rounded,
-                              Icons.person_rounded,
-                            ][i],
-                            size: 23,
-                            color: selected == i
-                                ? Theme.of(context).colorScheme.primary
-                                : Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          ['聊天', '联系人', '设置', '个人资料'][i],
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: selected == i
-                                ? Theme.of(context).colorScheme.primary
-                                : null,
-                          ),
-                        ),
-                      ],
+                  radius: 24,
+                  child: Center(
+                    child: Badge(
+                      isLabelVisible: i == 0 && badge > 0,
+                      label: Text('$badge'),
+                      child: Icon(
+                        [
+                          Icons.chat_bubble_rounded,
+                          Icons.people_alt_rounded,
+                          Icons.settings_rounded,
+                          Icons.person_rounded,
+                        ][i],
+                        size: 26,
+                        color: selected == i
+                            ? Theme.of(context).colorScheme.primary
+                            : const Color(0xff7d91a5),
+                      ),
                     ),
                   ),
                 ),
