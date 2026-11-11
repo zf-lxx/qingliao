@@ -59,7 +59,7 @@ class TgFolderTabs extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final style = DefaultTextStyle.of(context).style
-        .copyWith(fontWeight: FontWeight.w600);
+        .copyWith(fontSize: 15, fontWeight: FontWeight.w500);
     final widths = tabs.map((tab) {
       final t = TextPainter(
         text: TextSpan(text: tab.label, style: style),
@@ -85,30 +85,16 @@ class TgFolderTabs extends StatelessWidget {
       scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
       child: SizedBox(
-        height: 48,
+        height: 40,
         width: widths.fold<double>(0, (a, b) => a + b) + 7 * (tabs.length - 1),
         child: Stack(
           children: [
             AnimatedPositioned(
               duration: const Duration(milliseconds: 320),
               curve: tgEaseOutQuint,
-              left: left,
-              top: 1,
-              width: widths[target],
-              height: 45,
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: .14),
-                  borderRadius: BorderRadius.circular(25),
-                ),
-              ),
-            ),
-            AnimatedPositioned(
-              duration: const Duration(milliseconds: 320),
-              curve: tgEaseOutQuint,
-              left: left + widths[target] / 2 - 10,
-              bottom: 6,
-              width: 20,
+              left: left + 8,
+              bottom: 1,
+              width: widths[target] - 16,
               height: 2,
               child: DecoratedBox(
                 decoration: BoxDecoration(
@@ -126,7 +112,7 @@ class TgFolderTabs extends StatelessWidget {
                     ),
                     child: SizedBox(
                       width: widths[i],
-                      height: 48,
+                      height: 40,
                       child: PressableScale(
                         radius: 24,
                         onTap: () => onSelected(tabs[i].id),
@@ -241,7 +227,7 @@ class TgChatRow extends StatelessWidget {
                         Text(
                           time,
                           style: TextStyle(
-                            fontSize: 12,
+                            fontSize: 13,
                             color: unread > 0
                                 ? Theme.of(context).colorScheme.primary
                                 : Colors.grey,
@@ -258,7 +244,7 @@ class TgChatRow extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 14,
+                              fontSize: 15,
                               color: draft
                                   ? Theme.of(context).colorScheme.error
                                   : Theme.of(context)
@@ -401,7 +387,7 @@ class TgBottomNav extends StatelessWidget {
                         Text(
                           ['聊天', '联系人', '设置', '个人资料'][i],
                           style: TextStyle(
-                            fontSize: 11,
+                            fontSize: 12,
                             fontWeight: FontWeight.w600,
                             color: selected == i
                                 ? Theme.of(context).colorScheme.primary

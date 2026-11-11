@@ -316,7 +316,14 @@ func (a *App) wsRead(c *connection) {
 			}
 			if a.limiter.allow("typing:"+c.p.UserID+":"+f.ChatID, 1, 2*time.Second) {
 				var users []string
-				e = a.transaction(func(tx *sql.Tx) error { var e error; users, e = members(tx, f.ChatID); return e })
+				e = a.transaction(func(tx *sql.Tx) error {
+					if e := a.checkBlocked(tx, f.ChatID); e != nil {
+						return e
+					}
+					var e error
+					users, e = members(tx, f.ChatID)
+					return e
+				})
 				if e == nil {
 					a.hub.broadcast(users, c.p.UserID, map[string]any{"v": 1, "op": "typing", "conversation_id": f.ChatID, "user_id": c.p.UserID, "typing": f.Typing, "expires_in": 5})
 				}
@@ -343,7 +350,7 @@ func (a *App) wsRead(c *connection) {
 	}
 }
 func (a *App) presence(uid string) {
-	rows, e := a.DB.Query("SELECT DISTINCT b.user_id FROM members a JOIN members b ON b.chat_id=a.chat_id WHERE a.user_id=? AND b.user_id<>?", uid, uid)
+	rows, e := a.DB.Query("SELECT DISTINCT b.user_id FROM members a JOIN members b ON b.chat_id=a.chat_id WHERE a.user_id=? AND b.user_id<>? AND NOT EXISTS(SELECT 1 FROM user_blocks x WHERE (x.owner=a.user_id AND x.target=b.user_id) OR (x.owner=b.user_id AND x.target=a.user_id))", uid, uid)
 	if e != nil {
 		return
 	}

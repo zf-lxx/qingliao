@@ -70,6 +70,7 @@ func (a *App) auth(fn authed) http.HandlerFunc {
 }
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
+	a.discoveryRoutes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if e := a.Ping(r.Context()); e != nil {
 			respond(w, 503, map[string]bool{"ok": false})
@@ -106,6 +107,12 @@ func (a *App) Handler() http.Handler {
 		if e != nil {
 			fail(w, e)
 			return
+		}
+		var blocked int
+		a.DB.QueryRow("SELECT count(*) FROM user_blocks WHERE (owner=? AND target=?) OR(owner=? AND target=?)", p.UserID, u.ID, u.ID, p.UserID).Scan(&blocked)
+		if blocked > 0 {
+			u.Online = false
+			u.LastSeen = ""
 		}
 		respond(w, 200, u)
 	}))
@@ -453,7 +460,7 @@ func (a *App) users(w http.ResponseWriter, r *http.Request, p Principal) {
 		fail(w, ErrInvalid)
 		return
 	}
-	rows, e := a.DB.Query("SELECT id,handle,name,avatar,last_seen FROM users WHERE instr(handle,?)>0 ORDER BY handle LIMIT 30", strings.ToLower(q))
+	rows, e := a.DB.Query("SELECT id,handle,name,avatar,last_seen,EXISTS(SELECT 1 FROM user_blocks x WHERE (x.owner=? AND x.target=users.id) OR (x.target=? AND x.owner=users.id)) FROM users WHERE instr(handle,?)>0 ORDER BY handle LIMIT 30", p.UserID, p.UserID, strings.ToLower(q))
 	if e != nil {
 		fail(w, e)
 		return
@@ -462,11 +469,16 @@ func (a *App) users(w http.ResponseWriter, r *http.Request, p Principal) {
 	out := []User{}
 	for rows.Next() {
 		var u User
-		if e = rows.Scan(&u.ID, &u.Handle, &u.Name, &u.Avatar, &u.LastSeen); e != nil {
+		var blocked int
+		if e = rows.Scan(&u.ID, &u.Handle, &u.Name, &u.Avatar, &u.LastSeen, &blocked); e != nil {
 			fail(w, e)
 			return
 		}
 		u.Online = a.online(u.ID)
+		if blocked > 0 {
+			u.Online = false
+			u.LastSeen = ""
+		}
 		out = append(out, u)
 	}
 	respond(w, 200, map[string]any{"users": out})

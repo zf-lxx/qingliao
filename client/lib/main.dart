@@ -145,11 +145,26 @@ class _QingliaoAppState extends State<QingliaoApp> with WidgetsBindingObserver {
         ),
       ),
     ),
-    home: AnimatedBuilder(
-      animation: widget.engine,
-      builder: (_, _) => widget.engine.signedIn
-          ? DialogsPage(engine: widget.engine)
-          : LoginPage(engine: widget.engine),
+    builder: (context, child) {
+      final media = MediaQuery.of(context);
+      return MediaQuery(
+        data: media.copyWith(
+          textScaler: media.textScaler.clamp(
+            minScaleFactor: 1,
+            maxScaleFactor: 1.15,
+          ),
+        ),
+        child: child!,
+      );
+    },
+    onGenerateRoute: (settings) => TgPageRoute(
+      settings: settings,
+      page: AnimatedBuilder(
+        animation: widget.engine,
+        builder: (_, _) => widget.engine.signedIn
+            ? DialogsPage(engine: widget.engine)
+            : LoginPage(engine: widget.engine),
+      ),
     ),
   );
 }
@@ -690,7 +705,9 @@ class _DialogsPageState extends State<DialogsPage> {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
             child: TextField(
               onChanged: (v) => setState(() => query = v),
+              style: const TextStyle(fontSize: 16),
               decoration: InputDecoration(
+                hintStyle: const TextStyle(fontSize: 16),
                 hintText: '搜索会话',
                 prefixIcon: const Icon(Icons.search_rounded),
                 isDense: true,
@@ -899,7 +916,7 @@ class _DialogsPageState extends State<DialogsPage> {
       return Scaffold(
         extendBody: true,
         appBar: AppBar(
-          toolbarHeight: 78,
+          toolbarHeight: 56,
           centerTitle: false,
           titleSpacing: 20,
           title: nav == 0
@@ -907,16 +924,15 @@ class _DialogsPageState extends State<DialogsPage> {
                   engine: e,
                   title: archived ? '归档聊天' : '轻聊',
                   style: const TextStyle(
-                    fontSize: 34,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -.8,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w500,
                   ),
                 )
               : Text(
                   ['轻聊', '联系人', '设置', '个人资料'][nav],
                   style: const TextStyle(
-                    fontSize: 30,
-                    fontWeight: FontWeight.w800,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
           actions: [
@@ -1218,7 +1234,10 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                         trailing: const Icon(Icons.chevron_right_rounded),
                         onTap: () => update(() => submenu = true),
                       ),
-                      const Divider(height: 12, thickness: 6),
+                      const SizedBox(
+                        height: 8,
+                        child: ColoredBox(color: Color(0xff101820)),
+                      ),
                       ListTile(
                         leading: const Icon(Icons.search_rounded),
                         title: const Text('搜索'),
@@ -1241,6 +1260,25 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+
+  String peerStatus() {
+    final ids = e.readPositions[widget.cid]?.keys ?? const <String>[];
+    if (e.dialogs[widget.cid]?['kind'] == 'group') return '${ids.length} 名成员';
+    final id = ids.where((id) => id != e.uid).firstOrNull;
+    final peer = e.users[id];
+    if (peer?['online'] == true) return '在线';
+    final seen = DateTime.tryParse(peer?['last_seen']?.toString() ?? '')
+        ?.toLocal();
+    if (seen == null) return '最后上线时间未知';
+    final today = DateTime.now();
+    final hh =
+        '${seen.hour.toString().padLeft(2, '0')}:${seen.minute.toString().padLeft(2, '0')}';
+    return seen.year == today.year &&
+            seen.month == today.month &&
+            seen.day == today.day
+        ? '最后上线于 $hh'
+        : '最后上线于 ${seen.month}月${seen.day}日 $hh';
   }
 
   PreferredSizeWidget header(bool typing) {
@@ -1280,8 +1318,8 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                       Row(
@@ -1294,13 +1332,9 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                           Expanded(
                             child: ConnectionTitle(
                               engine: e,
-                              title: typing
-                                  ? '正在输入…'
-                                  : e.online
-                                  ? '已连接 · 云端聊天'
-                                  : '云端聊天',
+                              title: typing ? '正在输入…' : peerStatus(),
                               style: const TextStyle(
-                                fontSize: 12,
+                                fontSize: 14,
                                 color: muted,
                               ),
                             ),
@@ -1330,7 +1364,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
             child: Text(
               '已选择 ${selection.length} 项',
               key: ValueKey(selection.length),
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500),
             ),
           ),
         ),
@@ -1418,6 +1452,34 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   final Map<String, GlobalKey> _messageKeys = {};
   String? _highlighted, _unreadId;
   int _entryReadSeq = 0;
+  int? _readAfterOwnSend;
+  int _bottomGeneration = 0;
+  bool _stickToBottom = true;
+  final _viewportKey = GlobalKey();
+  void saveViewPosition() {
+    if (!_initialPositioned || _positioning || !scroll.hasClients) return;
+    final viewport = _viewportKey.currentContext?.findRenderObject();
+    if (viewport is! RenderBox || !viewport.attached) return;
+    final top = viewport.localToGlobal(Offset.zero).dy;
+    Json position = {
+      'at_bottom': _stickToBottom || scroll.position.extentAfter < 40,
+    };
+    if (position['at_bottom'] != true) {
+      for (final m in e.history(widget.cid)) {
+        final box = _messageKeys[m['id']]?.currentContext?.findRenderObject();
+        if (box is RenderBox && box.attached) {
+          final y = box.localToGlobal(Offset.zero).dy - top;
+          if (y + box.size.height > 0 && y < viewport.size.height) {
+            position.addAll({'id': m['id'], 'offset': y});
+            break;
+          }
+        }
+      }
+    }
+    e.viewPositions[widget.cid] = position;
+    unawaited(e.persist().catchError((_) {}));
+  }
+
   bool _hadUnread = false,
       _initialPositioned = false,
       _scrolledUp = false,
@@ -1468,13 +1530,38 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
             .where(
               (m) =>
                   number(m['conversation_seq']) > _entryReadSeq &&
-                  m['sender_id'] != e.uid,
+                  m['sender_id'] != e.uid &&
+                  m['deleted'] != true,
             )
             .firstOrNull;
         if (first != null && mounted) {
           setState(() => _unreadId = first['id']);
           await jumpToReply(first['id'], highlight: false);
           return;
+        }
+      }
+      final saved = e.viewPositions[widget.cid];
+      if (saved?['at_bottom'] == false && saved?['id'] is String) {
+        _stickToBottom = false;
+        final target = await e.resolveReply(widget.cid, saved!['id']);
+        if (target != null && mounted) {
+          await jumpToReply(target['id'], highlight: false);
+          await WidgetsBinding.instance.endOfFrame;
+          final box = _messageKeys[target['id']]?.currentContext
+                  ?.findRenderObject(),
+              view = _viewportKey.currentContext?.findRenderObject();
+          if (box is RenderBox && view is RenderBox && scroll.hasClients) {
+            final current =
+                box.localToGlobal(Offset.zero).dy -
+                view.localToGlobal(Offset.zero).dy;
+            scroll.jumpTo(
+              (scroll.offset + current - (saved['offset'] as num? ?? 0)).clamp(
+                0.0,
+                scroll.position.maxScrollExtent,
+              ),
+            );
+            return;
+          }
         }
       }
       bottom(false);
@@ -1491,6 +1578,8 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   }
 
   Future<void> jumpToReply(String id, {bool highlight = true}) async {
+    _stickToBottom = false;
+    _bottomGeneration++;
     try {
       final target = await e.resolveReply(widget.cid, id);
       if (!mounted || target == null) return;
@@ -1613,6 +1702,24 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
 
   void changed() {
     if (!mounted) return;
+    if (_readAfterOwnSend != null) {
+      final own = e
+          .history(widget.cid)
+          .where(
+            (m) =>
+                m['sender_id'] == e.uid &&
+                number(m['conversation_seq']) > _readAfterOwnSend!,
+          )
+          .toList();
+      if (own.isNotEmpty) {
+        final seq = own
+            .map((m) => number(m['conversation_seq']))
+            .reduce((a, b) => a > b ? a : b);
+        _readAfterOwnSend = null;
+        unawaited(e.read(widget.cid, seq).catchError((_) {}));
+      }
+    }
+
     final count = e.history(widget.cid).length;
     final nearBottom = !scroll.hasClients || scroll.position.extentAfter < 130;
     setState(() {});
@@ -1629,18 +1736,49 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   }
 
   void bottom([bool animated = true]) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !scroll.hasClients) return;
+    _stickToBottom = true;
+    final generation = ++_bottomGeneration;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || !scroll.hasClients || generation != _bottomGeneration) {
+        return;
+      }
       if (animated && !MediaQuery.disableAnimationsOf(context)) {
-        scroll.animateTo(
+        await scroll.animateTo(
           scroll.position.maxScrollExtent,
           duration: const Duration(milliseconds: 250),
           curve: slideCurve,
         );
-      } else {
-        scroll.jumpTo(scroll.position.maxScrollExtent);
       }
-      markRead();
+      // Lazy slivers estimate maxExtent before the final rows have been laid
+      // out. Converge across frames instead of trusting the first estimate.
+      double? last;
+      var stable = 0;
+      for (
+        var i = 0;
+        i < 16 &&
+            mounted &&
+            scroll.hasClients &&
+            _stickToBottom &&
+            generation == _bottomGeneration;
+        i++
+      ) {
+        final end = scroll.position.maxScrollExtent;
+        scroll.jumpTo(end);
+        if (last != null &&
+            (end - last).abs() < .5 &&
+            scroll.position.extentAfter < 1) {
+          stable++;
+        } else {
+          stable = 0;
+        }
+        if (stable >= 2) break;
+        last = end;
+        await WidgetsBinding.instance.endOfFrame;
+      }
+      if (mounted) {
+        markRead();
+        saveViewPosition();
+      }
     });
   }
 
@@ -1693,9 +1831,17 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
     }
   }
 
+  void trackOwnSend() {
+    _readAfterOwnSend = e
+        .history(widget.cid)
+        .map((m) => number(m['conversation_seq']))
+        .fold<int>(0, (a, b) => a > b ? a : b);
+  }
+
   Future<void> send() async {
     if (input.text.trim().isEmpty || sending) return;
     final text = input.text.trim(), editingNow = editing;
+    if (editingNow == null) trackOwnSend();
     setState(() => sending = true);
     await guard(context, () async {
       if (editingNow != null) {
@@ -1733,6 +1879,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
       }
       final bytes = await compressImage(source);
       final id = await e.api!.upload(widget.cid, bytes);
+      trackOwnSend();
       await e.send(
         widget.cid,
         '',
@@ -1872,6 +2019,7 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    saveViewPosition();
     e.removeListener(changed);
     draftTimer?.cancel();
     if (draftDirty) unawaited(flushDraft());
@@ -1977,12 +2125,22 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                     ),
                   Expanded(
                     child: Stack(
+                      key: _viewportKey,
                       children: [
                         Positioned.fill(
                           child: loading
                               ? const Center(child: CircularProgressIndicator())
                               : NotificationListener<ScrollNotification>(
-                                  onNotification: (_) {
+                                  onNotification: (n) {
+                                    if (n is ScrollUpdateNotification &&
+                                        n.dragDetails != null) {
+                                      _stickToBottom =
+                                          scroll.position.extentAfter < 40;
+                                      if (!_stickToBottom) _bottomGeneration++;
+                                    }
+                                    if (n is ScrollEndNotification) {
+                                      saveViewPosition();
+                                    }
                                     markRead();
                                     return false;
                                   },
@@ -2417,6 +2575,12 @@ class Bubble extends StatefulWidget {
   State<Bubble> createState() => _BubbleState();
 }
 
+double imageHeight(Json m) {
+  final meta = obj(m['media_meta']);
+  final w = number(meta['width']), h = number(meta['height']);
+  return w > 0 && h > 0 ? (240 * h / w).clamp(90.0, 320.0) : 180.0;
+}
+
 class _BubbleState extends State<Bubble> {
   bool reveal = false;
   double dx = 0;
@@ -2528,46 +2692,57 @@ class _BubbleState extends State<Bubble> {
                       onTap: () => widget.onQuoteTap?.call(replyId),
                     ),
                   if (!deleted && image != null)
-                    FutureBuilder<Uint8List>(
-                      future: image,
-                      builder: (_, s) => s.hasData
-                          ? GestureDetector(
-                              onTap: () => openImageViewer(
-                                context,
-                                bytes: s.data!,
-                                tag: 'media-${m['id']}',
-                                sender:
-                                    e.users[m['sender_id']]?['display_name'] ??
-                                    (mine ? '你' : '成员'),
-                                time: '$stamp · 中国标准时间 UTC+8',
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: Hero(
+                    SizedBox(
+                      width: 240,
+                      height: imageHeight(m),
+                      child: FutureBuilder<Uint8List>(
+                        future: image,
+                        builder: (_, s) => s.hasData
+                            ? GestureDetector(
+                                onTap: () => openImageViewer(
+                                  context,
+                                  bytes: s.data!,
                                   tag: 'media-${m['id']}',
-                                  createRectTween: (begin, end) =>
-                                      ImageRectTween(begin: begin, end: end),
-                                  child: Image.memory(
-                                    s.data!,
-                                    width: 240,
-                                    fit: BoxFit.contain,
+                                  sender:
+                                      e.users[m['sender_id']]?['display_name'] ??
+                                      (mine ? '你' : '成员'),
+                                  time: '$stamp · 中国标准时间 UTC+8',
+                                ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: Hero(
+                                    tag: 'media-${m['id']}',
+                                    createRectTween: (begin, end) =>
+                                        ImageRectTween(begin: begin, end: end),
+                                    child: Image.memory(
+                                      s.data!,
+                                      width: 240,
+                                      height: imageHeight(m),
+                                      fit: BoxFit.contain,
+                                    ),
                                   ),
                                 ),
-                              ),
-                            )
-                          : Padding(
-                              padding: const EdgeInsets.all(25),
-                              child: s.hasError
-                                  ? TextButton(
-                                      onPressed: () => setState(
-                                        () => image = e.api!.media(mediaId!),
+                              )
+                            : Padding(
+                                padding: const EdgeInsets.all(25),
+                                child: s.hasError
+                                    ? TextButton(
+                                        onPressed: () => setState(
+                                          () => image = e.api!.media(mediaId!),
+                                        ),
+                                        child: const Text('图片加载失败，重试'),
+                                      )
+                                    : const Center(
+                                        child: SizedBox(
+                                          width: 24,
+                                          height: 24,
+                                          child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                          ),
+                                        ),
                                       ),
-                                      child: const Text('图片加载失败，重试'),
-                                    )
-                                  : const CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                            ),
+                              ),
+                      ),
                     ),
                   if (deleted)
                     const Text(
@@ -2651,7 +2826,7 @@ class _BubbleState extends State<Bubble> {
                           style: TextStyle(fontSize: 10, color: muted),
                         ),
                       Text(
-                        '$stamp CST',
+                        stamp,
                         style: const TextStyle(fontSize: 10, color: muted),
                       ),
                       if (mine) ...[

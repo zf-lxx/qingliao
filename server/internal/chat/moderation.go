@@ -49,6 +49,9 @@ func modRole(tx *sql.Tx, cid, uid string) error {
 	return nil
 }
 func (a *App) checkSend(tx *sql.Tx, p Principal, cid string, s Send) error {
+	if e := a.checkBlocked(tx, cid); e != nil {
+		return e
+	}
 	var role string
 	var joined, muted int64
 	if e := tx.QueryRow("SELECT role,joined_at,muted_until FROM members WHERE chat_id=? AND user_id=?", cid, p.UserID).Scan(&role, &joined, &muted); e != nil {
@@ -306,6 +309,9 @@ func (a *App) auditList(w http.ResponseWriter, r *http.Request, p Principal) {
 
 func (a *App) uploadPermission(p Principal, cid string) error {
 	return a.transaction(func(tx *sql.Tx) error {
+		if e := a.checkBlocked(tx, cid); e != nil {
+			return e
+		}
 		var role string
 		var joined, muted int64
 		if e := tx.QueryRow("SELECT role,joined_at,muted_until FROM members WHERE chat_id=? AND user_id=?", cid, p.UserID).Scan(&role, &joined, &muted); e != nil {

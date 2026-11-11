@@ -390,9 +390,9 @@ class _MediaTabs extends SliverPersistentHeaderDelegate {
   final Widget child;
   _MediaTabs(this.child);
   @override
-  double get minExtent => 62;
+  double get minExtent => 56;
   @override
-  double get maxExtent => 62;
+  double get maxExtent => 56;
   @override
   Widget build(
     BuildContext context,

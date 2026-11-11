@@ -146,6 +146,20 @@ class TgIconButton extends StatelessWidget {
   );
 }
 
+// Reverse must ease the travelled distance, not apply an ease-out curve to a
+// descending value (which accelerates the page at the very end of pop).
+double tgRouteProgress(
+  Animation<double> animation, {
+  required bool interactive,
+  Curve forwardCurve = tgEaseOutQuint,
+}) {
+  final v = animation.value.clamp(0.0, 1.0);
+  if (interactive) return v;
+  return animation.status == AnimationStatus.reverse
+      ? 1 - Curves.decelerate.transform(1 - v)
+      : forwardCurve.transform(v);
+}
+
 /// Independently implemented navigation: full-width foreground, quarter-width
 /// background parallax. The latter is a Qingliao choice, not an upstream value.
 class TgPageRoute<T> extends PageRoute<T> {
@@ -153,6 +167,8 @@ class TgPageRoute<T> extends PageRoute<T> {
   final Duration duration;
   final Curve curve;
   bool _dragging = false;
+  NavigatorState? _gestureNavigator;
+  MediaQueryData? _transitionMedia;
   TgPageRoute({
     required this.page,
     super.settings,
@@ -178,7 +194,7 @@ class TgPageRoute<T> extends PageRoute<T> {
     BuildContext context,
     Animation<double> animation,
     Animation<double> secondaryAnimation,
-  ) => page;
+  ) => RepaintBoundary(child: page);
   @override
   Widget buildTransitions(
     BuildContext context,
@@ -192,17 +208,36 @@ class TgPageRoute<T> extends PageRoute<T> {
       child: child,
       builder: (context, child) {
         final width = MediaQuery.sizeOf(context).width;
-        final primary = _dragging
-            ? animation.value
-            : curve.transform(animation.value);
-        final secondary = navigator?.userGestureInProgress == true
-            ? secondaryAnimation.value
-            : tgEaseOutQuint.transform(secondaryAnimation.value);
+        final primary = tgRouteProgress(
+          animation,
+          interactive: _dragging,
+          forwardCurve: curve,
+        );
+        final secondary = tgRouteProgress(
+          secondaryAnimation,
+          interactive: navigator?.userGestureInProgress == true,
+        );
+        final moving =
+            animation.status == AnimationStatus.forward ||
+            animation.status == AnimationStatus.reverse ||
+            secondaryAnimation.status == AnimationStatus.forward ||
+            secondaryAnimation.status == AnimationStatus.reverse ||
+            _dragging;
+        if (moving) {
+          _transitionMedia ??= MediaQuery.of(context);
+        } else {
+          _transitionMedia = null;
+        }
         return Transform.translate(
           offset: Offset(width * (1 - primary) - width * .25 * secondary, 0),
           child: Stack(
             children: [
-              Positioned.fill(child: child!),
+              Positioned.fill(
+                child: MediaQuery(
+                  data: _transitionMedia ?? MediaQuery.of(context),
+                  child: child!,
+                ),
+              ),
               if (secondary > 0)
                 Positioned.fill(
                   child: IgnorePointer(
@@ -228,6 +263,7 @@ class TgPageRoute<T> extends PageRoute<T> {
                       }
                       _dragging = true;
                       controller!.stop();
+                      _gestureNavigator = navigator;
                       navigator!.didStartUserGesture();
                     },
                     onHorizontalDragUpdate: (d) {
@@ -256,10 +292,25 @@ class TgPageRoute<T> extends PageRoute<T> {
     final finish =
         velocity > 700 || (velocity > -700 && controller!.value < .65);
     if (finish) {
-      controller!.reverseDuration = Duration(
-        milliseconds: math.max(50, (200 * controller!.value).round()),
-      );
+      final remaining = controller!.value;
+      animation!.addStatusListener(_gestureEnded);
       navigator!.pop();
+      if (remaining > 0) {
+        controller!.stop();
+        controller!.animateBack(
+          0,
+          duration: Duration(
+            milliseconds: (duration.inMilliseconds * remaining).round().clamp(
+              100,
+              250,
+            ),
+          ),
+          curve: Curves.decelerate,
+        );
+      } else {
+        _gestureEnded(AnimationStatus.dismissed);
+      }
+      return;
     } else {
       controller!
           .animateTo(
@@ -275,22 +326,20 @@ class TgPageRoute<T> extends PageRoute<T> {
           .whenComplete(() {
             if (_dragging) {
               _dragging = false;
-              navigator?.didStopUserGesture();
+              _gestureNavigator?.didStopUserGesture();
+              _gestureNavigator = null;
             }
           });
       return;
     }
-    controller!.reverseDuration = Duration(
-      milliseconds: math.max(50, (200 * controller!.value).round()),
-    );
-    animation!.addStatusListener(_gestureEnded);
   }
 
   void _gestureEnded(AnimationStatus status) {
-    if (status == AnimationStatus.dismissed) {
+    if (status == AnimationStatus.dismissed && _dragging) {
       _dragging = false;
-      navigator?.didStopUserGesture();
-      animation!.removeStatusListener(_gestureEnded);
+      _gestureNavigator?.didStopUserGesture();
+      _gestureNavigator = null;
+      animation?.removeStatusListener(_gestureEnded);
     }
   }
 }
@@ -403,7 +452,26 @@ Future<T?> showTgPopup<T>({
                     maxHeight: MediaQuery.sizeOf(context).height - 140,
                     maxWidth: centered ? 340 : 268,
                   ),
-                  child: SingleChildScrollView(child: builder(context)),
+                  child: ListTileTheme(
+                    data: ListTileThemeData(
+                      dense: true,
+                      minTileHeight: 48,
+                      minLeadingWidth: 24,
+                      horizontalTitleGap: 16,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                      ),
+                      titleTextStyle: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w400,
+                        color: Theme.of(context).colorScheme.onSurface,
+                      ),
+                    ),
+                    child: IconTheme(
+                      data: const IconThemeData(size: 24),
+                      child: SingleChildScrollView(child: builder(context)),
+                    ),
+                  ),
                 ),
               ),
             ),

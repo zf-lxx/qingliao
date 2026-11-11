@@ -29,6 +29,7 @@ class ChatEngine extends ChangeNotifier {
   Json me = {}, privacy = {};
   final Map<String, Json> dialogs = {}, messages = {}, outbox = {}, users = {};
   final Map<String, Json> draftOutbox = {};
+  final Map<String, Json> viewPositions = {};
   bool _flushingDrafts = false;
   List<Json> folders = [];
   final Map<String, Map<String, int?>> readPositions = {};
@@ -65,9 +66,13 @@ class ChatEngine extends ChangeNotifier {
     'draft_outbox': draftOutbox,
     'reactions': reactions,
     'users': users,
+    'view_positions': viewPositions,
   };
   Future<void> persist() => store.save(account, snapshot());
   void restore(Json v) {
+    viewPositions
+      ..clear()
+      ..addAll(obj(v['view_positions']).map((k, v) => MapEntry(k, obj(v))));
     cursor = number(v['cursor']);
     badge = number(v['badge']);
     me = obj(v['me']);
