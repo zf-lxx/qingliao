@@ -64,6 +64,7 @@ void main() {
       await tester.tap(find.text('进入'));
       await tester.pumpAndSettle();
       expect(find.text('第二页'), findsOneWidget);
+      expect(find.text('进入'), findsOneWidget);
       final drag = await tester.startGesture(const Offset(10, 200));
       await drag.moveBy(const Offset(90, 0));
       await tester.pump();

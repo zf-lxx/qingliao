@@ -85,7 +85,7 @@ void main() {
       expect(find.byType(ChatInfoPage), findsOneWidget);
       expect(find.text('媒体'), findsOneWidget);
       expect(find.textContaining('非全部历史统计'), findsOneWidget);
-      await tester.tap(find.byTooltip('返回'));
+      await tester.tap(find.byTooltip('返回').last);
       await tester.pumpAndSettle();
       expect(find.byType(ChatInfoPage), findsNothing);
       expect(tester.takeException(), isNull);

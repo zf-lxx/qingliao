@@ -14,7 +14,6 @@ import 'core/storage.dart';
 import 'core/push.dart';
 import 'widgets/connection_title.dart';
 import 'widgets/reply_quote.dart';
-import 'widgets/image_viewer.dart';
 import 'ui/motion/tg_motion.dart';
 import 'ui/home/chat_list_widgets.dart';
 import 'ui/chat/chat_widgets.dart';
@@ -22,7 +21,10 @@ import 'ui/theme/tg_tokens.dart';
 import 'ui/profile/chat_info_page.dart';
 import 'cells/message_layout.dart';
 import 'cells/text_message_cell.dart';
+import 'compositor/insert_shift.dart';
 import 'compositor/message_enter_transition.dart';
+import 'media/chat_image.dart';
+import 'media/media_cache.dart';
 
 const bg = TgTokens.background,
     panel = TgTokens.card,
@@ -1419,6 +1421,8 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   final composerKey = GlobalKey();
   final _shellKey = GlobalKey();
   final _enter = MessageEnterController();
+  int _insertGen = 0, _lastCount = 0;
+  String? _lastTail;
   Json? reply, editing;
   Timer? draftTimer, _highlightTimer;
   final Map<String, GlobalKey> _messageKeys = {};
@@ -1556,7 +1560,6 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
       older = false,
       draftDirty = false;
   String? loadError;
-  int _lastLength = 0;
   @override
   void initState() {
     super.initState();
@@ -1619,10 +1622,16 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
 
   void changed() {
     if (!mounted) return;
-    final count = e.history(widget.cid).length;
+    final items = e.history(widget.cid);
+    final count = items.length;
+    final tail = items.isEmpty ? null : items.last['id'] as String?;
     final nearBottom = !scroll.hasClients || scroll.position.extentAfter < 130;
+    final grew = count > _lastCount && tail != null && tail != _lastTail;
+    if (grew && !_positioning && _initialPositioned) _insertGen++;
+    _lastCount = count;
+    _lastTail = tail;
     setState(() {});
-    if (count != _lastLength &&
+    if (grew &&
         nearBottom &&
         !older &&
         !loading &&
@@ -1630,7 +1639,6 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
         _initialPositioned) {
       bottom();
     }
-    _lastLength = count;
     if (!loading && nearBottom) markRead();
   }
 
@@ -2120,47 +2128,58 @@ class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
                                                 ),
                                               ),
                                             ),
-                                          AnimatedContainer(
-                                            duration: const Duration(
-                                              milliseconds: 200,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: _highlighted == m['id']
-                                                  ? blue.withValues(alpha: .18)
-                                                  : Colors.transparent,
-                                              borderRadius:
-                                                  BorderRadius.circular(14),
-                                            ),
-                                            child: TgSelectableMessage(
-                                              selecting: selection.isNotEmpty,
-                                              selected: selection.contains(
-                                                m['id'],
+                                          InsertShift(
+                                            generation: _insertGen,
+                                            amount: 56,
+                                            enabled:
+                                                m['id'] != history.last['id'],
+                                            child: AnimatedContainer(
+                                              duration: const Duration(
+                                                milliseconds: 200,
                                               ),
-                                              onToggle: () => toggleSelected(m),
-                                              child: Opacity(
-                                                opacity: _enter.hides(m['id'])
-                                                    ? 0
-                                                    : 1,
-                                                child: Bubble(
-                                                  engine: e,
-                                                  onQuoteTap: jumpToReply,
-                                                  message: m,
-                                                  grouped:
-                                                      index < history.length &&
-                                                      history[index]['sender_id'] ==
-                                                          m['sender_id'] &&
-                                                      messageDay(
-                                                            history[index],
-                                                          ) ==
-                                                          messageDay(m),
-                                                  onLongPress: () => actions(m),
-                                                  onReply: () {
-                                                    setState(() {
-                                                      reply = m;
-                                                      editing = null;
-                                                    });
-                                                    textChanged(input.text);
-                                                  },
+                                              decoration: BoxDecoration(
+                                                color: _highlighted == m['id']
+                                                    ? blue.withValues(
+                                                        alpha: .18,
+                                                      )
+                                                    : Colors.transparent,
+                                                borderRadius:
+                                                    BorderRadius.circular(14),
+                                              ),
+                                              child: TgSelectableMessage(
+                                                selecting: selection.isNotEmpty,
+                                                selected: selection.contains(
+                                                  m['id'],
+                                                ),
+                                                onToggle: () =>
+                                                    toggleSelected(m),
+                                                child: Opacity(
+                                                  opacity: _enter.hides(m['id'])
+                                                      ? 0
+                                                      : 1,
+                                                  child: Bubble(
+                                                    engine: e,
+                                                    onQuoteTap: jumpToReply,
+                                                    message: m,
+                                                    grouped:
+                                                        index <
+                                                            history.length &&
+                                                        history[index]['sender_id'] ==
+                                                            m['sender_id'] &&
+                                                        messageDay(
+                                                              history[index],
+                                                            ) ==
+                                                            messageDay(m),
+                                                    onLongPress: () =>
+                                                        actions(m),
+                                                    onReply: () {
+                                                      setState(() {
+                                                        reply = m;
+                                                        editing = null;
+                                                      });
+                                                      textChanged(input.text);
+                                                    },
+                                                  ),
                                                 ),
                                               ),
                                             ),
@@ -2572,9 +2591,10 @@ class _BubbleState extends State<Bubble> {
         m['kind'] == 'image' &&
         id != null &&
         id.isNotEmpty &&
-        id != mediaId) {
+        id != mediaId &&
+        e.api != null) {
       mediaId = id;
-      image = e.api!.media(id);
+      image = MediaCache.load(e.api!, id);
     }
     if (usesNativeTextCell(m) && reactions.isEmpty) {
       return _interactive(
@@ -2650,46 +2670,17 @@ class _BubbleState extends State<Bubble> {
                       onTap: () => widget.onQuoteTap?.call(replyId),
                     ),
                   if (!deleted && image != null)
-                    FutureBuilder<Uint8List>(
-                      future: image,
-                      builder: (_, s) => s.hasData
-                          ? GestureDetector(
-                              onTap: () => openImageViewer(
-                                context,
-                                bytes: s.data!,
-                                tag: 'media-${m['id']}',
-                                sender:
-                                    e.users[m['sender_id']]?['display_name'] ??
-                                    (mine ? '你' : '成员'),
-                                time: '$stamp · 中国标准时间 UTC+8',
-                              ),
-                              child: ClipRRect(
-                                borderRadius: BorderRadius.circular(10),
-                                child: Hero(
-                                  tag: 'media-${m['id']}',
-                                  createRectTween: (begin, end) =>
-                                      ImageRectTween(begin: begin, end: end),
-                                  child: Image.memory(
-                                    s.data!,
-                                    width: 240,
-                                    fit: BoxFit.contain,
-                                  ),
-                                ),
-                              ),
-                            )
-                          : Padding(
-                              padding: const EdgeInsets.all(25),
-                              child: s.hasError
-                                  ? TextButton(
-                                      onPressed: () => setState(
-                                        () => image = e.api!.media(mediaId!),
-                                      ),
-                                      child: const Text('图片加载失败，重试'),
-                                    )
-                                  : const CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                            ),
+                    ChatImage(
+                      future: image!,
+                      heroTag: 'media-${m['id']}',
+                      sender:
+                          e.users[m['sender_id']]?['display_name'] ??
+                          (mine ? '你' : '成员'),
+                      time: '$stamp · 中国标准时间 UTC+8',
+                      onRetry: () => setState(() {
+                        MediaCache.forget(mediaId!);
+                        image = MediaCache.load(e.api!, mediaId!);
+                      }),
                     ),
                   if (deleted)
                     const Text(

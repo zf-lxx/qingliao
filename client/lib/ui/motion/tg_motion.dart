@@ -164,7 +164,7 @@ class TgPageRoute<T> extends PageRoute<T> {
   @override
   Duration get reverseTransitionDuration => duration;
   @override
-  bool get opaque => true;
+  bool get opaque => false;
   @override
   bool get maintainState => true;
   @override
@@ -198,8 +198,10 @@ class TgPageRoute<T> extends PageRoute<T> {
         final secondary = navigator?.userGestureInProgress == true
             ? secondaryAnimation.value
             : tgEaseOutQuint.transform(secondaryAnimation.value);
+        final parallax = width * .25 * secondary;
+        final scrim = (120 / 255) * (secondary < .8 ? secondary / .8 : 1);
         return Transform.translate(
-          offset: Offset(width * (1 - primary) - width * .25 * secondary, 0),
+          offset: Offset(width * (1 - primary) - parallax, 0),
           child: Stack(
             children: [
               Positioned.fill(child: child!),
@@ -207,7 +209,7 @@ class TgPageRoute<T> extends PageRoute<T> {
                 Positioned.fill(
                   child: IgnorePointer(
                     child: ColoredBox(
-                      color: Colors.black.withValues(alpha: .30 * secondary),
+                      color: Colors.black.withValues(alpha: scrim),
                     ),
                   ),
                 ),
@@ -445,6 +447,7 @@ class TgBackdropTransitions extends PageTransitionsBuilder {
         final p = Navigator.of(context).userGestureInProgress
             ? secondaryAnimation.value
             : tgEaseOutQuint.transform(secondaryAnimation.value);
+        final scrim = (120 / 255) * (p < .8 ? p / .8 : 1);
         return Transform.translate(
           offset: Offset(-MediaQuery.sizeOf(context).width * .25 * p, 0),
           child: Stack(
@@ -454,7 +457,7 @@ class TgBackdropTransitions extends PageTransitionsBuilder {
                 Positioned.fill(
                   child: IgnorePointer(
                     child: ColoredBox(
-                      color: Colors.black.withValues(alpha: .30 * p),
+                      color: Colors.black.withValues(alpha: scrim),
                     ),
                   ),
                 ),

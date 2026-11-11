@@ -1,10 +1,15 @@
+import 'dart:async';
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:qingliao/cells/message_layout.dart';
 import 'package:qingliao/cells/text_message_cell.dart';
+import 'package:qingliao/compositor/insert_shift.dart';
 import 'package:qingliao/compositor/message_enter_transition.dart';
 import 'package:qingliao/core/storage.dart';
 import 'package:qingliao/main.dart';
+import 'package:qingliao/media/chat_image.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'engine_live_test.dart' show MemoryVault;
@@ -125,5 +130,44 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await engine.shutdown();
     await tester.runAsync(store.close);
+  });
+
+  testWidgets('image box keeps 240x160 before bytes arrive', (tester) async {
+    final pending = Completer<Uint8List>();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatImage(
+            future: pending.future,
+            heroTag: 'img',
+            sender: '你',
+            time: '00:04',
+            onRetry: () {},
+          ),
+        ),
+      ),
+    );
+    final box = tester.getSize(find.byKey(const Key('chat-image-box')));
+    expect(box.width, ChatImage.boxWidth);
+    expect(box.height, ChatImage.boxHeight);
+    pending.complete(Uint8List(8));
+  });
+
+  testWidgets('insert shift starts below and settles at zero', (tester) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: InsertShift(
+          generation: 1,
+          amount: 56,
+          enabled: true,
+          child: SizedBox(width: 40, height: 20, child: Text('旧消息')),
+        ),
+      ),
+    );
+    await tester.pump();
+    final start = tester.getTopLeft(find.text('旧消息')).dy;
+    await tester.pump(const Duration(milliseconds: 250));
+    final end = tester.getTopLeft(find.text('旧消息')).dy;
+    expect(start, greaterThan(end));
   });
 }
