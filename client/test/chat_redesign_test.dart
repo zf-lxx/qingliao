@@ -156,4 +156,50 @@ void main() {
     expect(find.text('菜单内容'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('home tabs use TG row heights and labelled bottom nav', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              TgChatRow(
+                avatar: const SizedBox(width: 52, height: 52),
+                title: '会话',
+                preview: '预览',
+                time: '12:00',
+                unread: 2,
+                onTap: () {},
+                onLongPress: () {},
+              ),
+              TgUserRow(
+                avatar: const SizedBox(width: 46, height: 46),
+                name: '联系人甲',
+                status: '在线',
+                online: true,
+                onTap: () {},
+              ),
+              const TgSettingsCell(title: '隐私与已读回执', value: '开启'),
+              const TgSectionHeader('账号'),
+            ],
+          ),
+          bottomNavigationBar: TgBottomNav(
+            selected: 0,
+            badge: 3,
+            onChanged: (_) {},
+          ),
+        ),
+      ),
+    );
+    expect(tester.getSize(find.byType(TgChatRow)).height, 70);
+    expect(tester.getSize(find.byType(TgUserRow)).height, 58);
+    expect(tester.getSize(find.byType(TgSettingsCell)).height, 50);
+    expect(find.text('聊天'), findsOneWidget);
+    expect(find.text('联系人'), findsOneWidget);
+    expect(find.text('设置'), findsOneWidget);
+    expect(find.text('个人资料'), findsOneWidget);
+    expect(find.text('账号'), findsOneWidget);
+  });
 }

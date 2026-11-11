@@ -452,97 +452,172 @@ class _DialogsPageState extends State<DialogsPage> {
   bool showCompose = true;
   void newChat() => Navigator.push(context, chatRoute(NewChatPage(engine: e)));
   void profile() => Navigator.push(context, chatRoute(ProfilePage(engine: e)));
-  Widget navigationBody() {
-    final users = e.users.values.where((u) => u['id'] != e.uid).toList();
-    if (nav == 1) {
-      return ListView(
+  Future<void> openDirect(Json u) async {
+    await guard(context, () async {
+      final d = obj(
+        await e.api!.call('POST', '/conversations', {
+          'kind': 'direct',
+          'member_ids': [u['id']],
+        }),
+      );
+      await e.refreshDialogs();
+      if (!mounted) return;
+      Navigator.push(
+        context,
+        chatRoute(
+          ChatPage(
+            engine: e,
+            cid: d['id'],
+            title: u['display_name'] ?? u['handle'] ?? '用户',
+          ),
+        ),
+      );
+    });
+  }
+
+  Widget contactsBody() {
+    final users = e.users.values.where((u) => u['id'] != e.uid).toList()
+      ..sort(
+        (a, b) => '${a['display_name'] ?? a['handle']}'.compareTo(
+          '${b['display_name'] ?? b['handle']}',
+        ),
+      );
+    return ColoredBox(
+      color: bg,
+      child: ListView(
         children: [
-          ListTile(
-            leading: const Icon(Icons.person_add_alt_1_rounded),
-            title: const Text('搜索用户 / 新建群聊'),
+          TgSettingsCell(
+            icon: Icons.person_add_alt_1_rounded,
+            title: '添加联系人',
             onTap: newChat,
           ),
-          const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text('最近联系人', style: TextStyle(color: muted)),
+          TgSettingsCell(
+            icon: Icons.group_add_rounded,
+            title: '新建群聊',
+            divider: false,
+            onTap: newChat,
           ),
-          for (final u in users)
-            ListTile(
-              leading: Avatar(u['display_name'] ?? u['handle'] ?? '?'),
-              title: Text(u['display_name'] ?? u['handle'] ?? '用户'),
-              subtitle: Text('@${u['handle'] ?? ''}'),
-              onTap: () => guard(context, () async {
-                final d = obj(
-                  await e.api!.call('POST', '/conversations', {
-                    'kind': 'direct',
-                    'member_ids': [u['id']],
-                  }),
-                );
-                await e.refreshDialogs();
-                if (!mounted) return;
-                Navigator.push(
-                  context,
-                  chatRoute(
-                    ChatPage(
-                      engine: e,
-                      cid: d['id'],
-                      title: u['display_name'] ?? u['handle'] ?? '用户',
-                    ),
-                  ),
-                );
-              }),
-            ),
+          const TgSectionHeader('最近联系人'),
           if (users.isEmpty)
             const Padding(
-              padding: EdgeInsets.all(24),
-              child: Text('搜索用户名开始新的聊天，常用联系人会显示在这里。'),
-            ),
+              padding: EdgeInsets.fromLTRB(16, 24, 16, 24),
+              child: Text(
+                '搜索用户名开始新的聊天，常用联系人会显示在这里。',
+                style: TextStyle(color: muted),
+              ),
+            )
+          else
+            for (var i = 0; i < users.length; i++)
+              TgUserRow(
+                avatar: Avatar(
+                  users[i]['display_name'] ?? users[i]['handle'] ?? '?',
+                  radius: 23,
+                ),
+                name: users[i]['display_name'] ?? users[i]['handle'] ?? '用户',
+                status: users[i]['online'] == true
+                    ? '在线'
+                    : '@${users[i]['handle'] ?? ''}',
+                online: users[i]['online'] == true,
+                divider: i != users.length - 1,
+                onTap: () => openDirect(users[i]),
+              ),
         ],
-      );
-    }
-    return ListView(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-      children: [
-        Center(
-          child: Avatar(
-            e.me['display_name'] ?? e.me['handle'] ?? '我',
-            radius: 44,
-          ),
-        ),
-        const SizedBox(height: 16),
-        Center(
-          child: Text(
-            e.me['display_name'] ?? e.me['handle'] ?? '我',
-            style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w700),
-          ),
-        ),
-        const SizedBox(height: 8),
-        Center(
-          child: Text(
-            '@${e.me['handle'] ?? ''}',
-            style: const TextStyle(color: muted),
-          ),
-        ),
-        const SizedBox(height: 24),
-        ListTile(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          tileColor: Theme.of(context).colorScheme.surfaceContainer,
-          leading: const Icon(Icons.manage_accounts_rounded),
-          title: Text(nav == 2 ? '账号、隐私与回执' : '编辑个人资料'),
-          subtitle: const Text('昵称、简介、已读回执和退出登录'),
-          trailing: const Icon(Icons.chevron_right_rounded),
-          onTap: profile,
-        ),
-        const SizedBox(height: 20),
-        const ListTile(
-          leading: Icon(Icons.info_outline_rounded),
-          title: Text('轻聊 0.2.0'),
-          subtitle: Text('界面重绘 · 自主实现的 Telegram 风格动效'),
-        ),
-      ],
+      ),
     );
+  }
+
+  Widget settingsBody() {
+    return ColoredBox(
+      color: bg,
+      child: ListView(
+        children: [
+          const TgSectionHeader('账号'),
+          TgSettingsCell(
+            icon: Icons.person_rounded,
+            title: e.me['display_name'] ?? e.me['handle'] ?? '我',
+            subtitle: '@${e.me['handle'] ?? ''}',
+            onTap: profile,
+          ),
+          TgSettingsCell(
+            icon: Icons.lock_outline_rounded,
+            title: '隐私与已读回执',
+            value: e.privacy['read_receipts_enabled'] == true ? '开启' : '关闭',
+            onTap: profile,
+          ),
+          TgSettingsCell(
+            icon: Icons.dns_outlined,
+            title: '服务器',
+            value: Uri.tryParse('${e.session?['server'] ?? ''}')?.host ?? '',
+            divider: false,
+            onTap: profile,
+          ),
+          const TgSectionHeader('关于'),
+          const TgSettingsCell(
+            icon: Icons.info_outline_rounded,
+            title: '轻聊 0.2.0',
+            subtitle: '独立协议客户端 · 非 Telegram',
+            divider: false,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget meBody() {
+    return ColoredBox(
+      color: bg,
+      child: ListView(
+        children: [
+          const SizedBox(height: 18),
+          Center(
+            child: Avatar(
+              e.me['display_name'] ?? e.me['handle'] ?? '我',
+              radius: 44,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Center(
+            child: Text(
+              e.me['display_name'] ?? e.me['handle'] ?? '我',
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Center(
+            child: Text(
+              '@${e.me['handle'] ?? ''}',
+              style: const TextStyle(color: muted, fontSize: 15),
+            ),
+          ),
+          const SizedBox(height: 18),
+          TgSettingsCell(
+            icon: Icons.edit_outlined,
+            title: '编辑资料',
+            onTap: profile,
+          ),
+          TgSettingsCell(
+            icon: Icons.alternate_email_rounded,
+            title: '用户名',
+            value: '@${e.me['handle'] ?? ''}',
+            divider: false,
+            onTap: profile,
+          ),
+          const TgSectionHeader('设置'),
+          TgSettingsCell(
+            icon: Icons.settings_outlined,
+            title: '账号、隐私与回执',
+            onTap: profile,
+            divider: false,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget navigationBody() {
+    if (nav == 1) return contactsBody();
+    if (nav == 2) return settingsBody();
+    return meBody();
   }
 
   ChatEngine get e => widget.engine;
@@ -746,7 +821,7 @@ class _DialogsPageState extends State<DialogsPage> {
               ),
             ),
             child: TgChatRow(
-              avatar: Avatar(name, radius: 24),
+              avatar: Avatar(name, radius: 26),
               title: name,
               preview: preview,
               time: last.isEmpty ? '' : shortTime(last['created_at']),
@@ -884,7 +959,7 @@ class _DialogsPageState extends State<DialogsPage> {
                 SliverToBoxAdapter(
                   child: TgChatRow(
                     avatar: CircleAvatar(
-                      radius: 24,
+                      radius: 26,
                       backgroundColor: Theme.of(context)
                           .colorScheme
                           .surfaceContainerHighest,
@@ -932,12 +1007,11 @@ class _DialogsPageState extends State<DialogsPage> {
         ),
       );
       return Scaffold(
-        extendBody: true,
         backgroundColor: bg,
         appBar: nav == 0
             ? null
             : AppBar(
-                backgroundColor: bg,
+                backgroundColor: panel,
                 elevation: 0,
                 toolbarHeight: 56,
                 centerTitle: false,
@@ -945,10 +1019,19 @@ class _DialogsPageState extends State<DialogsPage> {
                 title: Text(
                   ['轻聊', '联系人', '设置', '个人资料'][nav],
                   style: const TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w700,
+                    fontSize: 20,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
+                actions: nav == 1
+                    ? [
+                        IconButton(
+                          tooltip: '搜索用户',
+                          onPressed: newChat,
+                          icon: const Icon(Icons.search_rounded),
+                        ),
+                      ]
+                    : null,
               ),
         body: nav == 0 ? list : navigationBody(),
         bottomNavigationBar: TgBottomNav(
@@ -3267,127 +3350,136 @@ class _ProfilePageState extends State<ProfilePage> {
     super.dispose();
   }
 
+  Future<void> saveName() => guard(context, () async {
+    await e.api!.call('PATCH', '/me', {
+      'display_name': name.text.trim(),
+      'avatar_media_id': e.me['avatar_media_id'] ?? '',
+    });
+    e.me = obj(await e.api!.call('GET', '/me'));
+    await e.persist();
+    if (mounted) setState(() {});
+  });
+
+  Future<void> setReceipts(bool v) => guard(context, () async {
+    await e.api!.call('PUT', '/me/privacy', {'read_receipts_enabled': v});
+    e.privacy = obj(await e.api!.call('GET', '/me/privacy'));
+    e.readPositions.clear();
+    await e.refreshDialogs();
+    if (mounted) setState(() {});
+  });
+
+  Future<void> confirmLogout({bool localOnly = false}) async {
+    final ok = await showTgDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('退出当前账号？'),
+        content: const Text('将撤销本设备登录并清理本地缓存，未发送的消息也会清除。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(c),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(c, true),
+            child: const Text('退出'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && mounted) {
+      await guard(context, () async {
+        await e.logout(localOnly: localOnly);
+        if (mounted) Navigator.pop(context);
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) => AnimatedBuilder(
     animation: e,
     builder: (_, _) => Scaffold(
-      appBar: AppBar(title: const Text('个人资料与设置')),
+      backgroundColor: bg,
+      appBar: AppBar(backgroundColor: panel, title: const Text('编辑资料')),
       body: ListView(
-        padding: const EdgeInsets.all(20),
         children: [
-          Center(child: Avatar(e.me['display_name'] ?? '我', radius: 34)),
-          const SizedBox(height: 12),
+          const SizedBox(height: 18),
+          Center(child: Avatar(e.me['display_name'] ?? '我', radius: 44)),
+          const SizedBox(height: 8),
           Center(
             child: Text(
               '@${e.me['handle'] ?? ''}',
-              style: const TextStyle(color: muted),
+              style: const TextStyle(color: muted, fontSize: 15),
             ),
           ),
-          const SizedBox(height: 24),
-          TextField(
-            controller: name,
-            decoration: const InputDecoration(labelText: '昵称'),
-          ),
-          TextButton(
-            onPressed: () => guard(context, () async {
-              await e.api!.call('PATCH', '/me', {
-                'display_name': name.text.trim(),
-                'avatar_media_id': e.me['avatar_media_id'] ?? '',
-              });
-              e.me = obj(await e.api!.call('GET', '/me'));
-              await e.persist();
-              if (mounted) setState(() {});
-            }),
-            child: const Text('保存昵称'),
-          ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('公开已读回执'),
-            subtitle: Text(
-              e.privacy['global_read_receipts_enabled'] == false
-                  ? '管理员已全局关闭回执'
-                  : '互惠设置：关闭后也看不到他人的已读',
+          const TgSectionHeader('资料'),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: TextField(
+              controller: name,
+              onSubmitted: (_) => saveName(),
+              decoration: const InputDecoration(labelText: '昵称', isDense: true),
             ),
+          ),
+          TgSettingsCell(
+            icon: Icons.check_rounded,
+            title: '保存昵称',
+            divider: false,
+            onTap: saveName,
+          ),
+          const TgSectionHeader('隐私'),
+          TgCheckCell(
+            title: '公开已读回执',
+            subtitle: e.privacy['global_read_receipts_enabled'] == false
+                ? '管理员已全局关闭回执'
+                : '互惠设置：关闭后也看不到他人的已读',
             value: e.privacy['read_receipts_enabled'] == true,
-            onChanged: (v) => guard(context, () async {
-              await e.api!.call('PUT', '/me/privacy', {
-                'read_receipts_enabled': v,
-              });
-              e.privacy = obj(await e.api!.call('GET', '/me/privacy'));
-              e.readPositions.clear();
-              await e.refreshDialogs();
-              if (mounted) setState(() {});
-            }),
+            divider: false,
+            onChanged: setReceipts,
           ),
-          const Divider(),
-          ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('连接诊断'),
-            subtitle: Text(
-              '${e.connectionStage}${e.lastConnectionFailure.isEmpty ? '' : '\n最近失败：${e.lastConnectionFailure}'}',
+          const TgSectionHeader('连接'),
+          TgSettingsCell(
+            icon: Icons.wifi_tethering_rounded,
+            title: '连接诊断',
+            subtitle:
+                '${e.connectionStage}${e.lastConnectionFailure.isEmpty ? '' : '\n最近失败：${e.lastConnectionFailure}'}',
+          ),
+          TgSettingsCell(
+            icon: Icons.notifications_off_outlined,
+            title: '推送通道：未启用',
+            subtitle:
+                plan?.explanation ??
+                'Mi Push / FCM 为适配接口，未接入 SDK。无后台常驻服务，不承诺锁屏送达。',
+            divider: false,
+          ),
+          const TgSectionHeader('安全边界'),
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 8, 16, 16),
+            child: Text(
+              '这是一款独立的云端聊天应用。没有端到端加密；服务器可访问消息内容。登录令牌保存在 Android 加密存储；消息缓存位于应用私有 SQLite。所有时间显示为中国标准时间 CST（UTC+8）。',
+              style: TextStyle(color: muted, height: 1.6, fontSize: 13),
             ),
           ),
-          const ListTile(
-            contentPadding: EdgeInsets.zero,
-            title: Text('推送通道：未启用'),
-            subtitle: Text(
-              'Mi Push / FCM 为适配接口，未接入 SDK、凭据和通知权限。无后台常驻服务，不承诺锁屏送达。',
-            ),
+          TgSettingsCell(
+            title: e.session?['server'] ?? '',
+            subtitle: '当前服务器',
+            divider: false,
           ),
-          if (plan != null)
-            Text(
-              plan!.explanation,
-              style: const TextStyle(color: muted, fontSize: 12),
-            ),
-          const SizedBox(height: 18),
-          const Text('安全边界', style: TextStyle(color: blue)),
-          const SizedBox(height: 8),
-          const Text(
-            '这是一款独立的云端聊天应用。\n没有端到端加密；服务器可访问消息内容。\n登录令牌保存在 Android 加密存储；消息缓存位于应用私有 SQLite（未额外加密）。\n所有时间显示为中国标准时间 CST（UTC+8）。',
-            style: TextStyle(color: muted, height: 1.7, fontSize: 13),
-          ),
-          const SizedBox(height: 20),
-          Text(
-            e.session?['server'] ?? '',
-            style: const TextStyle(color: muted, fontSize: 12),
-          ),
-          const SizedBox(height: 20),
-          OutlinedButton(
-            onPressed: () async {
-              final ok = await showTgDialog<bool>(
-                context: context,
-                builder: (c) => AlertDialog(
-                  title: const Text('退出当前账号？'),
-                  content: const Text('将撤销本设备登录并清理本地缓存，未发送的消息也会清除。'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(c),
-                      child: const Text('取消'),
-                    ),
-                    TextButton(
-                      onPressed: () => Navigator.pop(c, true),
-                      child: const Text('退出'),
-                    ),
-                  ],
-                ),
-              );
-              if (ok == true && context.mounted) {
-                await guard(context, () async {
-                  await e.logout();
-                  if (context.mounted) Navigator.pop(context);
-                });
-              }
-            },
-            child: const Text('退出登录'),
+          const TgSectionHeader('账号'),
+          TgSettingsCell(
+            icon: Icons.logout_rounded,
+            title: '退出登录',
+            destructive: true,
+            divider: false,
+            onTap: confirmLogout,
           ),
           if (e.suspended && e.error.contains('登录'))
-            TextButton(
-              onPressed: () => guard(context, () async {
-                await e.logout(localOnly: true);
-                if (context.mounted) Navigator.pop(context);
-              }),
-              child: const Text('登录失效：仅清除本地会话'),
+            TgSettingsCell(
+              title: '登录失效：仅清除本地会话',
+              destructive: true,
+              divider: false,
+              onTap: () => confirmLogout(localOnly: true),
             ),
+          const SizedBox(height: 24),
         ],
       ),
     ),
