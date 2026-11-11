@@ -59,7 +59,7 @@ class TgFolderTabs extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final style = DefaultTextStyle.of(context).style
-        .copyWith(fontWeight: FontWeight.w600);
+        .copyWith(fontWeight: FontWeight.w600, fontSize: 15);
     final widths = tabs.map((tab) {
       final t = TextPainter(
         text: TextSpan(text: tab.label, style: style),
@@ -83,9 +83,9 @@ class TgFolderTabs extends StatelessWidget {
     final color = Theme.of(context).colorScheme.primary;
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+      padding: const EdgeInsets.fromLTRB(16, 2, 8, 4),
       child: SizedBox(
-        height: 48,
+        height: 36,
         width: widths.fold<double>(0, (a, b) => a + b) + 7 * (tabs.length - 1),
         child: Stack(
           children: [
@@ -93,9 +93,9 @@ class TgFolderTabs extends StatelessWidget {
               duration: const Duration(milliseconds: 320),
               curve: tgEaseOutQuint,
               left: left,
-              top: 1,
+              top: 0,
               width: widths[target],
-              height: 45,
+              height: 34,
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   color: color.withValues(alpha: .14),
@@ -126,7 +126,7 @@ class TgFolderTabs extends StatelessWidget {
                     ),
                     child: SizedBox(
                       width: widths[i],
-                      height: 48,
+                      height: 36,
                       child: PressableScale(
                         radius: 24,
                         onTap: () => onSelected(tabs[i].id),
@@ -194,7 +194,7 @@ class TgChatRow extends StatelessWidget {
       onLongPress: onLongPress,
       splashFactory: InkRipple.splashFactory,
       child: SizedBox(
-        height: 82,
+        height: 72,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 10, 16, 10),
           child: Row(
@@ -315,7 +315,7 @@ class _TgReorderItemState extends State<TgReorderItem>
   void didUpdateWidget(TgReorderItem old) {
     super.didUpdateWidget(old);
     if (old.index != widget.index) {
-      _from = ((old.index - widget.index) * 82.0).clamp(-800, 800);
+      _from = ((old.index - widget.index) * 72.0).clamp(-800, 800);
       _controller.forward(from: 0);
     }
   }

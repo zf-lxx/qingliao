@@ -433,7 +433,7 @@ class Avatar extends StatelessWidget {
       backgroundColor: colors[name.hashCode.abs() % colors.length],
       child: Text(
         name.isEmpty ? '聊' : String.fromCharCode(name.runes.first),
-        style: const TextStyle(color: Colors.white, fontSize: 20),
+        style: TextStyle(color: Colors.white, fontSize: radius >= 28 ? 20 : 18),
       ),
     );
   }
@@ -693,246 +693,262 @@ class _DialogsPageState extends State<DialogsPage> {
       final archivedCount = e.dialogs.values
           .where((d) => d['archived'] == true)
           .length;
-      final list = Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 2),
-            child: TextField(
-              onChanged: (v) => setState(() => query = v),
-              decoration: InputDecoration(
-                hintText: '搜索会话',
-                prefixIcon: const Icon(Icons.search_rounded),
-                isDense: true,
-                filled: true,
-                fillColor: Theme.of(context).colorScheme.surfaceContainerHighest
-                    .withValues(alpha: .6),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(28),
-                  borderSide: BorderSide.none,
+      Widget dialogRow(int i) {
+        final d = items[i],
+            last = obj(d['last_message']),
+            draft = obj(d['draft']);
+        final name = title(d);
+        final unread = number(d['unread_count']);
+        final isMuted =
+            number(d['notification_mute_until']) >
+            DateTime.now().millisecondsSinceEpoch ~/ 1000;
+        final preview = draft['text']?.toString().isNotEmpty == true
+            ? '草稿：${draft['text']}'
+            : last['deleted'] == true
+            ? '消息已撤回'
+            : last['kind'] == 'image'
+            ? '图片 ${last['text'] ?? ''}'
+            : last['text'] ?? '开始对话';
+        return TgReorderItem(
+          key: ValueKey(d['id']),
+          index: i,
+          child: Dismissible(
+            key: ValueKey('swipe-${d['id']}'),
+            confirmDismiss: (direction) async {
+              await guard(
+                context,
+                () => e.state(
+                  d['id'],
+                  direction == DismissDirection.endToStart
+                      ? {'archived': d['archived'] != true}
+                      : {'manual_unread': d['manual_unread'] != true},
                 ),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(28),
-                  borderSide: BorderSide.none,
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(28),
-                  borderSide: BorderSide(color: blue.withValues(alpha: .5)),
-                ),
+              );
+              return false;
+            },
+            background: Container(
+              alignment: Alignment.centerLeft,
+              padding: const EdgeInsets.only(left: 24),
+              color: blue,
+              child: const Icon(
+                Icons.mark_chat_unread_rounded,
+                color: Colors.white,
+              ),
+            ),
+            secondaryBackground: Container(
+              alignment: Alignment.centerRight,
+              padding: const EdgeInsets.only(right: 24),
+              color: const Color(0xff7793a5),
+              child: Icon(
+                archived ? Icons.unarchive_rounded : Icons.archive_rounded,
+                color: Colors.white,
+              ),
+            ),
+            child: TgChatRow(
+              avatar: Avatar(name, radius: 24),
+              title: name,
+              preview: preview,
+              time: last.isEmpty ? '' : shortTime(last['created_at']),
+              unread: unread > 0
+                  ? unread
+                  : d['manual_unread'] == true
+                  ? 1
+                  : 0,
+              muted: isMuted,
+              pinned: number(d['pinned_order']) > 0,
+              mention: number(d['unread_mention_count']) > 0,
+              outgoing: last['sender_id'] == e.uid && draft.isEmpty,
+              read:
+                  d['read_receipts_visible'] == true &&
+                  number(d['last_message_read_count']) > 0,
+              draft: draft.isNotEmpty,
+              onLongPress: () => menu(d),
+              onTap: () => Navigator.push(
+                context,
+                chatRoute(ChatPage(engine: e, cid: d['id'], title: name)),
               ),
             ),
           ),
-          Row(
-            children: [
-              Expanded(
-                child: TgFolderTabs(
-                  selected: folder,
-                  onSelected: (id) => setState(() => folder = id),
-                  tabs: [
-                    (id: '', label: '全部', count: e.badge),
-                    for (final f in e.folders)
-                      (
-                        id: '${f['id']}',
-                        label: '${f['name']}',
-                        count: number(f['unread_count']),
-                      ),
-                  ],
+        );
+      }
+
+      final list = NotificationListener<ScrollUpdateNotification>(
+        onNotification: (n) {
+          if (n.depth == 0 && (n.scrollDelta ?? 0).abs() > 3) {
+            final v = (n.scrollDelta ?? 0) < 0;
+            if (v != showCompose) setState(() => showCompose = v);
+          }
+          return false;
+        },
+        child: RefreshIndicator(
+          onRefresh: e.refreshDialogs,
+          child: CustomScrollView(
+            slivers: [
+              SliverAppBar(
+                pinned: false,
+                floating: false,
+                backgroundColor: bg,
+                elevation: 0,
+                toolbarHeight: 52,
+                titleSpacing: 16,
+                title: ConnectionTitle(
+                  engine: e,
+                  title: archived ? '归档聊天' : '轻聊',
+                  style: const TextStyle(
+                    fontSize: 26,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: -.4,
+                  ),
                 ),
               ),
-              TgIconButton(
-                tooltip: '新建文件夹',
-                icon: Icons.add_rounded,
-                onPressed: makeFolder,
-                size: 38,
-              ),
-              const SizedBox(width: 8),
-            ],
-          ),
-          if (archivedCount > 0 || archived)
-            ListTile(
-              dense: true,
-              leading: Container(
-                width: 48,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(22),
-                ),
-                child: Icon(
-                  archived ? Icons.inbox_rounded : Icons.archive_rounded,
-                  color: muted,
-                ),
-              ),
-              title: Text(
-                archived ? '返回全部聊天' : '已归档的聊天',
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              trailing: Text(
-                '$archivedCount',
-                style: const TextStyle(color: muted),
-              ),
-              onTap: () => setState(() => archived = !archived),
-            ),
-          Expanded(
-            child: NotificationListener<ScrollUpdateNotification>(
-              onNotification: (n) {
-                if (n.depth == 0 && (n.scrollDelta ?? 0).abs() > 3) {
-                  final v = (n.scrollDelta ?? 0) < 0;
-                  if (v != showCompose) setState(() => showCompose = v);
-                }
-                return false;
-              },
-              child: RefreshIndicator(
-                onRefresh: e.refreshDialogs,
-                child: items.isEmpty
-                    ? ListView(
-                        children: const [
-                          SizedBox(height: 100),
-                          Icon(Icons.forum_outlined, size: 50, color: muted),
-                          SizedBox(height: 18),
-                          Center(
-                            child: Text(
-                              '还没有对话，点右下角开始聊天',
-                              style: TextStyle(color: muted),
+              SliverPersistentHeader(
+                pinned: true,
+                delegate: _SearchHeader(
+                  child: ColoredBox(
+                    color: bg,
+                    child: Column(
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+                          child: SizedBox(
+                            height: 40,
+                            child: TextField(
+                              onChanged: (v) => setState(() => query = v),
+                              style: const TextStyle(fontSize: 16),
+                              decoration: InputDecoration(
+                                hintText: '搜索',
+                                prefixIcon: const Icon(
+                                  Icons.search_rounded,
+                                  size: 22,
+                                ),
+                                isDense: true,
+                                filled: true,
+                                fillColor: Theme.of(context)
+                                    .colorScheme
+                                    .surfaceContainerHighest
+                                    .withValues(alpha: .55),
+                                contentPadding: const EdgeInsets.symmetric(
+                                  vertical: 8,
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(22),
+                                  borderSide: BorderSide.none,
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(22),
+                                  borderSide: BorderSide.none,
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(22),
+                                  borderSide: BorderSide(
+                                    color: blue.withValues(alpha: .5),
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
-                        ],
-                      )
-                    : ListView.builder(
-                        padding: const EdgeInsets.only(bottom: 88),
-                        itemCount: items.length,
-                        findChildIndexCallback: (key) {
-                          final i = items.indexWhere(
-                            (d) => ValueKey(d['id']) == key,
-                          );
-                          return i < 0 ? null : i;
-                        },
-                        itemBuilder: (context, i) {
-                          final d = items[i],
-                              last = obj(d['last_message']),
-                              draft = obj(d['draft']);
-                          final name = title(d);
-                          final unread = number(d['unread_count']);
-                          final isMuted =
-                              number(d['notification_mute_until']) >
-                              DateTime.now().millisecondsSinceEpoch ~/ 1000;
-                          final preview =
-                              draft['text']?.toString().isNotEmpty == true
-                              ? '草稿：${draft['text']}'
-                              : last['deleted'] == true
-                              ? '消息已撤回'
-                              : last['kind'] == 'image'
-                              ? '图片 ${last['text'] ?? ''}'
-                              : last['text'] ?? '开始对话';
-                          return TgReorderItem(
-                            key: ValueKey(d['id']),
-                            index: i,
-                            child: Dismissible(
-                              key: ValueKey('swipe-${d['id']}'),
-                              confirmDismiss: (direction) async {
-                                await guard(
-                                  context,
-                                  () => e.state(
-                                    d['id'],
-                                    direction == DismissDirection.endToStart
-                                        ? {'archived': d['archived'] != true}
-                                        : {
-                                            'manual_unread':
-                                                d['manual_unread'] != true,
-                                          },
-                                  ),
-                                );
-                                return false;
-                              },
-                              background: Container(
-                                alignment: Alignment.centerLeft,
-                                padding: const EdgeInsets.only(left: 24),
-                                color: blue,
-                                child: const Icon(
-                                  Icons.mark_chat_unread_rounded,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              secondaryBackground: Container(
-                                alignment: Alignment.centerRight,
-                                padding: const EdgeInsets.only(right: 24),
-                                color: const Color(0xff7793a5),
-                                child: Icon(
-                                  archived
-                                      ? Icons.unarchive_rounded
-                                      : Icons.archive_rounded,
-                                  color: Colors.white,
-                                ),
-                              ),
-                              child: TgChatRow(
-                                avatar: Avatar(name, radius: 29),
-                                title: name,
-                                preview: preview,
-                                time: last.isEmpty
-                                    ? ''
-                                    : shortTime(last['created_at']),
-                                unread: unread > 0
-                                    ? unread
-                                    : d['manual_unread'] == true
-                                    ? 1
-                                    : 0,
-                                muted: isMuted,
-                                pinned: number(d['pinned_order']) > 0,
-                                mention: number(d['unread_mention_count']) > 0,
-                                outgoing:
-                                    last['sender_id'] == e.uid && draft.isEmpty,
-                                read:
-                                    d['read_receipts_visible'] == true &&
-                                    number(d['last_message_read_count']) > 0,
-                                draft: draft.isNotEmpty,
-                                onLongPress: () => menu(d),
-                                onTap: () => Navigator.push(
-                                  context,
-                                  chatRoute(
-                                    ChatPage(
-                                      engine: e,
-                                      cid: d['id'],
-                                      title: name,
+                        ),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TgFolderTabs(
+                                selected: folder,
+                                onSelected: (id) => setState(() => folder = id),
+                                tabs: [
+                                  (id: '', label: '全部', count: e.badge),
+                                  for (final f in e.folders)
+                                    (
+                                      id: '${f['id']}',
+                                      label: '${f['name']}',
+                                      count: number(f['unread_count']),
                                     ),
-                                  ),
-                                ),
+                                ],
                               ),
                             ),
-                          );
-                        },
-                      ),
+                            TgIconButton(
+                              tooltip: '新建文件夹',
+                              icon: Icons.add_rounded,
+                              onPressed: makeFolder,
+                              size: 32,
+                            ),
+                            const SizedBox(width: 6),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ),
-            ),
+              if (archivedCount > 0 || archived)
+                SliverToBoxAdapter(
+                  child: TgChatRow(
+                    avatar: CircleAvatar(
+                      radius: 24,
+                      backgroundColor: Theme.of(context)
+                          .colorScheme
+                          .surfaceContainerHighest,
+                      child: Icon(
+                        archived ? Icons.inbox_rounded : Icons.archive_rounded,
+                        color: muted,
+                      ),
+                    ),
+                    title: archived ? '返回全部聊天' : '已归档的聊天',
+                    preview: archivedCount > 0 ? '$archivedCount 个对话' : '',
+                    time: '',
+                    unread: 0,
+                    onTap: () => setState(() => archived = !archived),
+                    onLongPress: () {},
+                  ),
+                ),
+              if (items.isEmpty)
+                const SliverFillRemaining(
+                  hasScrollBody: false,
+                  child: Center(
+                    child: Text(
+                      '还没有对话，点右下角开始聊天',
+                      style: TextStyle(color: muted),
+                    ),
+                  ),
+                )
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.only(bottom: 96),
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, i) => dialogRow(i),
+                      childCount: items.length,
+                      findChildIndexCallback: (key) {
+                        final i = items.indexWhere(
+                          (d) => ValueKey(d['id']) == key,
+                        );
+                        return i < 0 ? null : i;
+                      },
+                    ),
+                  ),
+                ),
+            ],
           ),
-        ],
+        ),
       );
       return Scaffold(
         extendBody: true,
         backgroundColor: bg,
-        appBar: AppBar(
-          backgroundColor: bg,
-          elevation: 0,
-          toolbarHeight: 72,
-          centerTitle: false,
-          titleSpacing: 20,
-          title: nav == 0
-              ? ConnectionTitle(
-                  engine: e,
-                  title: archived ? '归档聊天' : '轻聊',
-                  style: const TextStyle(
-                    fontSize: 34,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: -.8,
-                  ),
-                )
-              : Text(
+        appBar: nav == 0
+            ? null
+            : AppBar(
+                backgroundColor: bg,
+                elevation: 0,
+                toolbarHeight: 56,
+                centerTitle: false,
+                titleSpacing: 16,
+                title: Text(
                   ['轻聊', '联系人', '设置', '个人资料'][nav],
                   style: const TextStyle(
-                    fontSize: 30,
-                    fontWeight: FontWeight.w800,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-          actions: const [SizedBox(width: 8)],
-        ),
+              ),
         body: nav == 0 ? list : navigationBody(),
         bottomNavigationBar: TgBottomNav(
           selected: nav,
@@ -956,8 +972,8 @@ class _DialogsPageState extends State<DialogsPage> {
                         onTap: newChat,
                         tooltip: '新建聊天',
                         child: Container(
-                          width: 60,
-                          height: 60,
+                          width: 52,
+                          height: 52,
                           decoration: const BoxDecoration(
                             color: blue,
                             shape: BoxShape.circle,
@@ -977,6 +993,23 @@ class _DialogsPageState extends State<DialogsPage> {
       );
     },
   );
+}
+
+class _SearchHeader extends SliverPersistentHeaderDelegate {
+  final Widget child;
+  const _SearchHeader({required this.child});
+  @override
+  double get minExtent => 92;
+  @override
+  double get maxExtent => 92;
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) => child;
+  @override
+  bool shouldRebuild(covariant _SearchHeader old) => child != old.child;
 }
 
 class ChatPage extends StatefulWidget {
