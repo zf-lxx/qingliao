@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../cells/bubble_path.dart';
 import '../motion/tg_motion.dart';
 
 /// Original procedural wallpaper, no external bitmap or Telegram artwork.
@@ -73,50 +74,8 @@ class TgBubbleShape extends ShapeBorder {
   @override
   EdgeInsetsGeometry get dimensions => const EdgeInsets.all(0);
   @override
-  Path getOuterPath(Rect rect, {TextDirection? textDirection}) {
-    final inset = grouped ? 0.0 : 5.0;
-    final r = Rect.fromLTRB(
-      rect.left + (mine ? 0 : inset),
-      rect.top,
-      rect.right - (mine ? inset : 0),
-      rect.bottom,
-    );
-    final path = Path()
-      ..addRRect(
-        RRect.fromRectAndCorners(
-          r,
-          topLeft: const Radius.circular(17),
-          topRight: const Radius.circular(17),
-          bottomLeft: Radius.circular(!mine && grouped ? 5 : 17),
-          bottomRight: Radius.circular(mine && grouped ? 5 : 17),
-        ),
-      );
-    if (!grouped) {
-      final triangle = Path();
-      if (mine) {
-        triangle.moveTo(r.right - 11, r.bottom - 12);
-        triangle.quadraticBezierTo(
-          r.right - 2,
-          r.bottom - 3,
-          rect.right,
-          r.bottom,
-        );
-        triangle.lineTo(r.right - 16, r.bottom);
-      } else {
-        triangle.moveTo(r.left + 11, r.bottom - 12);
-        triangle.quadraticBezierTo(
-          r.left + 2,
-          r.bottom - 3,
-          rect.left,
-          r.bottom,
-        );
-        triangle.lineTo(r.left + 16, r.bottom);
-      }
-      triangle.close();
-      return Path.combine(PathOperation.union, path, triangle);
-    }
-    return path;
-  }
+  Path getOuterPath(Rect rect, {TextDirection? textDirection}) =>
+      qingliaoBubblePath(rect, mine: mine, grouped: grouped);
 
   @override
   Path getInnerPath(Rect rect, {TextDirection? textDirection}) =>

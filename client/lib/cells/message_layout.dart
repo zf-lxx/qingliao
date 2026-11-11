@@ -7,7 +7,7 @@ class StampLayout {
       padRight = 10.0,
       padTop = 9.0,
       padBottom = 6.0,
-      tail = 5.0,
+      tail = 8.0,
       stampGap = 6.0,
       maxFraction = .80,
       maxCap = 650.0;

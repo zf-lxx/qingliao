@@ -12,6 +12,7 @@
   - glass 模式标题 17sp；非 glass 标题和副标题有横竖屏/平板分支，不能把聊天列表的大标题也统一成 17sp。
 - 下轮继续逐文件核对：`DialogsActivity.java`、`Cells/DialogCell.java`、`ChatActivity.java`、`Cells/ChatMessageCell.java`、`Components/ChatActivityEnterView.java`、`PhotoViewer.java`、`ActionBar/Theme.java`。**未核实数值不得标为“TG 原值”**。
 - 主题色采用 semantic token，浅/深主题各一套；以截图和 `Theme` 当前主题对应值校准，不全局硬编码单一蓝色。
+- 文字气泡外形（2026-11-11 只读 `MessageDrawable.generatePath`）：`SharedConfig.bubbleRadius=17`；近邻/尾巴小圆 `min(6, bubbleRadius)`；padding 2dp；非媒体尾巴从 `right-2.6` 起，侧边内收 8dp，尾巴为 **83° arc**（发出 -83，收到 +83），不是三角形。分组时该侧底角用 6dp、无尾巴。
 
 ## 聊天列表
 - [x] 标题左对齐，连接状态在标题位置替换，动态省略点；没有横幅/额外行（0.1.1）。

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:qingliao/cells/bubble_path.dart';
 import 'package:qingliao/cells/message_layout.dart';
 import 'package:qingliao/cells/text_message_cell.dart';
 import 'package:qingliao/cells/row_height.dart';
@@ -18,6 +19,25 @@ import 'engine_live_test.dart' show MemoryVault;
 import 'unread_test.dart' show HistoryEngine;
 
 void main() {
+  test('bubble path uses 83-degree tail, not a triangle', () {
+    final outgoing = qingliaoBubblePath(
+      const Rect.fromLTWH(0, 0, 120, 48),
+      mine: true,
+    );
+    final incoming = qingliaoBubblePath(
+      const Rect.fromLTWH(0, 0, 120, 48),
+      mine: false,
+    );
+    expect(outgoing.contains(const Offset(120 - 2.6, 46)), isTrue);
+    expect(incoming.contains(const Offset(2.6, 46)), isTrue);
+    final grouped = qingliaoBubblePath(
+      const Rect.fromLTWH(0, 0, 120, 48),
+      mine: true,
+      grouped: true,
+    );
+    expect(grouped.contains(const Offset(118, 46)), isFalse);
+  });
+
   test('short text keeps stamp on the same line; long text wraps below', () {
     final short = StampLayout.measure(
       text: '你好',
@@ -219,10 +239,7 @@ void main() {
     expect(start - pulled, lessThanOrEqualTo(SwipeReply.maxPull));
     await g.moveBy(const Offset(-80, 0));
     await tester.pump();
-    expect(
-      start - tester.getTopLeft(find.text('可滑回复')).dx,
-      SwipeReply.maxPull,
-    );
+    expect(start - tester.getTopLeft(find.text('可滑回复')).dx, SwipeReply.maxPull);
     await g.up();
     await tester.pumpAndSettle();
     expect(replies, 1);
