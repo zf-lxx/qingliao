@@ -178,21 +178,26 @@ void main() {
     expect(start, greaterThan(end));
   });
 
-  testWidgets('swipe reply damps past the trigger and snaps back', (
+  testWidgets('left swipe replies at 50dp, clamps 80dp, snaps 180ms', (
     tester,
   ) async {
     var replies = 0;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: Center(
-            child: SwipeReply(
-              enabled: true,
-              onReply: () => replies++,
-              child: const SizedBox(
-                width: 200,
-                height: 80,
-                child: Text('可滑回复'),
+      MediaQuery(
+        data: const MediaQueryData(size: Size(400, 800), devicePixelRatio: 1),
+        child: MaterialApp(
+          home: Scaffold(
+            body: Center(
+              child: SwipeReply(
+                enabled: true,
+                onReply: () => replies++,
+                child: const SizedBox(
+                  width: 220,
+                  height: 80,
+                  child: Text('可滑回复'),
+                ),
               ),
             ),
           ),
@@ -201,11 +206,23 @@ void main() {
     );
     final start = tester.getTopLeft(find.text('可滑回复')).dx;
     final g = await tester.startGesture(tester.getCenter(find.text('可滑回复')));
-    await g.moveBy(const Offset(90, 0));
+    await g.moveBy(const Offset(-20, 0));
+    await tester.pump();
+    expect(tester.getTopLeft(find.text('可滑回复')).dx, start);
+    await g.moveBy(const Offset(-40, 0));
+    await tester.pump();
+    expect(tester.getTopLeft(find.text('可滑回复')).dx, start);
+    await g.moveBy(const Offset(-55, 0));
     await tester.pump();
     final pulled = tester.getTopLeft(find.text('可滑回复')).dx;
-    expect(pulled - start, greaterThan(SwipeReply.trigger));
-    expect(pulled - start, lessThan(90));
+    expect(start - pulled, greaterThanOrEqualTo(SwipeReply.trigger));
+    expect(start - pulled, lessThanOrEqualTo(SwipeReply.maxPull));
+    await g.moveBy(const Offset(-80, 0));
+    await tester.pump();
+    expect(
+      start - tester.getTopLeft(find.text('可滑回复')).dx,
+      SwipeReply.maxPull,
+    );
     await g.up();
     await tester.pumpAndSettle();
     expect(replies, 1);

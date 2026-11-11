@@ -2570,6 +2570,7 @@ class _BubbleState extends State<Bubble> {
   Widget _interactive({required Widget child}) {
     return SwipeReply(
       enabled: widget.message['deleted'] != true,
+      outgoing: widget.message['sender_id'] == widget.engine.uid,
       onReply: widget.onReply,
       onLongPress: widget.onLongPress,
       child: child,
@@ -2630,6 +2631,7 @@ class _BubbleState extends State<Bubble> {
         alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
         child: SwipeReply(
           enabled: !deleted,
+          outgoing: mine,
           onReply: widget.onReply,
           onLongPress: widget.onLongPress,
           child: AnimatedSize(
