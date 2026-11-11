@@ -69,13 +69,17 @@ class TgWallpaper extends CustomPainter {
 }
 
 class TgBubbleShape extends ShapeBorder {
-  final bool mine, grouped;
-  const TgBubbleShape({required this.mine, this.grouped = false});
+  final bool mine, grouped, media;
+  const TgBubbleShape({
+    required this.mine,
+    this.grouped = false,
+    this.media = false,
+  });
   @override
   EdgeInsetsGeometry get dimensions => const EdgeInsets.all(0);
   @override
   Path getOuterPath(Rect rect, {TextDirection? textDirection}) =>
-      qingliaoBubblePath(rect, mine: mine, grouped: grouped);
+      qingliaoBubblePath(rect, mine: mine, grouped: grouped, media: media);
 
   @override
   Path getInnerPath(Rect rect, {TextDirection? textDirection}) =>

@@ -2645,7 +2645,11 @@ class _BubbleState extends State<Bubble> {
               padding: const EdgeInsets.fromLTRB(12, 9, 10, 6),
               decoration: ShapeDecoration(
                 color: mine ? const Color(0xff24445e) : panel,
-                shape: TgBubbleShape(mine: mine, grouped: widget.grouped),
+                shape: TgBubbleShape(
+                  mine: mine,
+                  grouped: widget.grouped,
+                  media: m['kind'] == 'image',
+                ),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

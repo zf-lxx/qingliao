@@ -2,12 +2,11 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-/// Text-bubble outline aligned to MessageDrawable.generatePath for TYPE text
-/// (DrKLO/Telegram, 2026-11-11 read). Independent Dart; no Java copied.
+/// Outline aligned to MessageDrawable.generatePath (DrKLO/Telegram, read
+/// 2026-11-11). Independent Dart; no Java copied.
 ///
-/// rad = bubbleRadius 17; near/small = 6; padding = 2; tail inset = 8.
-/// Tail is an 83° arc, not a triangle. Grouped messages drop the tail and
-/// use 6dp on the bottom corner of the tail side.
+/// Text type: rad 17, near/small 6, padding 2, side inset 8, 83° tail arc.
+/// Media type: same radii, side uses padding (no 8dp inset, no 83° tail).
 const bubbleRadius = 17.0;
 const nearRadius = 6.0;
 const bubblePadding = 2.0;
@@ -17,17 +16,19 @@ Path qingliaoBubblePath(
   Rect bounds, {
   required bool mine,
   bool grouped = false,
+  bool media = false,
 }) {
   final pad = bubblePadding;
   var rad = bubbleRadius;
   final half = (bounds.height - pad) / 2;
   if (rad > half && half > 0) rad = half;
   final bottomRad = grouped ? nearRadius : rad;
-  final topTailRad = rad;
+  final side = media ? pad : tailInset;
+  final roundTail = grouped || media;
   final path = Path();
   if (mine) {
-    if (grouped) {
-      path.moveTo(bounds.right - pad - bottomRad, bounds.bottom - pad);
+    if (roundTail) {
+      path.moveTo(bounds.right - side - bottomRad, bounds.bottom - pad);
     } else {
       path.moveTo(bounds.right - 2.6, bounds.bottom - pad);
     }
@@ -43,21 +44,21 @@ Path qingliaoBubblePath(
     );
     path.lineTo(bounds.left + pad, bounds.top + pad + rad);
     _arc(path, bounds.left + pad, bounds.top + pad, rad * 2, rad * 2, 180, 90);
-    path.lineTo(bounds.right - tailInset - topTailRad, bounds.top + pad);
+    path.lineTo(bounds.right - side - rad, bounds.top + pad);
     _arc(
       path,
-      bounds.right - tailInset - topTailRad * 2,
+      bounds.right - side - rad * 2,
       bounds.top + pad,
-      topTailRad * 2,
-      topTailRad * 2,
+      rad * 2,
+      rad * 2,
       270,
       90,
     );
-    if (grouped) {
-      path.lineTo(bounds.right - pad, bounds.bottom - pad - bottomRad);
+    if (roundTail) {
+      path.lineTo(bounds.right - side, bounds.bottom - pad - bottomRad);
       _arc(
         path,
-        bounds.right - pad - bottomRad * 2,
+        bounds.right - side - bottomRad * 2,
         bounds.bottom - pad - bottomRad * 2,
         bottomRad * 2,
         bottomRad * 2,
@@ -80,8 +81,8 @@ Path qingliaoBubblePath(
       );
     }
   } else {
-    if (grouped) {
-      path.moveTo(bounds.left + pad + bottomRad, bounds.bottom - pad);
+    if (roundTail) {
+      path.moveTo(bounds.left + side + bottomRad, bounds.bottom - pad);
     } else {
       path.moveTo(bounds.left + 2.6, bounds.bottom - pad);
     }
@@ -105,21 +106,21 @@ Path qingliaoBubblePath(
       0,
       -90,
     );
-    path.lineTo(bounds.left + tailInset + topTailRad, bounds.top + pad);
+    path.lineTo(bounds.left + side + rad, bounds.top + pad);
     _arc(
       path,
-      bounds.left + tailInset,
+      bounds.left + side,
       bounds.top + pad,
-      topTailRad * 2,
-      topTailRad * 2,
+      rad * 2,
+      rad * 2,
       270,
       -90,
     );
-    if (grouped) {
-      path.lineTo(bounds.left + pad, bounds.bottom - pad - bottomRad);
+    if (roundTail) {
+      path.lineTo(bounds.left + side, bounds.bottom - pad - bottomRad);
       _arc(
         path,
-        bounds.left + pad,
+        bounds.left + side,
         bounds.bottom - pad - bottomRad * 2,
         bottomRad * 2,
         bottomRad * 2,
@@ -164,17 +165,23 @@ void _arc(
 }
 
 class QingliaoBubblePainter extends CustomPainter {
-  final bool mine, grouped;
+  final bool mine, grouped, media;
   final Color color;
   const QingliaoBubblePainter({
     required this.mine,
     required this.grouped,
     required this.color,
+    this.media = false,
   });
   @override
   void paint(Canvas canvas, Size size) {
     canvas.drawPath(
-      qingliaoBubblePath(Offset.zero & size, mine: mine, grouped: grouped),
+      qingliaoBubblePath(
+        Offset.zero & size,
+        mine: mine,
+        grouped: grouped,
+        media: media,
+      ),
       Paint()
         ..color = color
         ..style = PaintingStyle.fill
@@ -184,5 +191,8 @@ class QingliaoBubblePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(QingliaoBubblePainter old) =>
-      mine != old.mine || grouped != old.grouped || color != old.color;
+      mine != old.mine ||
+      grouped != old.grouped ||
+      media != old.media ||
+      color != old.color;
 }

@@ -58,9 +58,15 @@ class _MessageEnterLayerState extends State<MessageEnterLayer>
       animation: _c,
       builder: (context, _) {
         final linear = widget.curve.transform(_c.value);
-        final t = tgMessageCurve.transform(linear);
-        final rect = Rect.lerp(widget.from, widget.to, t)!;
-        final radius = 17.0 + (4.0 * (1 - t));
+        final yT = tgMessageCurve.transform(linear);
+        final xT = tgEaseOut.transform(tgEaseOutQuint.transform(linear));
+        final alpha = linear > 0.4 ? 1.0 : linear / 0.4;
+        final rect = Rect.fromLTRB(
+          widget.from.left + (widget.to.left - widget.from.left) * xT,
+          widget.from.top + (widget.to.top - widget.from.top) * yT,
+          widget.from.right + (widget.to.right - widget.from.right) * xT,
+          widget.from.bottom + (widget.to.bottom - widget.from.bottom) * yT,
+        );
         return Positioned(
           left: rect.left,
           top: rect.top,
@@ -68,9 +74,9 @@ class _MessageEnterLayerState extends State<MessageEnterLayer>
           height: rect.height,
           child: IgnorePointer(
             child: Opacity(
-              opacity: 0.35 + 0.65 * t,
+              opacity: alpha,
               child: CustomPaint(
-                painter: _EnterPainter(progress: t, radius: radius),
+                painter: _EnterPainter(progress: yT),
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(
                     StampLayout.padLeft,
@@ -79,7 +85,7 @@ class _MessageEnterLayerState extends State<MessageEnterLayer>
                     StampLayout.padBottom,
                   ),
                   child: Align(
-                    alignment: Alignment.centerLeft,
+                    alignment: Alignment.topLeft,
                     child: Text(
                       widget.text,
                       maxLines: 6,
@@ -88,7 +94,7 @@ class _MessageEnterLayerState extends State<MessageEnterLayer>
                         color: Color.lerp(
                           TgTokens.muted,
                           const Color(0xffeef4fa),
-                          t,
+                          yT,
                         ),
                       ),
                     ),
@@ -104,8 +110,8 @@ class _MessageEnterLayerState extends State<MessageEnterLayer>
 }
 
 class _EnterPainter extends CustomPainter {
-  final double progress, radius;
-  const _EnterPainter({required this.progress, required this.radius});
+  final double progress;
+  const _EnterPainter({required this.progress});
   @override
   void paint(Canvas canvas, Size size) {
     final color = Color.lerp(
@@ -113,22 +119,18 @@ class _EnterPainter extends CustomPainter {
       const Color(0xff24445e),
       progress,
     )!;
-    if (progress < .55) {
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(Offset.zero & size, Radius.circular(radius)),
-        Paint()..color = color,
-      );
-      return;
-    }
     canvas.drawPath(
-      qingliaoBubblePath(Offset.zero & size, mine: true, grouped: false),
+      qingliaoBubblePath(
+        Offset.zero & size,
+        mine: true,
+        grouped: progress < .55,
+      ),
       Paint()..color = color,
     );
   }
 
   @override
-  bool shouldRepaint(_EnterPainter old) =>
-      progress != old.progress || radius != old.radius;
+  bool shouldRepaint(_EnterPainter old) => progress != old.progress;
 }
 
 Rect estimateOutgoingRect({

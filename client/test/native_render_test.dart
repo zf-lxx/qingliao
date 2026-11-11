@@ -36,6 +36,12 @@ void main() {
       grouped: true,
     );
     expect(grouped.contains(const Offset(118, 46)), isFalse);
+    final media = qingliaoBubblePath(
+      const Rect.fromLTWH(0, 0, 120, 80),
+      mine: true,
+      media: true,
+    );
+    expect(media.contains(const Offset(117, 40)), isTrue);
   });
 
   test('short text keeps stamp on the same line; long text wraps below', () {

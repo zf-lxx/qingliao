@@ -4,6 +4,7 @@ import 'package:flutter/animation.dart';
 
 // Parameters only, independently implemented. No Telegram source/assets copied.
 const tgDefaultCurve = Cubic(.25, .1, .25, 1);
+const tgEaseOut = Cubic(0, 0, .58, 1);
 const tgAndroidDefaultCurve = AndroidAccelerateDecelerate();
 const tgPhotoMoveCurve = AndroidDecelerate(1.5);
 
