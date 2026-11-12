@@ -42,6 +42,14 @@
 - 只改了 `/opt/qingliao/.env` 的 `CHAT_IMAGE`（权限仍为 0600），`docker compose up -d --pull never`。未使用 `down -v`，未直接改动数据卷 `qingliao_chat-data`。
 - 公网 `GET https://qingliao.zhufu.de5.net/healthz` 返回 200 `{"ok":true}`；容器 health `healthy`。空闲 `docker stats` 约 7.027MiB / 96MiB。此次未重做双账号 WSS 发信/离线补齐验收。
 
+## P3 更新（2026-11-12，Asia/Shanghai）
+
+- 部署提交：`c1bd542cba1785653d324703fcbaf69ab59b4775`（`mithka` 分支服务端）。镜像 `qingliao:20261112-c1bd542`，镜像 ID `sha256:f2b04a1979e7a777935fa83f7e37e17c17b58b0145626bdf863429ba393d8558`，约 13.3MB（13317145 字节）。上一版 `qingliao:20261112-faf28a2` 与更早的 `qingliao:20261110-b07a28b` 仍保留可回滚。
+- 交叉编译二进制 SHA256：`1ba336fdf7dfbec2b692a94cd7e5864b9e05af00d5f44a51672e3a5d06595d19`（box 与香港 `/opt/qingliao/build/quietchat` 一致）。构建包 `backend-p3.tgz` SHA256：`c52b798003a99357dac8f5060a00d04bb3acb383d26380eb2ed7db5baf50c605`。
+- 只改了 `/opt/qingliao/.env` 的 `CHAT_IMAGE`（权限仍为 0600），`docker compose up -d --pull never`。未使用 `down -v`，未直接改动数据卷 `qingliao_chat-data`。卷仍挂载到容器 `/data`。
+- 公网 `GET https://qingliao.zhufu.de5.net/healthz` 返回 200 `{"ok":true}`；容器 health `healthy`。空闲 `docker stats` 约 3.801MiB / 96MiB。此次未重做双账号 WSS 发信/离线补齐验收，也未直接查看库内 `user_version`（P3/动态迁移设计为 5→7）。
+- 客户端 APK 见 GitHub Release `mithka-p3-0.4.0`（提交 `4e20114`）。
+
 ## 更新流程
 
 1. 在可信构建机确认 Git 工作区与待部署提交一致，先运行 `go test ./...` 与 `go vet ./...`。不要将其他并行客户端改动混入服务端提交；遵循仓库协作约定。
