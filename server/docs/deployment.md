@@ -67,6 +67,14 @@
 - 公网 `GET https://qingliao.zhufu.de5.net/healthz` 返回 200 `{"ok":true}`；容器 health `healthy`。空闲 `docker stats` 约 4.57MiB / 96MiB。此次未重做双账号 WSS 发信/离线补齐验收。服务端 schema 迁移至 `user_version=9`（机器人账号、令牌摘要、更新队列与 API 数字编号）。
 - 本次包含：HTTP 机器人接口（`https://qingliao.zhufu.de5.net/bot<token>/<method>`，文件 `.../file/bot<token>/...`）。公网探活：缺少令牌返回 404，错误令牌返回 401，响应不回显令牌。长轮询不依赖额外基础设施；webhook 走现有 HTTPS 主机。没有厂商推送凭据。客户端 APK 见随后的 GitHub Release `v0.4.3`。
 
+## 0.4.4 更新（2026-11-12 12:56，Asia/Shanghai）
+
+- 部署提交：`2905d396e5b84b29cc5789fcba04e8aeac3838a6`（当前开发分支服务端）。镜像 `qingliao:20261112-2905d39`，镜像 ID `sha256:bb2f7ec0bbabb64bcb28d77b404ac97235fcd3f618cdf21e91dd095d1c6d26fd`，约 13.6MB（13583385 字节）。上一版 `qingliao:20261112-a946f3c`、`qingliao:20261112-3e53fda`、`qingliao:20261112-c1bd542`、`qingliao:20261112-faf28a2` 与 `qingliao:20261110-b07a28b` 仍保留可回滚。
+- 交叉编译二进制 SHA256：`e9c1469c68e9f48d698173b83bf560157a3ee106050eee0e3118bdd968d8e91d`（box 与香港 `/opt/qingliao/build/quietchat` 一致）。构建包 `backend.tgz` SHA256：`21581cf516443deb4150105e785e2c528cb8e93772e2910309b977934d961344`。
+- 只改了 `/opt/qingliao/.env` 的 `CHAT_IMAGE`（权限仍为 0600，root:root），`docker compose up -d --pull never`。未使用 `down -v`，未直接改动数据卷 `qingliao_chat-data`。卷仍挂载到容器 `/data`。
+- 公网 `GET https://qingliao.zhufu.de5.net/healthz` 返回 200 `{"ok":true}`；容器 health `healthy`。空闲 `docker stats` 约 5.02MiB / 96MiB。此次未重做双账号 WSS 发信/离线补齐验收。schema 仍为 `user_version=9`（无新迁移）。
+- 本次包含：机器人接口支持 multipart/form-data 上传新文件（sendPhoto/Document/Audio/Video/Voice），并保留已有 file_id 发送。不支持从任意 URL 拉取，也未开放 sendAnimation / sendVideoNote。公网探活：缺少令牌返回 404，错误令牌返回 401，响应不回显令牌。客户端 APK 见随后的 GitHub Release `v0.4.4`。
+
 ## 更新流程
 
 1. 在可信构建机确认 Git 工作区与待部署提交一致，先运行 `go test ./...` 与 `go vet ./...`。不要将其他并行客户端改动混入服务端提交；遵循仓库协作约定。
