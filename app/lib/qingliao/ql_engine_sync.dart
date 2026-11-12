@@ -27,6 +27,7 @@ extension on QlTdEngine {
       session.eventCursor = hw;
       _ackedCursor = hw;
       await _loadConversations();
+      await _refreshBlocks();
     } on QlApiException catch (e) {
       if (e.statusCode == 401) {
         _sessionExpired();
@@ -119,7 +120,9 @@ extension on QlTdEngine {
     if (c.chatId == 0) return;
     if (!c.announced) {
       c.announced = true;
-      if (c.isGroup) {
+      if (c.isChannel) {
+        _emit({'@type': 'updateSupergroup', 'supergroup': _supergroup(c)});
+      } else if (c.isGroup) {
         _emit({'@type': 'updateBasicGroup', 'basic_group': _basicGroup(c)});
       }
       _emit({'@type': 'updateNewChat', 'chat': _tdChat(c)});
@@ -142,6 +145,8 @@ extension on QlTdEngine {
 
     if (d['kind'] != null) c.kind = d['kind'].toString();
     if (d['title'] != null) c.title = d['title'].toString();
+    if (d['avatar_media_id'] != null) c.avatarMediaId = d['avatar_media_id'].toString();
+    if (d['avatar'] != null && (d['avatar_media_id'] == null)) c.avatarMediaId = d['avatar'].toString();
     if (d['last_seq'] != null) c.lastSeq = math.max(c.lastSeq, QlTdEngine._int(d['last_seq']) ?? 0);
     if (d['last_activity'] != null) {
       c.lastActivityMicros = QlTdEngine._int(d['last_activity']) ?? c.lastActivityMicros;
@@ -483,13 +488,39 @@ extension on QlTdEngine {
           try {
             await _loadMembers(c);
           } catch (_) {}
-          if (c.isGroup) {
+          if (c.isChannel) {
+            _emit({'@type': 'updateSupergroup', 'supergroup': _supergroup(c)});
+          } else if (c.isGroup) {
             _emit({'@type': 'updateBasicGroup', 'basic_group': _basicGroup(c)});
           }
         }
+      case 'reaction.updated':
+        _onReactionUpdated(cid, data);
+      case 'message.pinned':
+        _onPinned(cid, data, remove: false);
+      case 'message.unpinned':
+        _onPinned(cid, data, remove: true);
+      case 'conversation.cleared':
+        final cleared = _convs[cid];
+        if (cleared != null) {
+          _applyCleared(cleared, throughSeq: QlTdEngine._int(data['through_seq']) ?? cleared.lastSeq);
+        }
+      case 'block.updated':
+        final uid = data['user_id']?.toString() ?? '';
+        if (uid.isNotEmpty) {
+          if (data['blocked'] == true) {
+            _blockedUserIds.add(uid);
+          } else {
+            _blockedUserIds.remove(uid);
+          }
+          _emit({
+            '@type': 'updateMessageSenderBlockList',
+            'sender_id': {'@type': 'messageSenderUser', 'user_id': qlUserInt(uid)},
+            'block_list': data['blocked'] == true ? {'@type': 'blockListMain'} : null,
+          });
+        }
       default:
-        // reaction.updated, message.pinned/unpinned, pins.changed,
-        // moderation.updated, folder.*, privacy.*: handled in a later phase.
+        // pins.changed, moderation.updated, folder.*, privacy.*: later.
         break;
     }
   }

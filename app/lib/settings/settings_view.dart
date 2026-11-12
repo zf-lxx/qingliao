@@ -787,7 +787,7 @@ class _SettingsViewState extends State<SettingsView> {
         color: const Color(0xFFDA405B),
         destination: () => const BlockedUsersView(),
         searchTerms: const ['blocked users', 'blocklist', 'unblock'],
-        comingSoon: true,
+        comingSoon: false,
       ),
       _SettingsDestination(
         id: 'telegram-chat-folders',

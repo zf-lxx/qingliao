@@ -1,7 +1,7 @@
 name: mithka
 description: "轻聊 — a Flutter messenger client based on Mithka, talking to the 轻聊 backend."
 publish_to: 'none'
-version: 0.3.1+5
+version: 0.3.2+6
 
 environment:
   sdk: ^3.12.2

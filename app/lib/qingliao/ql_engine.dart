@@ -24,6 +24,7 @@ part 'ql_engine_convert.dart';
 part 'ql_engine_files.dart';
 part 'ql_engine_ops.dart';
 part 'ql_engine_sync.dart';
+part 'ql_engine_p2.dart';
 
 typedef QlEmit = void Function(Map<String, dynamic> event);
 
@@ -72,7 +73,6 @@ const Set<String> qlEmptyResultMethods = {
   'getTopChats',
   'getChatsToPostStories',
   'getGroupsInCommon',
-  'getBlockedMessageSenders',
   'getSavedMessagesTopics',
   'loadSavedMessagesTopics',
   'getStickers',
@@ -158,10 +158,15 @@ class _Conv {
   bool announced = false;
   List<Map<String, dynamic>> members = const [];
   bool membersLoaded = false;
+  String avatarMediaId = '';
+  final Set<int> pinnedSeqs = {};
+  final Map<int, List<Map<String, String>>> reactionsBySeq = {};
   final SplayTreeMap<int, Map<String, dynamic>> messages = SplayTreeMap();
   final Map<String, Map<String, dynamic>> draft = {};
 
   bool get isGroup => kind != 'direct';
+  bool get isChannel => kind == 'channel';
+  bool get isBasicGroup => kind == 'group';
 }
 
 class _Pending {
@@ -198,6 +203,7 @@ class QlTdEngine {
   Future<void>? _initialLoad;
 
   // ---- state
+  final Set<String> _blockedUserIds = {};
   final Map<String, Map<String, dynamic>> _users = {}; // backend id -> raw
   final Map<int, String> _userIdByInt = {};
   final Map<String, _Conv> _convs = {};
@@ -398,7 +404,16 @@ class QlTdEngine {
       case 'setChatDraftMessage':
         return _setDraft(r);
       case 'setChatTitle':
-        return _setChatTitle(r);
+        return _doSetChatTitle(r);
+      case 'setChatPhoto':
+      case 'deleteChatPhoto':
+        return _setChatPhoto(type == 'deleteChatPhoto' ? {...r, 'photo': null} : r);
+      case 'createNewSupergroupChat':
+        return _createSupergroup(r);
+      case 'getSupergroup':
+        return _supergroupById(_int(r['supergroup_id']) ?? 0);
+      case 'getSupergroupFullInfo':
+        return _supergroupFullInfo(_int(r['supergroup_id']) ?? 0);
       case 'leaveChat':
         return _leaveChat(r);
       case 'getChatMember':
@@ -452,9 +467,35 @@ class QlTdEngine {
       case 'sendChatAction':
         return _sendChatAction(r);
       case 'searchChatMessages':
-        return _searchChatMessagesLocal(r);
+        return _searchChatMessages(r);
+      case 'searchMessages':
+        return _searchMessages(r);
       case 'getChatMessageCount':
         return _messageCount(r);
+      case 'forwardMessages':
+        return _forwardMessages(r);
+      case 'pinChatMessage':
+        return _pinMessage(r, remove: false);
+      case 'unpinChatMessage':
+        return _pinMessage(r, remove: true);
+      case 'unpinAllChatMessages':
+        return _unpinAll(r);
+      case 'addMessageReaction':
+        return _setReaction(r, remove: false);
+      case 'removeMessageReaction':
+        return _setReaction(r, remove: true);
+      case 'getMessageAvailableReactions':
+        return _availableReactions();
+      case 'getMessageAddedReactions':
+        return _addedReactions(r);
+      case 'setMessageSenderBlockList':
+        return _setSenderBlockList(r);
+      case 'getBlockedMessageSenders':
+        return _blockedSenders(r);
+      case 'deleteChatHistory':
+        return _deleteChatHistory(r);
+      case 'reportChat':
+        return _reportChat(r);
       case 'getMessageProperties':
         return _messageProperties(r);
       case 'getMessageLink':

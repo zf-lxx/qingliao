@@ -397,34 +397,41 @@ extension on QlTdEngine {
     final admin = c.role == 'owner' || c.role == 'admin';
     return {
       '@type': 'chatPermissions',
-      'can_send_basic_messages': true,
-      'can_send_audios': false,
-      'can_send_documents': true,
-      'can_send_photos': true,
-      'can_send_videos': false,
+      'can_send_basic_messages': !c.isChannel || admin,
+      'can_send_audios': !c.isChannel || admin,
+      'can_send_documents': !c.isChannel || admin,
+      'can_send_photos': !c.isChannel || admin,
+      'can_send_videos': !c.isChannel || admin,
       'can_send_video_notes': false,
-      'can_send_voice_notes': true,
+      'can_send_voice_notes': !c.isChannel || admin,
       'can_send_polls': false,
       'can_send_other_messages': false,
       'can_add_link_previews': false,
       'can_change_info': c.isGroup && admin,
       'can_invite_users': c.isGroup && admin,
-      'can_pin_messages': false,
+      'can_pin_messages': !c.isGroup || admin,
       'can_create_topics': false,
     };
   }
 
   Map<String, dynamic> _tdChat(_Conv c) {
     final avatar = c.isGroup
-        ? ''
+        ? c.avatarMediaId
         : (c.peerId == null ? '' : _users[c.peerId!]?['avatar_media_id']?.toString() ?? '');
+    final blocked = !c.isGroup && c.peerId != null && _blockedUserIds.contains(c.peerId);
     final draft = c.draft['td'];
+    Map<String, dynamic> type;
+    if (c.isChannel) {
+      type = {'@type': 'chatTypeSupergroup', 'supergroup_id': qlGroupInt(c.id), 'is_channel': true};
+    } else if (c.isGroup) {
+      type = {'@type': 'chatTypeBasicGroup', 'basic_group_id': qlGroupInt(c.id)};
+    } else {
+      type = {'@type': 'chatTypePrivate', 'user_id': qlUserInt(c.peerId ?? '')};
+    }
     return {
       '@type': 'chat',
       'id': c.chatId,
-      'type': c.isGroup
-          ? {'@type': 'chatTypeBasicGroup', 'basic_group_id': qlGroupInt(c.id)}
-          : {'@type': 'chatTypePrivate', 'user_id': qlUserInt(c.peerId ?? '')},
+      'type': type,
       'title': _chatTitle(c),
       'photo': _chatPhotoInfo(avatar),
       'accent_color_id': c.chatId.abs() % 7,
@@ -441,7 +448,7 @@ extension on QlTdEngine {
         c.archived ? {'@type': 'chatListArchive'} : {'@type': 'chatListMain'},
       ],
       'message_sender_id': null,
-      'block_list': null,
+      'block_list': blocked ? {'@type': 'blockListMain'} : null,
       'has_protected_content': false,
       'is_translatable': false,
       'is_marked_as_unread': c.manualUnread,
@@ -449,7 +456,7 @@ extension on QlTdEngine {
       'has_scheduled_messages': false,
       'can_be_deleted_only_for_self': false,
       'can_be_deleted_for_all_users': false,
-      'can_be_reported': false,
+      'can_be_reported': true,
       'default_disable_notification': false,
       'unread_count': c.unread,
       'last_read_inbox_message_id': _lastReadInboxId(c),
@@ -457,7 +464,7 @@ extension on QlTdEngine {
       'unread_mention_count': c.mentions,
       'unread_reaction_count': 0,
       'notification_settings': _notificationSettings(c),
-      'available_reactions': {'@type': 'chatAvailableReactionsSome', 'reactions': const <Object>[], 'max_reaction_count': 0},
+      'available_reactions': {'@type': 'chatAvailableReactionsAll', 'max_reaction_count': 11},
       'message_auto_delete_time': 0,
       'emoji_status': null,
       'background': null,
@@ -517,19 +524,19 @@ extension on QlTdEngine {
       'sending_state': null,
       'scheduling_state': null,
       'is_outgoing': outgoing,
-      'is_pinned': false,
+      'is_pinned': c.pinnedSeqs.contains(seq),
       'is_from_offline': false,
       'can_be_saved': true,
       'has_timestamped_media': false,
-      'is_channel_post': false,
+      'is_channel_post': c.isChannel && !outgoing,
       'is_paid_star_suggested_post': false,
       'is_paid_ton_suggested_post': false,
       'contains_unread_mention': false,
       'date': date,
       'edit_date': edited,
-      'forward_info': null,
+      'forward_info': _forwardInfo(m),
       'import_info': null,
-      'interaction_info': null,
+      'interaction_info': _interactionInfo(c, seq),
       'unread_reactions': const <Object>[],
       'fact_check': null,
       'suggested_post_info': null,
@@ -543,7 +550,7 @@ extension on QlTdEngine {
       'sender_boost_count': 0,
       'paid_message_star_count': 0,
       'author_signature': '',
-      'media_album_id': 0,
+      'media_album_id': _albumInt(m['album_id']?.toString() ?? ''),
       'effect_id': 0,
       'restriction_info': null,
       'summary_language_code': '',
@@ -594,7 +601,7 @@ extension on QlTdEngine {
           '@type': 'messageVoiceNote',
           'voice_note': {
             '@type': 'voiceNote',
-            'duration': QlTdEngine._int(meta['duration']) ?? 0,
+            'duration': _durationSec(meta),
             'waveform': meta['waveform']?.toString() ?? '',
             'mime_type': meta['mime']?.toString() ?? 'audio/ogg',
             'speech_recognition_result': null,
@@ -603,6 +610,8 @@ extension on QlTdEngine {
           'caption': caption,
           'is_listened': true,
         };
+      case 'video':
+        return _videoContent(m, meta, mediaId, caption);
       case 'file':
         final name = meta['file_name']?.toString() ?? '';
         return {

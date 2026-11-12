@@ -118,6 +118,7 @@ class QlApi {
   Future<Map<String, dynamic>> uploadFile(
     String path, {
     String? conversationId,
+    Map<String, String>? headers,
     void Function(int sent, int total)? onProgress,
   }) async {
     final file = File(path);
@@ -129,6 +130,11 @@ class QlApi {
     request.headers.contentType = ContentType.binary;
     if (conversationId != null) {
       request.headers.set('X-Conversation-ID', conversationId);
+    }
+    if (headers != null) {
+      for (final e in headers.entries) {
+        if (e.value.isNotEmpty) request.headers.set(e.key, e.value);
+      }
     }
     request.contentLength = total;
     var sent = 0;

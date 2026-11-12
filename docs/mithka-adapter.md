@@ -4,7 +4,7 @@ The `mithka` branch vendors [Mithka](https://github.com/iebb/mithka) under `app/
 
 The previous 0.2 Flutter tree remains in `client/` for reference and is not the app this branch builds. Build the new client from `app/` with `source ~/sdk/env.sh` and `flutter build apk --release --target-platform android-arm64`. Release signing falls back to the debug keystore at `~/.android/debug.keystore` when `android/key.properties` is absent, matching earlier 轻聊 0.x builds.
 
-The arm64 release APK is packaged without `libtdjson`, without FVP/FFmpeg, and without extra CPU ABIs or alternate Mithka launcher icons, so it stays under the ~50 MB budget (P1 artifact: `/workspace/qingliao-mithka-p1-arm64.apk`).
+The arm64 release APK is packaged without `libtdjson`, without FVP/FFmpeg, and without extra CPU ABIs or alternate Mithka launcher icons, so it stays under the ~50 MB budget (P2 artifact: `/workspace/qingliao-mithka-p2-arm64.apk`, version 0.3.2+6).
 
 TDLib’s native `libtdjson` is not shipped. `TdBindings` is a pure-Dart implementation that routes each request through `QlTdEngine`, which talks to the 轻聊 backend (`REST` + `WS /v1/ws` with seq/ack and difference sync). Unsupported methods return a TDLib `error` object (`QL_UNSUPPORTED: <method>`) — never a crash and never a fake success. A small allow-list (`qlEmptyResultMethods`) returns a truthful empty collection for sticker / story / session list queries the UI issues at startup.
 
@@ -14,19 +14,21 @@ Mithka’s Settings layout is kept (search + the same groups). Client-local page
 
 - Theme, Appearance / Interface, Chat behavior, Unlock / passcode, Content filter (on-device keywords), Data & storage (local cache), language, About, optional desktop hotkeys.
 
-Server-backed pages stay in the list with a trailing **暂未开放 / Not yet** label and open a placeholder. They do not persist or sync anything until a real endpoint exists:
+Server-backed pages that still have no real 轻聊 endpoint stay in the list with a trailing **暂未开放 / Not yet** label and open a placeholder:
 
-- Notifications, Privacy & Security, Blocked users, Account backup, Chat folders, Stickers & emoji, Proxy.
+- Notifications (per-chat mute already works via `setChatNotificationSettings`), Privacy & Security (2FA / sessions / passkeys), Account backup, Chat folders, Stickers & emoji, Proxy.
 
-P2+ will wire those to real endpoints and drop the placeholder. Calls, stories / moments, the channels tab, forward, and pin are hidden or disabled in the main UI for the same reason.
+**Blocked users** is wired in P2 (`GET /v1/me/blocks`, `PUT /v1/users/{id}/block`) and is no longer marked 暂未开放.
+
+P2 also wires media (voice waveform + duration, video, files, albums, thumbnails), shared-media + in-chat FTS search, forward, pin, reactions, report, clear history, group title/avatar, and basic channels through the existing adapter. Calls, stories / moments, stickers, polls, and communities stay hidden or 暂未开放.
 
 ## Coverage summary
 
-The Mithka UI calls **457** distinct TDLib methods (static inventory of `TdClient` / UI query sites). P1 status among those:
+The Mithka UI calls **457** distinct TDLib methods (static inventory of `TdClient` / UI query sites). P2 status among those (counts refreshed after the table updates below):
 
-- implemented: **61**
-- empty (truthful empty result): **19**
-- unsupported (`QL_UNSUPPORTED`): **377**
+- implemented: **77**
+- empty (truthful empty result): **18**
+- unsupported (`QL_UNSUPPORTED`): **362**
 
 Qingliao-only methods (`qlLogin`, `qlRegister`, `qlGetServer`) are also implemented and used by the login screen; they are listed first.
 
@@ -48,7 +50,7 @@ Qingliao-only methods (`qlLogin`, `qlRegister`, `qlGetServer`) are also implemen
 | `addFavoriteSticker` | QL_UNSUPPORTED | unsupported |
 | `addFileToDownloads` | GET /v1/media/{id} | implemented |
 | `addLoginPasskey` | QL_UNSUPPORTED | unsupported |
-| `addMessageReaction` | QL_UNSUPPORTED | unsupported |
+| `addMessageReaction` | PUT /v1/messages/{id}/reactions | implemented |
 | `addOffer` | QL_UNSUPPORTED | unsupported |
 | `addPollOption` | QL_UNSUPPORTED | unsupported |
 | `addProxy` | QL_UNSUPPORTED | unsupported |
@@ -99,7 +101,7 @@ Qingliao-only methods (`qlLogin`, `qlRegister`, `qlGetServer`) are also implemen
 | `createNewBasicGroupChat` | POST /v1/conversations (group) | implemented |
 | `createNewSecretChat` | QL_UNSUPPORTED | unsupported |
 | `createNewStickerSet` | QL_UNSUPPORTED | unsupported |
-| `createNewSupergroupChat` | QL_UNSUPPORTED | unsupported |
+| `createNewSupergroupChat` | POST /v1/conversations (kind=channel or group) | implemented |
 | `createPrivateChat` | POST /v1/conversations (direct, on first send) | implemented |
 | `createRichMessageWithAi` | QL_UNSUPPORTED | unsupported |
 | `createStoryAlbum` | QL_UNSUPPORTED | unsupported |
@@ -115,7 +117,7 @@ Qingliao-only methods (`qlLogin`, `qlRegister`, `qlGetServer`) are also implemen
 | `deleteChatBackground` | QL_UNSUPPORTED | unsupported |
 | `deleteChatFolder` | QL_UNSUPPORTED | unsupported |
 | `deleteChatFolderInviteLink` | QL_UNSUPPORTED | unsupported |
-| `deleteChatHistory` | QL_UNSUPPORTED | unsupported |
+| `deleteChatHistory` | POST /v1/conversations/{id}/clear | implemented |
 | `deleteChatMessagesBySender` | QL_UNSUPPORTED | unsupported |
 | `deleteDefaultBackground` | QL_UNSUPPORTED | unsupported |
 | `deleteDirectMessagesChatTopicHistory` | QL_UNSUPPORTED | unsupported |
@@ -150,7 +152,7 @@ Qingliao-only methods (`qlLogin`, `qlRegister`, `qlGetServer`) are also implemen
 | `editTextCompositionStyle` | QL_UNSUPPORTED | unsupported |
 | `enableProxy` | — (noop) | implemented |
 | `fixTextWithAi` | QL_UNSUPPORTED | unsupported |
-| `forwardMessages` | QL_UNSUPPORTED | unsupported |
+| `forwardMessages` | POST /v1/messages/{id}/forward | implemented |
 | `getAccountTtl` | QL_UNSUPPORTED | unsupported |
 | `getActiveSessions` | — (truthful empty result) | empty |
 | `getAttachmentMenuBot` | — (truthful empty result) | empty |
@@ -158,7 +160,7 @@ Qingliao-only methods (`qlLogin`, `qlRegister`, `qlGetServer`) are also implemen
 | `getAuthorizationState` | — (local) | implemented |
 | `getBasicGroup` | GET /v1/conversations/{id}/members (cached) | implemented |
 | `getBasicGroupFullInfo` | GET /v1/conversations/{id}/members | implemented |
-| `getBlockedMessageSenders` | — (truthful empty result) | empty |
+| `getBlockedMessageSenders` | GET /v1/me/blocks | implemented |
 | `getBotSimilarBots` | QL_UNSUPPORTED | unsupported |
 | `getBusinessChatLinkInfo` | QL_UNSUPPORTED | unsupported |
 | `getBusinessChatLinks` | QL_UNSUPPORTED | unsupported |
@@ -228,8 +230,8 @@ Qingliao-only methods (`qlLogin`, `qlRegister`, `qlGetServer`) are also implemen
 | `getMapThumbnailFile` | QL_UNSUPPORTED | unsupported |
 | `getMe` | GET /v1/me | implemented |
 | `getMessage` | GET /v1/conversations/{id}/messages or cache | implemented |
-| `getMessageAddedReactions` | QL_UNSUPPORTED | unsupported |
-| `getMessageAvailableReactions` | QL_UNSUPPORTED | unsupported |
+| `getMessageAddedReactions` | GET /v1/messages/{id}/reactions | implemented |
+| `getMessageAvailableReactions` | — (fixed emoji set) | implemented |
 | `getMessageEffect` | QL_UNSUPPORTED | unsupported |
 | `getMessageLink` | QL_UNSUPPORTED | unsupported |
 | `getMessageLinkInfo` | QL_UNSUPPORTED | unsupported |
@@ -277,8 +279,8 @@ Qingliao-only methods (`qlLogin`, `qlRegister`, `qlGetServer`) are also implemen
 | `getStoryNotificationSettingsExceptions` | — (truthful empty result) | empty |
 | `getSuggestedStickerSetName` | QL_UNSUPPORTED | unsupported |
 | `getSuitableDiscussionChats` | QL_UNSUPPORTED | unsupported |
-| `getSupergroup` | QL_UNSUPPORTED | unsupported |
-| `getSupergroupFullInfo` | QL_UNSUPPORTED | unsupported |
+| `getSupergroup` | channel chats as chatTypeSupergroup | implemented |
+| `getSupergroupFullInfo` | GET /v1/conversations/{id}/members | implemented |
 | `getSupergroupMembers` | QL_UNSUPPORTED | unsupported |
 | `getTemporaryPasswordState` | QL_UNSUPPORTED | unsupported |
 | `getTextEntities` | — (local regex) | implemented |
@@ -315,7 +317,7 @@ Qingliao-only methods (`qlLogin`, `qlRegister`, `qlGetServer`) are also implemen
 | `openWebApp` | QL_UNSUPPORTED | unsupported |
 | `optimizeStorage` | QL_UNSUPPORTED | unsupported |
 | `parseMarkdown` | — (pass-through / local) | implemented |
-| `pinChatMessage` | QL_UNSUPPORTED | unsupported |
+| `pinChatMessage` | PUT /v1/conversations/{id}/pins | implemented |
 | `pingProxy` | QL_UNSUPPORTED | unsupported |
 | `postStory` | QL_UNSUPPORTED | unsupported |
 | `processChatJoinRequest` | QL_UNSUPPORTED | unsupported |
@@ -331,7 +333,7 @@ Qingliao-only methods (`qlLogin`, `qlRegister`, `qlGetServer`) are also implemen
 | `removeContacts` | QL_UNSUPPORTED | unsupported |
 | `removeFileFromDownloads` | QL_UNSUPPORTED | unsupported |
 | `removeLoginPasskey` | QL_UNSUPPORTED | unsupported |
-| `removeMessageReaction` | QL_UNSUPPORTED | unsupported |
+| `removeMessageReaction` | PUT /v1/messages/{id}/reactions remove | implemented |
 | `removeProxy` | QL_UNSUPPORTED | unsupported |
 | `removeStickerFromSet` | QL_UNSUPPORTED | unsupported |
 | `removeTextCompositionStyle` | QL_UNSUPPORTED | unsupported |
@@ -339,7 +341,7 @@ Qingliao-only methods (`qlLogin`, `qlRegister`, `qlGetServer`) are also implemen
 | `reorderQuickReplyShortcuts` | QL_UNSUPPORTED | unsupported |
 | `reorderStoryAlbums` | QL_UNSUPPORTED | unsupported |
 | `replaceStickerInSet` | QL_UNSUPPORTED | unsupported |
-| `reportChat` | QL_UNSUPPORTED | unsupported |
+| `reportChat` | POST /v1/conversations/{id}/report | implemented |
 | `reportMessageReactions` | QL_UNSUPPORTED | unsupported |
 | `reportStory` | QL_UNSUPPORTED | unsupported |
 | `reportWebProxyCarrierError` | QL_UNSUPPORTED | unsupported |
@@ -355,12 +357,12 @@ Qingliao-only methods (`qlLogin`, `qlRegister`, `qlGetServer`) are also implemen
 | `searchCallMessages` | QL_UNSUPPORTED | unsupported |
 | `searchChatAffiliateProgram` | QL_UNSUPPORTED | unsupported |
 | `searchChatMembers` | QL_UNSUPPORTED | unsupported |
-| `searchChatMessages` | — (local cache only in P1) | implemented |
+| `searchChatMessages` | GET /v1/conversations/{id}/search or /media; pinned via /pins | implemented |
 | `searchChats` | GET /v1/users/search (plus local title filter) | implemented |
 | `searchContacts` | GET /v1/users/search | implemented |
 | `searchEmojis` | QL_UNSUPPORTED | unsupported |
 | `searchFileDownloads` | QL_UNSUPPORTED | unsupported |
-| `searchMessages` | QL_UNSUPPORTED | unsupported |
+| `searchMessages` | GET /v1/conversations/{id}/search across announced chats | implemented |
 | `searchPublicChat` | GET /v1/users/search | implemented |
 | `searchPublicChats` | GET /v1/users/search | implemented |
 | `searchPublicMessagesByTag` | QL_UNSUPPORTED | unsupported |
@@ -408,12 +410,12 @@ Qingliao-only methods (`qlLogin`, `qlRegister`, `qlGetServer`) are also implemen
 | `setChatMessageSender` | QL_UNSUPPORTED | unsupported |
 | `setChatNotificationSettings` | PATCH /v1/conversations/{id} (muted) | implemented |
 | `setChatPermissions` | QL_UNSUPPORTED | unsupported |
-| `setChatPhoto` | QL_UNSUPPORTED | unsupported |
+| `setChatPhoto` | PATCH /v1/conversations/{id} avatar_media_id | implemented |
 | `setChatPinnedStories` | QL_UNSUPPORTED | unsupported |
 | `setChatProfileAccentColor` | QL_UNSUPPORTED | unsupported |
 | `setChatSlowModeDelay` | QL_UNSUPPORTED | unsupported |
 | `setChatTheme` | QL_UNSUPPORTED | unsupported |
-| `setChatTitle` | PATCH /v1/conversations/{id} (title) | implemented |
+| `setChatTitle` | PATCH /v1/conversations/{id} title | implemented |
 | `setCommunityName` | QL_UNSUPPORTED | unsupported |
 | `setCommunityPhoto` | QL_UNSUPPORTED | unsupported |
 | `setCustomEmojiStickerSetThumbnail` | QL_UNSUPPORTED | unsupported |
@@ -424,7 +426,7 @@ Qingliao-only methods (`qlLogin`, `qlRegister`, `qlGetServer`) are also implemen
 | `setForumTopicNotificationSettings` | QL_UNSUPPORTED | unsupported |
 | `setGiftSettings` | QL_UNSUPPORTED | unsupported |
 | `setLogVerbosityLevel` | — (noop) | implemented |
-| `setMessageSenderBlockList` | QL_UNSUPPORTED | unsupported |
+| `setMessageSenderBlockList` | PUT /v1/users/{id}/block | implemented |
 | `setName` | PATCH /v1/me | implemented |
 | `setOption` | — (noop) | implemented |
 | `setPassword` | QL_UNSUPPORTED | unsupported |
@@ -489,7 +491,7 @@ Qingliao-only methods (`qlLogin`, `qlRegister`, `qlGetServer`) are also implemen
 | `translateMessageText` | QL_UNSUPPORTED | unsupported |
 | `translateText` | QL_UNSUPPORTED | unsupported |
 | `unpinAllDirectMessagesChatTopicMessages` | QL_UNSUPPORTED | unsupported |
-| `unpinChatMessage` | QL_UNSUPPORTED | unsupported |
+| `unpinChatMessage` | PUT /v1/conversations/{id}/pins remove | implemented |
 | `upgradeBasicGroupChatToSupergroupChat` | QL_UNSUPPORTED | unsupported |
 | `uploadStickerFile` | QL_UNSUPPORTED | unsupported |
 | `validateOrderInfo` | QL_UNSUPPORTED | unsupported |

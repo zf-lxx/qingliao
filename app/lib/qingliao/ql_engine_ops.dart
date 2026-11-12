@@ -493,9 +493,6 @@ extension on QlTdEngine {
     return _ok;
   }
 
-  Future<Map<String, dynamic>> _setChatTitle(Map<String, dynamic> r) async =>
-      _unsupported('setChatTitle');
-
   // MARK: History
 
   Future<Map<String, dynamic>> _history(Map<String, dynamic> r) async {
@@ -707,9 +704,9 @@ extension on QlTdEngine {
       'can_be_deleted_only_for_self': false,
       'can_be_deleted_for_all_users': outgoing || (c.isGroup && admin),
       'can_be_edited': editable,
-      'can_be_forwarded': false,
+      'can_be_forwarded': !pending,
       'can_be_paid': false,
-      'can_be_pinned': false,
+      'can_be_pinned': !pending && (!c.isGroup || admin),
       'can_be_replied': !pending,
       'can_be_replied_in_another_chat': false,
       'can_be_saved': true,
@@ -730,7 +727,7 @@ extension on QlTdEngine {
       'can_get_viewers': false,
       'can_mark_tasks_as_done': false,
       'can_recognize_speech': false,
-      'can_report_chat': false,
+      'can_report_chat': true,
       'can_report_reactions': false,
       'can_report_supergroup_spam': false,
       'can_set_fact_check': false,
@@ -872,6 +869,40 @@ extension on QlTdEngine {
             'is_listened': true,
           },
         );
+      case 'inputMessageVideo':
+        final path = _inputFilePath(input['video']);
+        if (path == null) return null;
+        final caption = captionOf('caption');
+        final plain = caption?['text']?.toString() ?? '';
+        final local = _localFile(path)..kind = 'video';
+        final name = path.split(Platform.pathSeparator).last;
+        return (
+          kind: 'video',
+          text: plain,
+          entities: _backendEntities(caption),
+          path: path,
+          content: {
+            '@type': 'messageVideo',
+            'video': {
+              '@type': 'video',
+              'duration': QlTdEngine._int(input['duration']) ?? 0,
+              'width': QlTdEngine._int(input['width']) ?? 0,
+              'height': QlTdEngine._int(input['height']) ?? 0,
+              'file_name': name.isEmpty ? 'video.mp4' : name,
+              'mime_type': 'video/mp4',
+              'has_stickers': false,
+              'supports_streaming': true,
+              'minithumbnail': null,
+              'thumbnail': null,
+              'video': _tdFile(local),
+            },
+            'alternative_videos': const <Object>[],
+            'caption': _formatted(plain, _tdEntities(plain, null)),
+            'show_caption_above_media': false,
+            'has_spoiler': false,
+            'is_secret': false,
+          },
+        );
       default:
         return null;
     }
@@ -885,7 +916,7 @@ extension on QlTdEngine {
     final type = input['@type']?.toString() ?? '';
     final draft = _draftContent(Map<String, dynamic>.from(input));
     if (draft == null) {
-      if (const {'inputMessageText', 'inputMessagePhoto', 'inputMessageDocument', 'inputMessageVoiceNote'}.contains(type)) {
+      if (const {'inputMessageText', 'inputMessagePhoto', 'inputMessageDocument', 'inputMessageVoiceNote', 'inputMessageVideo'}.contains(type)) {
         return _error(400, 'MESSAGE_EMPTY');
       }
       return _unsupported('sendMessage($type)');
@@ -898,6 +929,8 @@ extension on QlTdEngine {
       replyTo = cached?['@ql_id']?.toString() ?? '';
     }
     final tempId = qlMessageId(c.lastSeq) + (++_pendingCounter % 0xFFFFE) + 1;
+    final albumId = r['@ql_album_id']?.toString() ?? '';
+
     final clientMsgId = _newClientMsgId();
     final message = <String, dynamic>{
       '@type': 'message',
@@ -940,10 +973,11 @@ extension on QlTdEngine {
       'sender_boost_count': 0,
       'paid_message_star_count': 0,
       'author_signature': '',
-      'media_album_id': 0,
+      'media_album_id': albumId.isEmpty ? 0 : _albumInt(albumId),
       'effect_id': 0,
       'restriction_info': null,
       'content': draft.content,
+      if (albumId.isNotEmpty) '@ql_album_id': albumId,
       'reply_markup': null,
     };
     final pending = _Pending(conv: c, tempId: tempId, clientMsgId: clientMsgId, message: message);
@@ -960,7 +994,7 @@ extension on QlTdEngine {
         _position(c..lastActivityMicros = DateTime.now().microsecondsSinceEpoch),
       ],
     });
-    unawaited(_deliver(pending, draft.kind, draft.text, draft.entities, draft.path, replyTo));
+    unawaited(_deliver(pending, draft.kind, draft.text, draft.entities, draft.path, replyTo, albumId));
     return message;
   }
 
@@ -970,8 +1004,9 @@ extension on QlTdEngine {
     String text,
     List<Map<String, dynamic>> entities,
     String? path,
-    String replyTo,
-  ) async {
+    String replyTo, [
+    String albumId = '',
+  ]) async {
     try {
       var c = p.conv;
       if (c.id.startsWith('virtual:')) {
@@ -982,14 +1017,15 @@ extension on QlTdEngine {
       }
       var mediaId = '';
       if (path != null) {
-        final uploaded = await _apiOrThrow.uploadFile(path, conversationId: c.id);
+        final headers = await _uploadHeadersFor(kind, path, p.message['content'] as Map?);
+        final uploaded = await _apiOrThrow.uploadFile(path, conversationId: c.id, headers: headers);
         mediaId = uploaded['id']?.toString() ?? '';
         if (mediaId.isEmpty) throw const QlApiException(500, 'upload_failed');
         // Keep the local copy: no need to download what we just sent.
         final f = _files.putIfAbsent(qlMediaFileId(mediaId), () => _QlFile(qlMediaFileId(mediaId)));
         f
           ..mediaId = mediaId
-          ..kind = kind == 'image' ? 'image' : (kind == 'voice' ? 'voice' : 'file')
+          ..kind = kind == 'image' ? 'image' : (kind == 'voice' ? 'voice' : (kind == 'video' ? 'video' : 'file'))
           ..localPath = path
           ..size = await File(path).length();
         f.fileName = path.split(Platform.pathSeparator).last;
@@ -1004,6 +1040,7 @@ extension on QlTdEngine {
         'text': text,
         'media_id': mediaId,
         'reply_to': replyTo,
+        if (albumId.isNotEmpty) 'album_id': albumId,
         if (entities.isNotEmpty) 'entities': entities,
       });
       _completePending(p, sent);
@@ -1024,7 +1061,7 @@ extension on QlTdEngine {
           'retry_after': 0.0,
         },
       };
-      p.message['@ql_retry'] = {'kind': kind, 'text': text, 'entities': entities, 'path': path, 'reply_to': replyTo};
+      p.message['@ql_retry'] = {'kind': kind, 'text': text, 'entities': entities, 'path': path, 'reply_to': replyTo, 'album_id': albumId};
       _emit({
         '@type': 'updateMessageSendFailed',
         'message': p.message,
@@ -1068,6 +1105,7 @@ extension on QlTdEngine {
         List<Map<String, dynamic>>.from(retry['entities'] as List),
         retry['path'] as String?,
         retry['reply_to'] as String,
+        retry['album_id'] as String? ?? '',
       ));
       out.add(p.message);
     }
@@ -1075,9 +1113,14 @@ extension on QlTdEngine {
   }
 
   Future<Map<String, dynamic>> _sendAlbum(Map<String, dynamic> r) async {
+    final albumId = 'alb${DateTime.now().microsecondsSinceEpoch}';
     final out = <Map<String, dynamic>>[];
     for (final content in (r['input_message_contents'] as List? ?? const [])) {
-      final result = await _sendMessage({...r, 'input_message_content': content});
+      final result = await _sendMessage({
+        ...r,
+        'input_message_content': content,
+        '@ql_album_id': albumId,
+      });
       if (result['@type'] != 'message') return result;
       out.add(result);
     }
@@ -1193,8 +1236,6 @@ extension on QlTdEngine {
     };
   }
 
-  Map<String, dynamic> _messageCount(Map<String, dynamic> r) =>
-      _unsupported('getChatMessageCount');
 
   // MARK: Users
 
@@ -1219,7 +1260,7 @@ extension on QlTdEngine {
       'photo': avatar.isEmpty ? null : _chatPhoto(avatar),
       'public_photo': null,
       'community_id': 0,
-      'block_list': null,
+      'block_list': _blockedUserIds.contains(id) ? {'@type': 'blockListMain'} : null,
       'can_be_called': false,
       'supports_video_calls': false,
       'has_private_calls': true,
