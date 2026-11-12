@@ -3,8 +3,8 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/update/desktop_updater.dart';
-import 'package:mithka/update/release_feed.dart';
+import 'package:qingliao/update/desktop_updater.dart';
+import 'package:qingliao/update/release_feed.dart';
 
 List<int> appImageHeader(int machine) => List<int>.filled(64, 0)
   ..setRange(0, 6, [0x7f, 0x45, 0x4c, 0x46, 2, 1])

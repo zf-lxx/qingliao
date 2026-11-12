@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/tdlib/message_gram_transfer.dart';
+import 'package:qingliao/tdlib/message_gram_transfer.dart';
 
 const _meId = 7;
 const _peerId = 42;

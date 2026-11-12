@@ -3,8 +3,8 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-const mithkaProMonthlyProductId = 'ad.neko.mithka.pro.monthly';
-const mithkaProYearlyProductId = 'ad.neko.mithka.pro.yearly';
+const mithkaProMonthlyProductId = 'xyz.qingliao.app.pro.monthly';
+const mithkaProYearlyProductId = 'xyz.qingliao.app.pro.yearly';
 
 enum MithkaDistribution {
   appStore,
@@ -140,7 +140,7 @@ class MethodChannelMithkaProGateway
     implements MithkaProGateway, MithkaProEntitlementEvents {
   const MethodChannelMithkaProGateway();
 
-  static const _channel = MethodChannel('mithka/pro');
+  static const _channel = MethodChannel('qingliao/pro');
 
   @override
   void setEntitlementChangedHandler(VoidCallback? handler) {

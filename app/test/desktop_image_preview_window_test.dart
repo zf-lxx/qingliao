@@ -4,8 +4,8 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/app/desktop_image_preview_window.dart';
-import 'package:mithka/chat/image_preview.dart';
+import 'package:qingliao/app/desktop_image_preview_window.dart';
+import 'package:qingliao/chat/image_preview.dart';
 
 void main() {
   testWidgets(
@@ -22,7 +22,7 @@ void main() {
       final image = File('${directory.path}/one-pixel.png')
         ..writeAsBytesSync(bytes);
       expect(image.existsSync(), isTrue);
-      const channel = MethodChannel('mithka/clipboard');
+      const channel = MethodChannel('qingliao/clipboard');
       final messenger =
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
       var copies = 0;
@@ -75,10 +75,10 @@ void main() {
       startIndex: 1,
       items: [
         const DesktopImagePreviewItemArguments(
-          path: '/private/tmp/mithka/first.jpg',
+          path: '/private/tmp/qingliao/first.jpg',
         ),
         DesktopImagePreviewItemArguments(
-          path: '/private/tmp/mithka/photo.jpg',
+          path: '/private/tmp/qingliao/photo.jpg',
           miniThumb: Uint8List.fromList([1, 2, 3, 4]),
         ),
       ],
@@ -95,8 +95,8 @@ void main() {
     expect(decoded?.localeTag, 'en');
     expect(decoded?.dark, isTrue);
     expect(decoded?.items, hasLength(2));
-    expect(decoded?.items.first.path, '/private/tmp/mithka/first.jpg');
-    expect(decoded?.items[1].path, '/private/tmp/mithka/photo.jpg');
+    expect(decoded?.items.first.path, '/private/tmp/qingliao/first.jpg');
+    expect(decoded?.items[1].path, '/private/tmp/qingliao/photo.jpg');
     expect(decoded?.items[1].miniThumb, [1, 2, 3, 4]);
     expect(encoded, isNot(contains('fileId')));
     expect(encoded, isNot(contains('chatId')));

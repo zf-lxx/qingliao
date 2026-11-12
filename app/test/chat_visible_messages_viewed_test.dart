@@ -1,9 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/chat_view_model.dart';
-import 'package:mithka/tdlib/td_client.dart';
-import 'package:mithka/tdlib/td_models.dart';
+import 'package:qingliao/chat/chat_view_model.dart';
+import 'package:qingliao/tdlib/td_client.dart';
+import 'package:qingliao/tdlib/td_models.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

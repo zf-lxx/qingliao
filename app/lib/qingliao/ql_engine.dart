@@ -8,7 +8,7 @@
 //
 //  Unsupported methods return a TDLib `error` object (code 400,
 //  "QL_UNSUPPORTED: <method>"): never a fake success. See
-//  docs/mithka-adapter.md for the coverage table.
+//  docs/adapter-coverage.md for the coverage table.
 //
 
 import 'dart:async';

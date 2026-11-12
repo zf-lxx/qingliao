@@ -11,7 +11,7 @@ import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 
 import 'google_translate_defaults.dart';
 import 'translation_controller.dart';
@@ -19,7 +19,7 @@ import 'translation_controller.dart';
 class NativeTranslationApi {
   const NativeTranslationApi._();
 
-  static const _channel = MethodChannel('mithka/native_translation');
+  static const _channel = MethodChannel('qingliao/native_translation');
 
   static Future<Set<TranslationProvider>> availableProviders() async {
     try {

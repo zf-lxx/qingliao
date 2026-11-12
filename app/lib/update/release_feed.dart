@@ -141,8 +141,8 @@ String? _hexDigest(String? digest) {
 
 /// Normalizes a GitHub tag or versionName to a comparable X.Y.Z string.
 ///
-/// 轻聊 tags look like `mithka-p2-0.3.2` or `v0.3.3`. The last dotted
-/// numeric run is the version; a prefix must not be compared as 0.0.0 or
+/// 轻聊 tags look like `v0.4.1`. Historical tags are also accepted; the last
+/// dotted numeric run is the version; a prefix must not be compared as 0.0.0 or
 /// against an unrelated project.
 String releaseVersionFromTag(String tag) {
   final trimmed = tag.trim();

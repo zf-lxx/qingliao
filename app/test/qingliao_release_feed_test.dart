@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/update/release_feed.dart';
+import 'package:qingliao/update/release_feed.dart';
 
 void main() {
   test('release tags extract 轻聊 versions, not mithka prefixes', () {

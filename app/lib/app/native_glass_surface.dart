@@ -104,11 +104,11 @@ class _NativeGlassSurfaceState extends State<NativeGlassSurface> {
     children: [
       Positioned.fill(
         child: UiKitView(
-          viewType: 'mithka/native_glass',
+          viewType: 'qingliao/native_glass',
           creationParamsCodec: const StandardMessageCodec(),
           creationParams: _configuration(),
           onPlatformViewCreated: (id) {
-            final channel = MethodChannel('mithka/native_glass/$id');
+            final channel = MethodChannel('qingliao/native_glass/$id');
             _channel = channel;
             _update();
           },

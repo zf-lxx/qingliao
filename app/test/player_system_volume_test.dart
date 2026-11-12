@@ -1,12 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/platform/player_system_volume.dart';
+import 'package:qingliao/platform/player_system_volume.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  const channel = MethodChannel('mithka/system_media_volume');
+  const channel = MethodChannel('qingliao/system_media_volume');
   final calls = <MethodCall>[];
 
   setUp(() {

@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/chat_first_contact_info.dart';
-import 'package:mithka/chat/chat_session_cache.dart';
-import 'package:mithka/tdlib/td_models.dart';
+import 'package:qingliao/chat/chat_first_contact_info.dart';
+import 'package:qingliao/chat/chat_session_cache.dart';
+import 'package:qingliao/tdlib/td_models.dart';
 
 ChatMessage _message(int id) =>
     ChatMessage(id: id, isOutgoing: false, text: 'message $id', date: id);

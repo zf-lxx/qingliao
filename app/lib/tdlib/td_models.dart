@@ -9,9 +9,9 @@ import 'dart:convert';
 
 import 'package:dlibphonenumber/dlibphonenumber.dart';
 import 'package:flutter/foundation.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/l10n/gram_amount.dart';
-import 'package:mithka/notifications/scope_notification_settings.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/gram_amount.dart';
+import 'package:qingliao/notifications/scope_notification_settings.dart';
 
 import 'json_helpers.dart';
 import 'message_gift.dart';
@@ -3935,7 +3935,7 @@ abstract final class TDParse {
           'giveawayPrizePremium' =>
             '${prize?.integer('month_count') ?? 0} months Premium',
           'giveawayPrizeStars' =>
-            '${prize?.int64('star_count') ?? 0} Telegram Stars',
+            '${prize?.int64('star_count') ?? 0} Stars',
           _ => parameters?.str('prize_description') ?? '',
         };
         return MessageSummaryCard(
@@ -3958,7 +3958,7 @@ abstract final class TDParse {
           kind: MessageSummaryKind.giveaway,
           title: AppStrings.t(AppStringKeys.tdMessageGiveaway),
           detail: content.type == 'messageGiveawayCreated'
-              ? '${content.int64('star_count') ?? 0} Telegram Stars'
+              ? '${content.int64('star_count') ?? 0} Stars'
               : '${content.integer('winner_count') ?? 0} winners',
         );
       case 'messagePaidMedia':

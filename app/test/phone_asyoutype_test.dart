@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/auth/phone_number_format.dart';
+import 'package:qingliao/auth/phone_number_format.dart';
 
 String fmt(String input) => formatLoginPhoneNumber(input);
 

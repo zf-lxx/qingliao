@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
-import 'package:mithka/chat/telegram_mini_app_platform.dart';
+import 'package:qingliao/chat/telegram_mini_app_platform.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {

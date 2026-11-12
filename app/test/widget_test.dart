@@ -5,20 +5,20 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/ai_reply_service.dart';
-import 'package:mithka/chat/chat_input_bar.dart';
-import 'package:mithka/chat/chat_view_model.dart';
-import 'package:mithka/chat/emoji_text_controller.dart';
-import 'package:mithka/chat/secret_chat_service.dart';
-import 'package:mithka/chat/telegram_ai_service.dart';
-import 'package:mithka/components/keyboard_dismiss_on_tap.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/settings/ai_settings_controller.dart';
-import 'package:mithka/settings/apple_pcc_api.dart';
-import 'package:mithka/settings/keyword_blocker.dart';
-import 'package:mithka/settings/translation_controller.dart';
-import 'package:mithka/tdlib/td_models.dart';
-import 'package:mithka/theme/theme_controller.dart';
+import 'package:qingliao/chat/ai_reply_service.dart';
+import 'package:qingliao/chat/chat_input_bar.dart';
+import 'package:qingliao/chat/chat_view_model.dart';
+import 'package:qingliao/chat/emoji_text_controller.dart';
+import 'package:qingliao/chat/secret_chat_service.dart';
+import 'package:qingliao/chat/telegram_ai_service.dart';
+import 'package:qingliao/components/keyboard_dismiss_on_tap.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/settings/ai_settings_controller.dart';
+import 'package:qingliao/settings/apple_pcc_api.dart';
+import 'package:qingliao/settings/keyword_blocker.dart';
+import 'package:qingliao/settings/translation_controller.dart';
+import 'package:qingliao/tdlib/td_models.dart';
+import 'package:qingliao/theme/theme_controller.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -341,12 +341,12 @@ void main() {
       expect(field.focusNode?.hasFocus, isFalse);
       expect(field.controller?.text, isEmpty);
 
-      vm.completeInitialLoad(remoteDraft: 'Preserved Telegram draft');
+      vm.completeInitialLoad(remoteDraft: 'Preserved remote draft');
       await tester.pump();
       await tester.pump();
 
       field = tester.widget<TextField>(find.byType(TextField));
-      expect(field.controller?.text, 'Preserved Telegram draft');
+      expect(field.controller?.text, 'Preserved remote draft');
       expect(field.focusNode?.hasFocus, isTrue);
     });
 
@@ -609,6 +609,64 @@ void main() {
       );
     });
 
+    testWidgets(
+      'clears the reply banner while the composer stays focused',
+      (tester) async {
+        final (vm, _) = await pumpAiReplyComposer(
+          tester,
+          null,
+          useExplicitReplyTarget: true,
+        );
+
+        expect(
+          find.byKey(const ValueKey('composerReplyCancel')),
+          findsOneWidget,
+        );
+        expect(find.text('Alice:Can you join at three?'), findsOneWidget);
+
+        final field = tester.widget<TextField>(find.byType(TextField));
+        field.focusNode!.requestFocus();
+        await tester.pump();
+        expect(field.focusNode!.hasFocus, isTrue);
+
+        await tester.tap(find.byKey(const ValueKey('composerReplyCancel')));
+        await tester.pump();
+
+        expect(vm.replyTo, isNull);
+        expect(
+          find.byKey(const ValueKey('composerReplyCancel')),
+          findsNothing,
+        );
+        expect(field.focusNode!.hasFocus, isTrue);
+      },
+    );
+
+    testWidgets(
+      'shows a newly selected reply while the composer is focused',
+      (tester) async {
+        final (vm, target) = await pumpAiReplyComposer(tester, null);
+
+        final field = tester.widget<TextField>(find.byType(TextField));
+        field.focusNode!.requestFocus();
+        await tester.pump();
+        expect(field.focusNode!.hasFocus, isTrue);
+        expect(
+          find.byKey(const ValueKey('composerReplyCancel')),
+          findsNothing,
+        );
+
+        vm.setReply(target);
+        await tester.pump();
+
+        expect(vm.replyTo, same(target));
+        expect(
+          find.byKey(const ValueKey('composerReplyCancel')),
+          findsOneWidget,
+        );
+        expect(find.text('Alice:Can you join at three?'), findsOneWidget);
+      },
+    );
+
     for (final simpleMode in [false, true]) {
       testWidgets(
         'reports text field height changes (simpleMode: $simpleMode)',
@@ -678,7 +736,7 @@ void main() {
   group('TDParse.messageText', () {
     test('redacts only a message carrying restriction info', () {
       const notice =
-          "This message can't be displayed because it violated Telegram's Terms of Service.";
+          "This message can't be displayed because it violated the Terms of Service.";
       final restricted = TDParse.message({
         'id': 11,
         'date': 1,

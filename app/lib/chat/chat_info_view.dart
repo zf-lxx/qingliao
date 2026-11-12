@@ -11,8 +11,8 @@ import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/notifications/scope_notification_settings.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/notifications/scope_notification_settings.dart';
 import 'package:provider/provider.dart';
 
 import '../app/primary_chat_launcher.dart';

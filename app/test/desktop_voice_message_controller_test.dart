@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/desktop_voice_message_controller.dart';
+import 'package:qingliao/chat/desktop_voice_message_controller.dart';
 
 void main() {
   test(

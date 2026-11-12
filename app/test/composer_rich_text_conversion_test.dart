@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/chat_input_bar.dart';
-import 'package:mithka/chat/chat_view_model.dart';
-import 'package:mithka/chat/outgoing_attachment.dart';
-import 'package:mithka/chat/rich_message_source.dart';
-import 'package:mithka/chat/rich_text_composer_view.dart';
-import 'package:mithka/components/app_icons.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/theme/app_theme.dart';
+import 'package:qingliao/chat/chat_input_bar.dart';
+import 'package:qingliao/chat/chat_view_model.dart';
+import 'package:qingliao/chat/outgoing_attachment.dart';
+import 'package:qingliao/chat/rich_message_source.dart';
+import 'package:qingliao/chat/rich_text_composer_view.dart';
+import 'package:qingliao/components/app_icons.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/theme/app_theme.dart';
 
 class _ConversionViewModel extends ChatViewModel {
   _ConversionViewModel()

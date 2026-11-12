@@ -6,7 +6,7 @@
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 
 import '../app/app_navigator.dart';
 import '../chat/chat_view.dart';

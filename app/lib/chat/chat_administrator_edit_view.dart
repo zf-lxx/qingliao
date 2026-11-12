@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 
 import '../components/app_dialog.dart';
 import '../components/toast.dart';

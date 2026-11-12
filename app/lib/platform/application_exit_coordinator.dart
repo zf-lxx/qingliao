@@ -18,7 +18,7 @@ final class ApplicationExitCoordinator with WidgetsBindingObserver {
   ApplicationExitCoordinator._(this._shutdown);
 
   static const MethodChannel _lifecycleChannel = MethodChannel(
-    'mithka/application_lifecycle',
+    'qingliao/application_lifecycle',
   );
   static Future<void>? _installOperation;
 

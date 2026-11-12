@@ -17,8 +17,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/config/build_flags.dart';
-import 'package:mithka/history/message_history_store.dart';
+import 'package:qingliao/config/build_flags.dart';
+import 'package:qingliao/history/message_history_store.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _enabled = allowTelegramTosViolations;

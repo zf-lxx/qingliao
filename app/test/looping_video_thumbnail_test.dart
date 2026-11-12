@@ -13,9 +13,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/looping_video_view.dart';
-import 'package:mithka/components/photo_avatar.dart';
-import 'package:mithka/tdlib/td_models.dart';
+import 'package:qingliao/chat/looping_video_view.dart';
+import 'package:qingliao/components/photo_avatar.dart';
+import 'package:qingliao/tdlib/td_models.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 
 /// A video_player platform whose players initialize (metadata parsed) but

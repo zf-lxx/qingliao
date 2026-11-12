@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/app/handoff_service.dart';
+import 'package:qingliao/app/handoff_service.dart';
 
 void main() {
   group('HandoffChatActivity', () {

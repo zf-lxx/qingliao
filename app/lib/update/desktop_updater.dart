@@ -244,7 +244,7 @@ String buildPosixUpdateScript({
   String quote(String value) => "'${value.replaceAll("'", r"'\''")}'";
   return '''
 #!/bin/sh
-# Replaces a Mithka install with a staged update once the app has exited.
+# Replaces a Qingliao install with a staged update once the app has exited.
 set -u
 
 pid=${quote('$processId')}
@@ -387,7 +387,7 @@ String buildWindowsUpdateScript({
   return [
     '@echo off',
     'setlocal',
-    'rem Replaces a Mithka install with a staged update once the app exited.',
+    'rem Replaces a Qingliao install with a staged update once the app exited.',
     assign('PID', '$processId'),
     assign('INSTALL_DIR', installDirectory),
     assign('STAGED_DIR', stagedDirectory),
@@ -441,8 +441,8 @@ String buildWindowsUpdateScript({
 }
 
 abstract final class DesktopUpdater {
-  static const workPrefix = '.mithka-update-';
-  static const backupPrefix = '.mithka-backup-';
+  static const workPrefix = '.qingliao-update-';
+  static const backupPrefix = '.qingliao-backup-';
 
   /// Environment variables the sandboxed runtimes set for their own payload.
   static const _managedEnvironmentKeys = ['FLATPAK_ID', 'SNAP'];
@@ -458,7 +458,7 @@ abstract final class DesktopUpdater {
   ];
 
   static String get launcherFileName =>
-      Platform.isWindows ? 'mithka.exe' : 'mithka';
+      Platform.isWindows ? 'qingliao.exe' : 'qingliao';
 
   /// Why an in-place update is unavailable here, or null when one can run.
   static DesktopUpdateBlock? inspectInstall() {
@@ -763,7 +763,7 @@ abstract final class DesktopUpdater {
     );
     if (!launcher.existsSync()) {
       throw const DesktopUpdateException(
-        'Update package does not contain a Mithka executable',
+        'Update package does not contain a Qingliao executable',
       );
     }
     return root;
@@ -775,7 +775,10 @@ abstract final class DesktopUpdater {
     for (final entry in parent.listSync()) {
       if (entry is! Directory) continue;
       final name = entry.path.split(Platform.pathSeparator).last;
-      if (name.startsWith(workPrefix) || name.startsWith(backupPrefix)) {
+      if (name.startsWith(workPrefix) ||
+          name.startsWith(backupPrefix) ||
+          name.startsWith('.mithka-update-') ||
+          name.startsWith('.mithka-backup-')) {
         await _deleteQuietly(entry);
       }
     }
@@ -784,7 +787,7 @@ abstract final class DesktopUpdater {
   static bool _isWritable(Directory directory) {
     try {
       final probe = File(
-        '${directory.path}${Platform.pathSeparator}.mithka-write-probe.$pid',
+        '${directory.path}${Platform.pathSeparator}.qingliao-write-probe.$pid',
       );
       probe.writeAsStringSync('');
       probe.deleteSync();

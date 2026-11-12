@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chats/chat_delete_dialog.dart';
-import 'package:mithka/chats/chat_delete_policy.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/tdlib/td_models.dart';
+import 'package:qingliao/chats/chat_delete_dialog.dart';
+import 'package:qingliao/chats/chat_delete_policy.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/tdlib/td_models.dart';
 
 import 'support/l10n_fixtures.dart';
 

@@ -6,8 +6,8 @@
 //  plus the pure copy rules the gift card and gift sheet render with.
 //
 
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/l10n/gram_amount.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/gram_amount.dart';
 
 import 'td_models.dart';
 

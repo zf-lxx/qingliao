@@ -3,11 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/chat_members_view.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/tdlib/td_client.dart';
-import 'package:mithka/theme/app_theme.dart';
-import 'package:mithka/theme/theme_controller.dart';
+import 'package:qingliao/chat/chat_members_view.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/tdlib/td_client.dart';
+import 'package:qingliao/theme/app_theme.dart';
+import 'package:qingliao/theme/theme_controller.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 

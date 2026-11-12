@@ -10,9 +10,9 @@
 
 namespace {
 
-constexpr const wchar_t kPrimaryWindowTitle[] = L"mithka";
+constexpr const wchar_t kPrimaryWindowTitle[] = L"qingliao";
 constexpr const wchar_t kPrimaryInstanceMutex[] =
-    L"Local\\ad.neko.mithka.primary-window";
+    L"Local\\xyz.qingliao.app.primary-window";
 
 bool ActivateExistingPrimaryWindow() {
   // The mutex is created before Flutter initializes, so a near-simultaneous

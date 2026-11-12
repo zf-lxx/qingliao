@@ -5,10 +5,10 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_auth/local_auth.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/security/local_app_lock_controller.dart';
-import 'package:mithka/security/local_app_lock_views.dart';
-import 'package:mithka/theme/theme_controller.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/security/local_app_lock_controller.dart';
+import 'package:qingliao/security/local_app_lock_views.dart';
+import 'package:qingliao/theme/theme_controller.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 

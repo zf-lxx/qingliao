@@ -9,7 +9,7 @@
 import 'dart:async';
 
 import 'package:flutter/widgets.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 
 import '../chats/chat_delete_dialog.dart';
 import '../chats/chat_delete_policy.dart';

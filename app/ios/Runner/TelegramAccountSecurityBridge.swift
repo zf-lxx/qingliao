@@ -12,7 +12,7 @@ final class TelegramPasskeyBridge: NSObject,
   private var pendingResult: FlutterResult?
 
   init(messenger: FlutterBinaryMessenger) {
-    channel = FlutterMethodChannel(name: "mithka/passkeys", binaryMessenger: messenger)
+    channel = FlutterMethodChannel(name: "qingliao/passkeys", binaryMessenger: messenger)
     super.init()
     channel.setMethodCallHandler { [weak self] call, result in
       self?.handle(call: call, result: result)
@@ -322,7 +322,7 @@ final class PremiumAuthPurchaseBridge {
 
   init(messenger: FlutterBinaryMessenger) {
     channel = FlutterMethodChannel(
-      name: "mithka/premium_auth_purchase",
+      name: "qingliao/premium_auth_purchase",
       binaryMessenger: messenger
     )
     channel.setMethodCallHandler { [weak self] call, result in

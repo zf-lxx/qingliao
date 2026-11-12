@@ -223,7 +223,7 @@ abstract interface class TelegramStoreBridge {
 class MethodChannelTelegramStoreBridge implements TelegramStoreBridge {
   const MethodChannelTelegramStoreBridge();
 
-  static const _channel = MethodChannel('mithka/premium_auth_purchase');
+  static const _channel = MethodChannel('qingliao/premium_auth_purchase');
 
   @override
   Future<bool> isSupported() async {

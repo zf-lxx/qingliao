@@ -2,8 +2,8 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/tdlib/gram_js_session.dart';
-import 'package:mithka/tdlib/td_session_string.dart';
+import 'package:qingliao/tdlib/gram_js_session.dart';
+import 'package:qingliao/tdlib/td_session_string.dart';
 
 void main() {
   const apiId = 34216039;

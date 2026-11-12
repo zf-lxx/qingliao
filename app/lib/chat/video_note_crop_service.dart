@@ -26,7 +26,7 @@ import 'package:flutter/services.dart';
 /// after the abandon timeout is still reclaimed), and the delivery flag is
 /// only set after the caller has verified and taken the file.
 abstract final class VideoNoteCropService {
-  static const _channel = MethodChannel('mithka/media_editor');
+  static const _channel = MethodChannel('qingliao/media_editor');
 
   /// Upper bound for the native re-encode. A 60-second 720p square export
   /// completes in a couple of seconds on device; past this the recorder sends

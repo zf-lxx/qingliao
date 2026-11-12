@@ -11,7 +11,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 import 'package:path_provider/path_provider.dart';
 
 class EmojiFontChoice {
@@ -50,7 +50,7 @@ class EmojiFontChoice {
 
   static String runtimeFamilyForKey(String key) {
     final sanitized = key.replaceAll(RegExp(r'[^A-Za-z0-9_]'), '_');
-    return 'MithkaEmoji_$sanitized';
+    return 'QingliaoEmoji_$sanitized';
   }
 }
 

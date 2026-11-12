@@ -15,8 +15,8 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/tdlib/json_helpers.dart';
-import 'package:mithka/tdlib/td_client.dart';
+import 'package:qingliao/tdlib/json_helpers.dart';
+import 'package:qingliao/tdlib/td_client.dart';
 
 void main() {
   final updates = StreamController<Map<String, dynamic>>.broadcast(sync: true);

@@ -15,4 +15,4 @@ for hook in "$APPDIR"/apprun-hooks/*.sh; do
   # shellcheck disable=SC1090
   [ ! -f "$hook" ] || source "$hook"
 done
-exec "$APPDIR/usr/bin/mithka" "$@"
+exec "$APPDIR/usr/bin/qingliao" "$@"

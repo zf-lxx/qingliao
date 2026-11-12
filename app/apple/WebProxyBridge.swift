@@ -12,7 +12,7 @@ final class WebProxyBridge {
   private var carriers: [String: WebProxyCarrier] = [:]
 
   init(messenger: FlutterBinaryMessenger) {
-    channel = FlutterMethodChannel(name: "mithka/web_proxy", binaryMessenger: messenger)
+    channel = FlutterMethodChannel(name: "qingliao/web_proxy", binaryMessenger: messenger)
     channel.setMethodCallHandler { [weak self] call, result in
       self?.handle(call, result: result)
     }

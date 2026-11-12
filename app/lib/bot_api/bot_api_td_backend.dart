@@ -1053,7 +1053,7 @@ class BotApiTdBackend {
       return _error(404, 'Sticker set is not in on-device history.');
     }
     final source = _map(await _client.call('getStickerSet', {'name': name}));
-    if (source == null) return _error(502, 'Telegram returned an invalid set.');
+    if (source == null) return _error(502, 'The server returned an invalid set.');
     final stickers = <Map<String, dynamic>>[
       for (final raw in _list(source['stickers']))
         if (_map(raw) case final sticker?) _converter.sticker(sticker),
@@ -2267,7 +2267,7 @@ class BotApiTdBackend {
     return switch (name) {
       'version' => const {
         '@type': 'optionValueString',
-        'value': 'Telegram Bot API',
+        'value': 'Bot API',
       },
       'my_id' => {'@type': 'optionValueInteger', 'value': account.botId},
       'can_use_login_passkey' => const {

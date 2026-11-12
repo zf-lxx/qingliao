@@ -2,10 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/config/build_flags.dart';
-import 'package:mithka/moments/story_viewer_view.dart';
-import 'package:mithka/settings/ghost_mode_controller.dart';
-import 'package:mithka/tdlib/td_client.dart';
+import 'package:qingliao/config/build_flags.dart';
+import 'package:qingliao/moments/story_viewer_view.dart';
+import 'package:qingliao/settings/ghost_mode_controller.dart';
+import 'package:qingliao/tdlib/td_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Default-build variant (no `I_DONT_FUCKING_CARE_ABOUT_TOS` define): the

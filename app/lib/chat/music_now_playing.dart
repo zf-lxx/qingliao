@@ -91,7 +91,7 @@ class MusicNowPlayingBridge {
   }) : _enabled = enabled ?? _platformSupported,
        _resolveArtwork = resolveArtwork ?? _defaultArtwork;
 
-  static const channelName = 'mithka/now_playing';
+  static const channelName = 'qingliao/now_playing';
 
   /// Position drift beyond this, relative to the extrapolated elapsed time,
   /// counts as a seek and is pushed to the system scrubber.

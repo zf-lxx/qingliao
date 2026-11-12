@@ -26,7 +26,7 @@ private final class TelegramCallEventStream: NSObject, FlutterStreamHandler {
 import TgVoipWebrtc
 
 private final class TelegramGroupCallQueue: NSObject, OngoingCallThreadLocalContextQueueWebrtc {
-  private let queue = DispatchQueue(label: "ad.neko.mithka.group-call", qos: .userInitiated)
+  private let queue = DispatchQueue(label: "xyz.qingliao.app.group-call", qos: .userInitiated)
   private let key = DispatchSpecificKey<Void>()
 
   override init() {
@@ -87,9 +87,9 @@ final class TelegramGroupCallMediaBridge: NSObject {
     registrar: FlutterApplicationRegistrar,
     audioSessionManagedBySystem: Bool
   ) {
-    channel = FlutterMethodChannel(name: "mithka/call_media", binaryMessenger: messenger)
+    channel = FlutterMethodChannel(name: "qingliao/call_media", binaryMessenger: messenger)
     eventChannel = FlutterEventChannel(
-      name: "mithka/call_media/events",
+      name: "qingliao/call_media/events",
       binaryMessenger: messenger
     )
     audioSessionIsActive = !audioSessionManagedBySystem
@@ -102,11 +102,11 @@ final class TelegramGroupCallMediaBridge: NSObject {
     }
     registrar.register(
       TelegramGroupVideoViewFactory(bridge: self),
-      withId: "mithka/group_video_view"
+      withId: "qingliao/group_video_view"
     )
     registrar.register(
       TelegramGroupVideoViewFactory(bridge: self),
-      withId: "mithka/video_view"
+      withId: "qingliao/video_view"
     )
   }
 

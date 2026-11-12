@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:mithka/l10n/locale_catalogue.dart';
+import 'package:qingliao/l10n/locale_catalogue.dart';
 
 /// Reads the generated locale assets straight off disk.
 ///

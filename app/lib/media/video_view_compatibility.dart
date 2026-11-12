@@ -52,7 +52,7 @@ Future<void> initializeCompatibleVideoViewType() async {
       return;
     }
     final info = await const MethodChannel(
-      'mithka/app_info',
+      'qingliao/app_info',
     ).invokeMapMethod<String, Object?>('info');
     if (needsDirectVideoSurface(
       sdkInt: info?['sdkInt'] as int?,

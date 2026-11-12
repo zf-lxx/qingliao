@@ -9,7 +9,7 @@ import multi_window_manager
 /// acknowledging readiness or replacing the shutdown handler.
 final class ApplicationTerminationBridge {
   static let shared = ApplicationTerminationBridge()
-  static let channelName = "mithka/application_lifecycle"
+  static let channelName = "qingliao/application_lifecycle"
   // Dart may spend up to 3s joining startup, 16s closing an existing client,
   // and 3s joining the receive isolate. Keep the native deadline outside that
   // bounded window so AppKit never cancels an otherwise healthy shutdown.

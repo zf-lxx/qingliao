@@ -6,11 +6,11 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/settings/notification_exceptions_sheet.dart';
-import 'package:mithka/tdlib/td_bindings.dart';
-import 'package:mithka/tdlib/td_client.dart';
-import 'package:mithka/theme/app_theme.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/settings/notification_exceptions_sheet.dart';
+import 'package:qingliao/tdlib/td_bindings.dart';
+import 'package:qingliao/tdlib/td_client.dart';
+import 'package:qingliao/theme/app_theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _privateScope = 'notificationSettingsScopePrivateChats';

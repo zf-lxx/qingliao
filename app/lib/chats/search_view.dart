@@ -10,7 +10,7 @@ import 'dart:async';
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 
 import '../app/active_conversation.dart';
 import '../app/app_navigator.dart';

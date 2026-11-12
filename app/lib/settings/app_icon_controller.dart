@@ -806,7 +806,7 @@ class AppIconController extends ChangeNotifier {
     _pro.addListener(_entitlementChanged);
   }
 
-  static const _channel = MethodChannel('mithka/app_icon');
+  static const _channel = MethodChannel('qingliao/app_icon');
   static const _selectedKey = 'selected_app_icon';
 
   final SharedPreferences _prefs;

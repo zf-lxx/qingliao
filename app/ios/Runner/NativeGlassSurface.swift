@@ -42,7 +42,7 @@ private final class NativeGlassSurface: NSObject, FlutterPlatformView {
   init(frame: CGRect, id: Int64, registrar: FlutterPluginRegistrar, arguments: Any?) {
     host = GlassSurfaceHost(frame: frame)
     channel = FlutterMethodChannel(
-      name: "mithka/native_glass/\(id)", binaryMessenger: registrar.messenger()
+      name: "qingliao/native_glass/\(id)", binaryMessenger: registrar.messenger()
     )
     super.init()
     if let configuration = arguments as? [String: Any] { host.apply(configuration) }
@@ -292,7 +292,7 @@ private final class NativeTabBarPlatformView: NSObject, FlutterPlatformView {
   init(frame: CGRect, id: Int64, registrar: FlutterPluginRegistrar, arguments: Any?) {
     host = NativeTabBarHost(frame: frame)
     channel = FlutterMethodChannel(
-      name: "mithka/native_tab_bar/\(id)", binaryMessenger: registrar.messenger()
+      name: "qingliao/native_tab_bar/\(id)", binaryMessenger: registrar.messenger()
     )
     super.init()
     host.onSelect = { [weak self] id in

@@ -80,7 +80,7 @@ class _NativeTabBarState extends State<NativeTabBar> {
     try {
       supported =
           await const MethodChannel(
-            'mithka/native_tab_bar',
+            'qingliao/native_tab_bar',
           ).invokeMethod<bool>('isSupported') ==
           true;
     } on MissingPluginException {
@@ -212,13 +212,13 @@ class _NativeTabBarState extends State<NativeTabBar> {
           child: _configuration == null
               ? null
               : UiKitView(
-                  viewType: 'mithka/native_tab_bar',
+                  viewType: 'qingliao/native_tab_bar',
                   layoutDirection: Directionality.of(context),
                   creationParamsCodec: const StandardMessageCodec(),
                   creationParams: _configuration,
                   onPlatformViewCreated: (id) {
                     if (!mounted) return;
-                    final channel = MethodChannel('mithka/native_tab_bar/$id');
+                    final channel = MethodChannel('qingliao/native_tab_bar/$id');
                     _channel = channel;
                     channel.setMethodCallHandler(_onNativeCall);
                     // Explicit handshake: initial layout may precede Dart handler.

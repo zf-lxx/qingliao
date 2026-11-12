@@ -10,9 +10,9 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/chat_view_model.dart';
-import 'package:mithka/tdlib/forum_topic_index.dart';
-import 'package:mithka/tdlib/td_client.dart';
+import 'package:qingliao/chat/chat_view_model.dart';
+import 'package:qingliao/tdlib/forum_topic_index.dart';
+import 'package:qingliao/tdlib/td_client.dart';
 
 const _chatId = -10042;
 

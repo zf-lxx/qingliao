@@ -11,9 +11,9 @@
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
-import 'package:mithka/components/app_confirm_dialog.dart';
-import 'package:mithka/components/toast.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/components/app_confirm_dialog.dart';
+import 'package:qingliao/components/toast.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:permission_handler/permission_handler.dart';
 

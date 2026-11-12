@@ -48,7 +48,7 @@ if ($ArtifactLabel -notmatch '^[0-9A-Za-z][0-9A-Za-z._-]*$') {
 }
 
 foreach ($requiredPath in @(
-    (Join-Path $BuildDirectory 'mithka.exe'),
+    (Join-Path $BuildDirectory 'qingliao.exe'),
     (Join-Path $BuildDirectory 'flutter_windows.dll'),
     (Join-Path $BuildDirectory 'tdjson.dll'),
     (Join-Path $BuildDirectory 'data\flutter_assets')
@@ -80,7 +80,7 @@ function Get-PeMachine([string]$Path) {
 }
 
 $expectedMachine = if ($Architecture -eq 'arm64') { 0xAA64 } else { 0x8664 }
-foreach ($binaryName in @('mithka.exe', 'flutter_windows.dll', 'tdjson.dll')) {
+foreach ($binaryName in @('qingliao.exe', 'flutter_windows.dll', 'tdjson.dll')) {
     $binaryPath = Join-Path $BuildDirectory $binaryName
     $actualMachine = Get-PeMachine $binaryPath
     if ($actualMachine -ne $expectedMachine) {
@@ -107,7 +107,7 @@ if ($null -eq $compiler) {
 }
 
 $outputBaseFilename = "mithka-$ArtifactLabel-windows-$Architecture-setup"
-$definition = Join-Path $repositoryRoot 'windows\installer\mithka.iss'
+$definition = Join-Path $repositoryRoot 'windows\installer\qingliao.iss'
 $arguments = @(
     "/DAppVersion=$Version",
     "/DArchitecture=$Architecture",

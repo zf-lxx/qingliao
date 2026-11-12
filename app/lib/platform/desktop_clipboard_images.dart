@@ -36,7 +36,7 @@ class DesktopClipboardImageData {
 class DesktopClipboardImageService {
   const DesktopClipboardImageService._();
 
-  static const _channel = MethodChannel('mithka/clipboard');
+  static const _channel = MethodChannel('qingliao/clipboard');
 
   /// Whether this platform can place raw image bytes on the system clipboard.
   /// macOS has its own handler; iOS and Android answer the same channel.

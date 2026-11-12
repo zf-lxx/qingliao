@@ -33,7 +33,7 @@ class PremiumAuthPurchaseException implements Exception {
 class PremiumAuthPurchaseService {
   const PremiumAuthPurchaseService();
 
-  static const _channel = MethodChannel('mithka/premium_auth_purchase');
+  static const _channel = MethodChannel('qingliao/premium_auth_purchase');
 
   Future<bool> isSupported() async {
     if (!Platform.isIOS) return false;

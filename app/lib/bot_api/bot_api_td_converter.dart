@@ -1387,7 +1387,7 @@ String _chatTitle(
   ].where((value) => value.isNotEmpty).join(' ');
   if (name.isNotEmpty) return name;
   final username = _string(chat['username']);
-  return username.isEmpty ? 'Telegram' : '@$username';
+  return username.isEmpty ? 'Bot' : '@$username';
 }
 
 int _peerId(int chatId) {

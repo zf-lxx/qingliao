@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/media/mp4_metadata_probe.dart';
+import 'package:qingliao/media/mp4_metadata_probe.dart';
 
 import 'support/mp4_fixtures.dart';
 

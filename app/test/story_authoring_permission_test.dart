@@ -3,12 +3,12 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/media/app_camera_view.dart';
-import 'package:mithka/moments/story_authoring_view.dart';
-import 'package:mithka/moments/story_service.dart';
-import 'package:mithka/theme/app_theme.dart';
-import 'package:mithka/theme/theme_controller.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/media/app_camera_view.dart';
+import 'package:qingliao/moments/story_authoring_view.dart';
+import 'package:qingliao/moments/story_service.dart';
+import 'package:qingliao/theme/app_theme.dart';
+import 'package:qingliao/theme/theme_controller.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 

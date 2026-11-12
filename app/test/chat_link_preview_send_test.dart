@@ -1,9 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/chat_view_model.dart';
-import 'package:mithka/chat/link_preview_fixer.dart';
-import 'package:mithka/tdlib/td_client.dart';
+import 'package:qingliao/chat/chat_view_model.dart';
+import 'package:qingliao/chat/link_preview_fixer.dart';
+import 'package:qingliao/tdlib/td_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _chatId = 42;

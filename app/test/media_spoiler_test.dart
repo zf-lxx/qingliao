@@ -1,14 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/looping_video_view.dart';
-import 'package:mithka/chat/media_spoiler.dart';
-import 'package:mithka/chat/message_bubble.dart';
-import 'package:mithka/components/photo_avatar.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/moments/moments_view.dart';
-import 'package:mithka/tdlib/td_models.dart';
-import 'package:mithka/theme/app_theme.dart';
-import 'package:mithka/theme/theme_controller.dart';
+import 'package:qingliao/chat/looping_video_view.dart';
+import 'package:qingliao/chat/media_spoiler.dart';
+import 'package:qingliao/chat/message_bubble.dart';
+import 'package:qingliao/components/photo_avatar.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/moments/moments_view.dart';
+import 'package:qingliao/tdlib/td_models.dart';
+import 'package:qingliao/theme/app_theme.dart';
+import 'package:qingliao/theme/theme_controller.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 

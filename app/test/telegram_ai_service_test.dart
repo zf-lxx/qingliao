@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/telegram_ai_service.dart';
-import 'package:mithka/tdlib/td_client.dart';
+import 'package:qingliao/chat/telegram_ai_service.dart';
+import 'package:qingliao/tdlib/td_client.dart';
 
 void main() {
   test('AI reply preserves formatted entities returned by TDLib', () async {

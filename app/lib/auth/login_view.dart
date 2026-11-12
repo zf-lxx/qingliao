@@ -12,7 +12,7 @@ import 'dart:math' as math;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -1538,8 +1538,8 @@ class _LoginViewState extends State<LoginView> {
           _desktopHeading(
             AppStrings.t(AppStringKeys.loginEnterTheEmailCode),
             subtitle: step.emailPattern.isEmpty
-                ? 'Telegram sent a code to your email address.'
-                : 'Telegram sent a code to ${step.emailPattern}.',
+                ? 'A code was sent to your email address.'
+                : 'A code was sent to ${step.emailPattern}.',
           )
         else ...[
           Text(
@@ -1554,8 +1554,8 @@ class _LoginViewState extends State<LoginView> {
           const SizedBox(height: 10),
           Text(
             step.emailPattern.isEmpty
-                ? 'Telegram sent a code to your email address.'
-                : 'Telegram sent a code to ${step.emailPattern}.',
+                ? 'A code was sent to your email address.'
+                : 'A code was sent to ${step.emailPattern}.',
             textAlign: _align,
             style: TextStyle(fontSize: 14, color: c.textSecondary),
           ),
@@ -1652,8 +1652,8 @@ class _LoginViewState extends State<LoginView> {
           _desktopHeading(
             AppStrings.t(AppStringKeys.loginTelegramPremiumIsRequired),
             subtitle: days > 0
-                ? 'Purchase $days days of Telegram Premium to finish signing in.'
-                : 'Complete the required Telegram Premium purchase to finish signing in.',
+                ? 'Purchase $days days of Premium to finish signing in.'
+                : 'Complete the required Premium purchase to finish signing in.',
           )
         else ...[
           AppIcon(HeroAppIcons.solidStar, size: 54, color: AppTheme.brand),
@@ -1670,8 +1670,8 @@ class _LoginViewState extends State<LoginView> {
           const SizedBox(height: 10),
           Text(
             days > 0
-                ? 'Purchase $days days of Telegram Premium to finish signing in.'
-                : 'Complete the required Telegram Premium purchase to finish signing in.',
+                ? 'Purchase $days days of Premium to finish signing in.'
+                : 'Complete the required Premium purchase to finish signing in.',
             textAlign: _align,
             style: TextStyle(
               fontSize: 14,

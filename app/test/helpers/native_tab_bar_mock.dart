@@ -19,7 +19,7 @@ class NativeTabBarMock {
 
   void install() {
     messenger.setMockMethodCallHandler(
-      const MethodChannel('mithka/native_tab_bar'),
+      const MethodChannel('qingliao/native_tab_bar'),
       (call) async => call.method == 'isSupported' ? supported : null,
     );
     messenger.setMockMethodCallHandler(SystemChannels.platform_views, (
@@ -28,11 +28,11 @@ class NativeTabBarMock {
       if (call.method != 'create') return null;
       final args = call.arguments as Map;
       final viewId = args['id'] as int;
-      final native = args['viewType'] == 'mithka/native_tab_bar';
+      final native = args['viewType'] == 'qingliao/native_tab_bar';
       final channel = MethodChannel(
         native
-            ? 'mithka/native_tab_bar/$viewId'
-            : 'mithka/native_glass/$viewId',
+            ? 'qingliao/native_tab_bar/$viewId'
+            : 'qingliao/native_glass/$viewId',
       );
       channels.add(channel);
       if (native) {
@@ -57,7 +57,7 @@ class NativeTabBarMock {
   Future<void> send(String method, Object? arguments) async {
     final done = Completer<void>();
     await messenger.handlePlatformMessage(
-      'mithka/native_tab_bar/$id',
+      'qingliao/native_tab_bar/$id',
       const StandardMethodCodec().encodeMethodCall(
         MethodCall(method, arguments),
       ),
@@ -68,7 +68,7 @@ class NativeTabBarMock {
 
   void dispose() {
     messenger.setMockMethodCallHandler(
-      const MethodChannel('mithka/native_tab_bar'),
+      const MethodChannel('qingliao/native_tab_bar'),
       null,
     );
     messenger.setMockMethodCallHandler(SystemChannels.platform_views, null);

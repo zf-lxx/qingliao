@@ -1,4 +1,4 @@
-package ad.neko.mithka
+package xyz.qingliao.app
 
 /**
  * Square cropping of recorded video notes on Android.

@@ -26,7 +26,7 @@ class ChatMediaDropRegion extends StatefulWidget {
 }
 
 class _ChatMediaDropRegionState extends State<ChatMediaDropRegion> {
-  static const _channel = MethodChannel('mithka/media_drop');
+  static const _channel = MethodChannel('qingliao/media_drop');
   static final _regions = <_ChatMediaDropRegionState>[];
   static final _pendingDrops = <String, (_ChatMediaDropRegionState, Object)>{};
   bool _draggingOver = false;

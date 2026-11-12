@@ -4,7 +4,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 
 import '../components/app_icons.dart';
 import '../components/photo_avatar.dart';
@@ -399,13 +399,13 @@ class _ParticipantTile extends StatelessWidget {
           const ColoredBox(color: Colors.black),
           if (Platform.isAndroid)
             AndroidView(
-              viewType: 'mithka/video_view',
+              viewType: 'qingliao/video_view',
               creationParams: {'role': role},
               creationParamsCodec: const StandardMessageCodec(),
             )
           else if (Platform.isIOS)
             UiKitView(
-              viewType: 'mithka/group_video_view',
+              viewType: 'qingliao/group_video_view',
               creationParams: {'role': role},
               creationParamsCodec: const StandardMessageCodec(),
             )

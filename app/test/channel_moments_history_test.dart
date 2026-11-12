@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/moments/moments_view.dart';
+import 'package:qingliao/moments/moments_view.dart';
 
 const _chatId = -1001;
 

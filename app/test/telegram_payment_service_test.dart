@@ -4,8 +4,8 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:mithka/chat/telegram_invoice_checkout_view.dart';
-import 'package:mithka/chat/telegram_payment_service.dart';
+import 'package:qingliao/chat/telegram_invoice_checkout_view.dart';
+import 'package:qingliao/chat/telegram_payment_service.dart';
 
 void main() {
   test('payment web event decodes provider credential submission', () {

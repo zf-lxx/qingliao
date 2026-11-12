@@ -6,10 +6,10 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/video_playback_queue.dart';
-import 'package:mithka/chat/video_player_view.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/tdlib/td_models.dart';
+import 'package:qingliao/chat/video_playback_queue.dart';
+import 'package:qingliao/chat/video_player_view.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/tdlib/td_models.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 // Used only to install a deterministic fake for the public video_player API.
 // ignore: depend_on_referenced_packages

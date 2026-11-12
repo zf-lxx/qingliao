@@ -1,4 +1,4 @@
-package ad.neko.mithka
+package xyz.qingliao.app
 
 import android.content.Context
 import android.graphics.Bitmap
@@ -25,7 +25,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 class WebProxyBridge(private val context: Context, messenger: BinaryMessenger) {
-    private val channel = MethodChannel(messenger, "mithka/web_proxy")
+    private val channel = MethodChannel(messenger, "qingliao/web_proxy")
     private val carriers = mutableMapOf<String, Carrier>()
     private val handler = Handler(Looper.getMainLooper())
 

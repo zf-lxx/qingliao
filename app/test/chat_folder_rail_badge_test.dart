@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chats/chat_list_view.dart';
-import 'package:mithka/chats/chat_list_view_model.dart';
-import 'package:mithka/components/chat_folder_icons.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/theme/app_theme.dart';
+import 'package:qingliao/chats/chat_list_view.dart';
+import 'package:qingliao/chats/chat_list_view_model.dart';
+import 'package:qingliao/components/chat_folder_icons.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/theme/app_theme.dart';
 
 void main() {
   testWidgets('side rail floats folder badges on the icon top-right corner', (

@@ -13,7 +13,7 @@ typedef WebProxySend =
 /// the relay URL contains a capability and must never escape this transport.
 final class WebProxyCarriers {
   WebProxyCarriers(this.send, {MethodChannel? channel})
-    : channel = channel ?? const MethodChannel('mithka/web_proxy') {
+    : channel = channel ?? const MethodChannel('qingliao/web_proxy') {
     this.channel.setMethodCallHandler(_onNativeCall);
   }
 

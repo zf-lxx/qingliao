@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:ui';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/platform/application_exit_coordinator.dart';
+import 'package:qingliao/platform/application_exit_coordinator.dart';
 
 void main() {
   test('application exit waits for a successful graceful shutdown', () async {

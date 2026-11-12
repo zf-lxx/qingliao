@@ -102,7 +102,7 @@ class HandoffService {
 
   static final HandoffService shared = HandoffService._();
 
-  static const _channel = MethodChannel('mithka/handoff');
+  static const _channel = MethodChannel('qingliao/handoff');
 
   AccountStore? _accounts;
   AuthManager? _auth;

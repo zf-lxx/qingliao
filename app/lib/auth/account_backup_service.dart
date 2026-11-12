@@ -39,7 +39,7 @@ class AccountSessionBackup {
 
 class AccountBackupService {
   AccountBackupService({MethodChannel? channel, bool? platformEligible})
-    : _channel = channel ?? const MethodChannel('mithka/account_backup'),
+    : _channel = channel ?? const MethodChannel('qingliao/account_backup'),
       _platformEligible = platformEligible ?? isMobilePlatform;
 
   static final AccountBackupService shared = AccountBackupService();
@@ -73,7 +73,7 @@ class AccountBackupService {
       _probeSupport('isLocalStorageSupported');
 
   /// A mobile OS says nothing about whether this host implements the
-  /// `mithka/account_backup` channel — the HarmonyOS host registers only
+  /// `qingliao/account_backup` channel — the HarmonyOS host registers only
   /// generated federated plugins and has no handler for it, so the raw probe
   /// throws [MissingPluginException] at call time. Report the capability as
   /// absent instead: every surface already owns a not-supported branch
@@ -285,7 +285,7 @@ class AccountBackupService {
       }
       await backupActiveAccount();
     } catch (error) {
-      stderr.writeln('☁️ [Mithka] account backup skipped: $error');
+      stderr.writeln('☁️ [Qingliao] account backup skipped: $error');
     } finally {
       _inFlightAutoBackups.remove(slot);
     }

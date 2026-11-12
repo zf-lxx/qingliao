@@ -1,4 +1,4 @@
-package ad.neko.mithka
+package xyz.qingliao.app
 
 import android.app.Notification
 import android.app.Service

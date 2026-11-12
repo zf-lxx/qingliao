@@ -545,7 +545,7 @@ jobs:
           # Google ships the Firebase C++ SDK for Windows as x86 and x64 static
           # libraries only — the archive contains no ARM64 at all — so an ARM64
           # link fails on unresolved firebase::App symbols. Nothing is lost:
-          # Mithka initialises Firebase only when the mithka/firebase_configuration
+          # Mithka initialises Firebase only when the qingliao/firebase_configuration
           # channel answers, and that channel is implemented on Android and iOS
           # alone, so on Windows the plugin registers and is then never used.
           python3 scripts/drop-windows-plugin.py firebase_core \
@@ -1153,7 +1153,7 @@ jobs:
           PY
 
       # feat/ohos-host adds the tracked ohos/ host project (bundleName
-      # ad.neko.mithka). Until it merges, generate the host with the fork's
+      # xyz.qingliao.app). Until it merges, generate the host with the fork's
       # own template — it keeps lib/ and only adds ohos/.
       - name: Build the ohos release hap
         env:
@@ -1424,14 +1424,14 @@ jobs:
           tag = os.environ['RELEASE_TAG']
           release_id = os.environ['RELEASE_ID']
           assert release_id.isdigit()
-          release = json.loads(subprocess.check_output(['gh', 'api', f'repos/iebb/mithka/releases/{release_id}'], text=True))
+          release = json.loads(subprocess.check_output(['gh', 'api', f'repos/iebb/qingliao/releases/{release_id}'], text=True))
           assert release['tag_name'] == tag
           assets = {asset['name']: asset for asset in release['assets']}
           manifest = json.loads(Path('release-assets/release-manifest.json').read_text())
           for name, expected in manifest['files'].items():
               actual = assets[name]
               assert actual['size'] == expected['size'] and actual.get('digest') == 'sha256:' + expected['sha256'], name
-          subprocess.run(['gh', 'api', '--method', 'PATCH', f'repos/iebb/mithka/releases/{release_id}', '--input', '-'],
+          subprocess.run(['gh', 'api', '--method', 'PATCH', f'repos/iebb/qingliao/releases/{release_id}', '--input', '-'],
                          input=json.dumps({'target_commitish': 'master', 'draft': False, 'prerelease': False, 'make_latest': 'true'}), text=True,
                          check=True, stdout=subprocess.DEVNULL)
           PY

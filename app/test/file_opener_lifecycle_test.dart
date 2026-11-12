@@ -2,9 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/file_opener.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/theme/app_theme.dart';
+import 'package:qingliao/chat/file_opener.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/theme/app_theme.dart';
 import 'package:open_filex/open_filex.dart';
 
 class _Gate implements InstallPackagesGateway {

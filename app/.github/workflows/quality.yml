@@ -62,7 +62,7 @@ jobs:
             *) echo 'This workflow cannot override its Quality source.' >&2; exit 1 ;;
           esac
           [[ "$source_commit" =~ ^[0-9a-f]{40}$ ]] || exit 1
-          merge_base="$(gh api "repos/iebb/mithka/compare/$source_commit...master" --jq '.merge_base_commit.sha')"
+          merge_base="$(gh api "repos/iebb/qingliao/compare/$source_commit...master" --jq '.merge_base_commit.sha')"
           if [ "$merge_base" != "$source_commit" ]; then
             echo 'The uploaded release source must be an ancestor of master.' >&2
             exit 1

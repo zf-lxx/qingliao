@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/gif_item.dart';
-import 'package:mithka/chat/gif_store.dart';
+import 'package:qingliao/chat/gif_item.dart';
+import 'package:qingliao/chat/gif_store.dart';
 
 void main() {
   test('inline GIF results retain the query identity required for sending', () {

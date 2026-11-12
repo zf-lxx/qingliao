@@ -32,7 +32,7 @@ import { fileIo as fs, fileUri } from '@kit.CoreFileKit';
 import { media } from '@kit.MediaKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 
-const CHANNEL: string = 'mithka/ohos_media';
+const CHANNEL: string = 'qingliao/ohos_media';
 const MICROPHONE: Permissions = 'ohos.permission.MICROPHONE';
 
 /// AVPlayer's discrete rates, nearest of which serves a requested speed.

@@ -7,7 +7,7 @@ class LiveCommunicationBridge {
   LiveCommunicationBridge._();
 
   static final instance = LiveCommunicationBridge._();
-  static const _channel = MethodChannel('mithka/live_communication');
+  static const _channel = MethodChannel('qingliao/live_communication');
 
   void Function(String uuid, bool muted)? onSystemMuted;
   void Function(String uuid)? onSystemEnded;

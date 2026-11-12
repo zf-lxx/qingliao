@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/td_video_stream_server.dart';
+import 'package:qingliao/chat/td_video_stream_server.dart';
 
 void main() {
   test('detached windows receive sanitized live byte progress', () async {

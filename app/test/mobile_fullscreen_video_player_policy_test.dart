@@ -1,6 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/video_player_view.dart';
+import 'package:qingliao/chat/video_player_view.dart';
 import 'package:video_player/video_player.dart';
 
 void main() {

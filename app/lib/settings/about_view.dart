@@ -8,7 +8,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../app/app_version.dart';
@@ -115,7 +115,7 @@ class _AboutViewState extends State<AboutView> {
                 ),
                 const SizedBox(height: 14),
                 Text(
-                  'Mithka',
+                  '轻聊',
                   style: TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.w600,

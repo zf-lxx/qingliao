@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/pro/mithka_pro_service.dart';
+import 'package:qingliao/pro/mithka_pro_service.dart';
 
 void main() {
   test('restricted purchases still allow Restore and Manage', () async {

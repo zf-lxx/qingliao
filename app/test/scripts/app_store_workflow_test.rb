@@ -120,7 +120,7 @@ class AppStoreWorkflowTest < Minitest::Test
 
   def test_source_version_is_read_from_the_exact_github_commit
     response = JSON.generate({
-      "encoding" => "base64", "content" => Base64.strict_encode64("name: mithka\nversion: 1.8.8+296\n")
+      "encoding" => "base64", "content" => Base64.strict_encode64("name: qingliao\nversion: 1.8.8+296\n")
     })
     success = Struct.new(:success?).new(true)
     calls = []

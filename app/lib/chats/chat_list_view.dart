@@ -15,7 +15,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../app/adaptive_split_layout.dart';
@@ -3607,7 +3607,7 @@ class _ChatListViewState extends State<ChatListView>
       DesktopChatWindowArguments(
         accountSlot: accounts.activeSlot,
         accountUserId: activeAccount?.userId,
-        accountName: activeAccount?.name ?? 'Mithka',
+        accountName: activeAccount?.name ?? '轻聊',
         accountAvatarPath: activeAccount?.avatarPath,
         chatId: chat.id,
         title: chat.title,

@@ -1,14 +1,14 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/update/desktop_updater.dart';
+import 'package:qingliao/update/desktop_updater.dart';
 
 void main() {
   group('install eligibility', () {
     DesktopUpdateBlock? inspect({
       bool platformSupported = true,
       Map<String, String> environment = const {},
-      String executablePath = '/home/u/Apps/Mithka/mithka',
+      String executablePath = '/home/u/Apps/Qingliao/qingliao',
       bool parentWritable = true,
     }) => DesktopUpdater.describeInstallBlock(
       platformSupported: platformSupported,
@@ -27,25 +27,25 @@ void main() {
 
   group('POSIX swap helper', () {
     String script({
-      String installDirectory = '/home/u/Apps/Mithka',
-      String stagedDirectory = '/home/u/Apps/.mithka-update-7/unpacked/Mithka',
+      String installDirectory = '/home/u/Apps/Qingliao',
+      String stagedDirectory = '/home/u/Apps/.qingliao-update-7/unpacked/Qingliao',
     }) => buildPosixUpdateScript(
       processId: 4242,
       installDirectory: installDirectory,
       stagedDirectory: stagedDirectory,
       backupDirectory: '/home/u/Apps/.mithka-backup-7',
-      workDirectory: '/home/u/Apps/.mithka-update-7',
+      workDirectory: '/home/u/Apps/.qingliao-update-7',
       launcherName: 'mithka',
     );
 
     test('quotes paths so a space cannot split an argument', () {
-      final text = script(installDirectory: '/home/u/My Apps/Mithka');
-      expect(text, contains(r"install_dir='/home/u/My Apps/Mithka'"));
+      final text = script(installDirectory: '/home/u/My Apps/Qingliao');
+      expect(text, contains(r"install_dir='/home/u/My Apps/Qingliao'"));
     });
 
     test('restores the old install when the staged build is gone', () async {
       final root = Directory.systemTemp.createTempSync('mithka-swap-');
-      final install = Directory('${root.path}/Mithka')..createSync();
+      final install = Directory('${root.path}/Qingliao')..createSync();
       File('${install.path}/marker').writeAsStringSync('old');
 
       final file = File('${root.path}/apply.sh');
@@ -53,7 +53,7 @@ void main() {
         buildPosixUpdateScript(
           processId: 2147483646,
           installDirectory: install.path,
-          stagedDirectory: '${root.path}/work/unpacked/Mithka',
+          stagedDirectory: '${root.path}/work/unpacked/Qingliao',
           backupDirectory: '${root.path}/.mithka-backup-1',
           workDirectory: '${root.path}/work',
           launcherName: 'mithka',
@@ -72,13 +72,13 @@ void main() {
   });
 
   group('Windows swap helper', () {
-    String script({String installDirectory = r'C:\Users\u\Apps\Mithka'}) =>
+    String script({String installDirectory = r'C:\Users\u\Apps\Qingliao'}) =>
         buildWindowsUpdateScript(
           processId: 4242,
           installDirectory: installDirectory,
-          stagedDirectory: r'C:\Users\u\Apps\.mithka-update-7\unpacked\Mithka',
+          stagedDirectory: r'C:\Users\u\Apps\.qingliao-update-7\unpacked\Qingliao',
           backupDirectory: r'C:\Users\u\Apps\.mithka-backup-7',
-          workDirectory: r'C:\Users\u\Apps\.mithka-update-7',
+          workDirectory: r'C:\Users\u\Apps\.qingliao-update-7',
           launcherName: 'mithka.exe',
         );
 

@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as image;
 import 'package:image_picker/image_picker.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:mithka/platform/animated_avatar_preparer.dart';
+import 'package:qingliao/platform/animated_avatar_preparer.dart';
 import 'package:video_player/video_player.dart';
 
 void main() {

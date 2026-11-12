@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/notifications/notification_target.dart';
+import 'package:qingliao/notifications/notification_target.dart';
 
 void main() {
   group('account slot', () {

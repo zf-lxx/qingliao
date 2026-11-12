@@ -1,10 +1,10 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/media_download_service.dart';
-import 'package:mithka/settings/android_download_saver.dart';
-import 'package:mithka/settings/download_storage.dart';
-import 'package:mithka/tdlib/td_client.dart';
+import 'package:qingliao/chat/media_download_service.dart';
+import 'package:qingliao/settings/android_download_saver.dart';
+import 'package:qingliao/settings/download_storage.dart';
+import 'package:qingliao/tdlib/td_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {

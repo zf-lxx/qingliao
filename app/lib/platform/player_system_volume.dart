@@ -9,7 +9,7 @@ import 'package:flutter/services.dart';
 class PlayerSystemVolume {
   PlayerSystemVolume._();
 
-  static const _channel = MethodChannel('mithka/system_media_volume');
+  static const _channel = MethodChannel('qingliao/system_media_volume');
 
   static bool get _supportedPlatform =>
       !kIsWeb && defaultTargetPlatform == TargetPlatform.android;

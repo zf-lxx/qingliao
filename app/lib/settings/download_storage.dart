@@ -8,7 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// Database paths stay private. Only TDLib media and explicitly retained
 /// downloads move, before any client opens its file database.
 class DownloadStorage {
-  static const channel = MethodChannel('mithka/download_storage');
+  static const channel = MethodChannel('qingliao/download_storage');
   static const activeKey = 'downloads.activeRoot.v1';
   static const selectedKey = 'downloads.selectedRoot.v1';
   static const cleanupKey = 'downloads.cleanup.v1';

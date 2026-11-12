@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/notifications/notification_preferences.dart';
+import 'package:qingliao/notifications/notification_preferences.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {

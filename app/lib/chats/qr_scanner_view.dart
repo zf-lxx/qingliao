@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../chat/link_handler.dart';
@@ -575,9 +575,7 @@ class _QrChoiceCard extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            candidate.isTelegram
-                                ? 'Telegram'
-                                : candidate.isUrl
+                            candidate.isTelegram || candidate.isUrl
                                 ? AppStrings.t(AppStringKeys.qrScannerLink)
                                 : AppStrings.t(AppStringKeys.qrScannerText),
                             style: TextStyle(

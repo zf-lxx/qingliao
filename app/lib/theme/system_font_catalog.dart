@@ -10,7 +10,7 @@ import 'package:flutter/services.dart';
 class SystemFontCatalog {
   SystemFontCatalog._();
 
-  static const MethodChannel _channel = MethodChannel('mithka/fonts');
+  static const MethodChannel _channel = MethodChannel('qingliao/fonts');
 
   static Future<List<String>> loadFonts() async {
     try {

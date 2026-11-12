@@ -7,7 +7,7 @@ import Foundation
 
 final class HandoffBridge: NSObject, NSUserActivityDelegate {
   static let shared = HandoffBridge()
-  static let activityType = "ad.neko.mithka.chat"
+  static let activityType = "xyz.qingliao.app.chat"
 
   private var channel: FlutterMethodChannel?
   private var currentActivity: NSUserActivity?
@@ -20,7 +20,7 @@ final class HandoffBridge: NSObject, NSUserActivityDelegate {
   }
 
   func register(messenger: FlutterBinaryMessenger) {
-    let channel = FlutterMethodChannel(name: "mithka/handoff", binaryMessenger: messenger)
+    let channel = FlutterMethodChannel(name: "qingliao/handoff", binaryMessenger: messenger)
     self.channel = channel
     channel.setMethodCallHandler { [weak self] call, result in
       self?.handle(call: call, result: result)

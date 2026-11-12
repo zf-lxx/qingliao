@@ -6,7 +6,7 @@ import 'package:image_picker/image_picker.dart';
 class AnimatedAvatarPreparer {
   const AnimatedAvatarPreparer._();
 
-  static const _channel = MethodChannel('mithka/animated_avatar');
+  static const _channel = MethodChannel('qingliao/animated_avatar');
 
   static Future<XFile> prepare(
     XFile source, {

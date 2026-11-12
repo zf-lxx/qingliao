@@ -1,7 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/tdlib/td_client.dart';
+import 'package:qingliao/tdlib/td_client.dart';
 
 void main() {
   test('hot restart closes every persisted native TDLib client', () {

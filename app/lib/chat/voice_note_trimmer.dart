@@ -32,11 +32,11 @@ class _OggPage {
 /// preceding page boundary, which is normally 20-60 ms.
 ///
 /// On iOS, where the recorder writes AAC (`.m4a`, or `.aac` ADTS), any other
-/// recording is cut by AVFoundation through the `mithka/media_editor`
+/// recording is cut by AVFoundation through the `qingliao/media_editor`
 /// channel's `trimAudio` and comes back as a new `.m4a` file.
 abstract final class VoiceNoteTrimmer {
   static const _sampleRate = 48000;
-  static const _channel = MethodChannel('mithka/media_editor');
+  static const _channel = MethodChannel('qingliao/media_editor');
 
   /// Whether a recording at [path] is an Ogg/Opus file, going by its name.
   static bool isOggPath(String path) {

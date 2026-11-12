@@ -7,8 +7,8 @@
 //
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/l10n/locale_catalogue.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/locale_catalogue.dart';
 
 import 'support/l10n_fixtures.dart';
 

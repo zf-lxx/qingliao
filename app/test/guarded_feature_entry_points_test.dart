@@ -2,12 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/config/build_flags.dart';
-import 'package:mithka/history/message_history_store.dart';
-import 'package:mithka/history/message_history_view.dart';
-import 'package:mithka/settings/ghost_mode_controller.dart';
-import 'package:mithka/settings/ghost_mode_settings_view.dart';
-import 'package:mithka/tdlib/td_client.dart';
+import 'package:qingliao/config/build_flags.dart';
+import 'package:qingliao/history/message_history_store.dart';
+import 'package:qingliao/history/message_history_view.dart';
+import 'package:qingliao/settings/ghost_mode_controller.dart';
+import 'package:qingliao/settings/ghost_mode_settings_view.dart';
+import 'package:qingliao/tdlib/td_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {

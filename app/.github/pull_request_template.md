@@ -11,7 +11,7 @@ Related PRs and canonical PR (or `None; existing PRs checked`):
 
 ## Telegram API Terms classification
 
-Follow the [contribution and agentic review rules](https://github.com/iebb/mithka/blob/master/AGENTS.md#contributions-and-agentic-pr-review). Select exactly one classification and explain it below.
+Follow the [contribution and agentic review rules](https://github.com/iebb/qingliao/blob/master/AGENTS.md#contributions-and-agentic-pr-review). Select exactly one classification and explain it below.
 
 This is an agentic source-code review classification. Every store version must remain compliant with applicable Telegram API Terms; the guarded-source exception does not apply to store distribution or review.
 

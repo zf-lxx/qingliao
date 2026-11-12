@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/group_administration_service.dart';
+import 'package:qingliao/chat/group_administration_service.dart';
 
 void main() {
   test('invite link listing follows TDLib pagination offsets', () async {

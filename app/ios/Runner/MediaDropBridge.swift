@@ -8,7 +8,7 @@ final class MediaDropBridge: NSObject, @preconcurrency UIDropInteractionDelegate
   private weak var attachedView: UIView?
 
   init(messenger: FlutterBinaryMessenger) {
-    channel = FlutterMethodChannel(name: "mithka/media_drop", binaryMessenger: messenger)
+    channel = FlutterMethodChannel(name: "qingliao/media_drop", binaryMessenger: messenger)
     super.init()
     DispatchQueue.main.async { [weak self] in
       self?.attachToFlutterView(attempt: 0)

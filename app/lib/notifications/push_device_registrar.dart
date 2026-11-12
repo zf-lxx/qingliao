@@ -40,7 +40,7 @@ class PushDeviceRegistrar {
   PushDeviceRegistrar._();
   static final PushDeviceRegistrar shared = PushDeviceRegistrar._();
 
-  static const _channel = MethodChannel('mithka/push');
+  static const _channel = MethodChannel('qingliao/push');
 
   final TdClient _client = TdClient.shared;
   final NotificationPreferences _preferences = NotificationPreferences.shared;

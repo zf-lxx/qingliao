@@ -10,8 +10,8 @@ private enum MithkaPurchaseReportingPolicy {
 
 @MainActor
 final class MithkaProBridge {
-  static let monthlyProductID = "ad.neko.mithka.pro.monthly"
-  static let yearlyProductID = "ad.neko.mithka.pro.yearly"
+  static let monthlyProductID = "xyz.qingliao.app.pro.monthly"
+  static let yearlyProductID = "xyz.qingliao.app.pro.yearly"
 
   private static let productIDs = [monthlyProductID, yearlyProductID]
   private static let productIDSet = Set(productIDs)
@@ -28,7 +28,7 @@ final class MithkaProBridge {
   private var expirationInvalidation: Task<Void, Never>?
 
   init(messenger: FlutterBinaryMessenger) {
-    channel = FlutterMethodChannel(name: "mithka/pro", binaryMessenger: messenger)
+    channel = FlutterMethodChannel(name: "qingliao/pro", binaryMessenger: messenger)
     channel.setMethodCallHandler { [weak self] call, result in
       self?.handle(call: call, result: result)
     }

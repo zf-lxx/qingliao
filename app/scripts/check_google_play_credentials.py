@@ -11,7 +11,7 @@ from google.oauth2.service_account import Credentials
 
 BASE = (
     "https://androidpublisher.googleapis.com/androidpublisher/v3"
-    "/applications/ad.neko.mithka/edits"
+    "/applications/ad.neko.qingliao/edits"
 )
 SCOPE = "https://www.googleapis.com/auth/androidpublisher"
 
@@ -76,7 +76,7 @@ def main():
             ) as output:
                 json.dump(state, output)
         print(
-            "Google Play credential verified for ad.neko.mithka; temporary edit deleted."
+            "Google Play credential verified for xyz.qingliao.app; temporary edit deleted."
         )
         return 0
     except Exception as error:

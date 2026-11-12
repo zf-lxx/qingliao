@@ -2,8 +2,8 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/link_browser.dart';
-import 'package:mithka/theme/theme_controller.dart';
+import 'package:qingliao/chat/link_browser.dart';
+import 'package:qingliao/theme/theme_controller.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

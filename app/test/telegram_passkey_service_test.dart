@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/auth/telegram_passkey_service.dart';
+import 'package:qingliao/auth/telegram_passkey_service.dart';
 
 void main() {
   test('iOS does not claim Telegram-owned passkey domains', () {

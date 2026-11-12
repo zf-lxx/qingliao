@@ -1005,7 +1005,7 @@ class TdClient {
       if (bot.boolean('is_bot') != true || (bot.int64('id') ?? 0) <= 0) {
         throw const BotApiException(
           401,
-          'The token does not identify a Telegram bot.',
+          'The token does not identify a bot.',
         );
       }
       final botId = bot.int64('id')!;

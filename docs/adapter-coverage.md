@@ -1,38 +1,36 @@
-# Mithka → 轻聊 adapter coverage
+# 轻聊客户端适配覆盖
 
-The `mithka` branch vendors [Mithka](https://github.com/iebb/mithka) under `app/` (BSD-3-Clause; see `NOTICE` and `app/LICENSE`). The Dart package name stays `mithka` so upstream imports keep working. The Android **applicationId** is `xyz.qingliao.app` so this APK upgrades the existing 轻聊 0.x install; the Kotlin **namespace** remains `ad.neko.mithka` (source package only).
+`app/` 是当前发行用的 Flutter 客户端（BSD-3-Clause，版权声明见 `NOTICE` 与 `LICENSE`）。Dart 包名为 `qingliao`。Android **applicationId** 与 Kotlin **namespace** 均为 `xyz.qingliao.app`，可覆盖安装既有轻聊 0.x。
 
-The previous 0.2 Flutter tree remains in `client/` for reference and is not the app this branch builds. Build the new client from `app/` with `source ~/sdk/env.sh` and `flutter build apk --release --target-platform android-arm64`. Release signing falls back to the debug keystore at `~/.android/debug.keystore` when `android/key.properties` is absent, matching earlier 轻聊 0.x builds.
+此前的 0.2 Flutter 树仍在 `client/`，仅作对照，不是本分支的构建入口。在 `app/` 下执行 `source ~/sdk/env.sh` 与 `flutter build apk --release --target-platform android-arm64`。没有 `android/key.properties` 时，发行签名回退到 `~/.android/debug.keystore`，与既有内测包一致。
 
-The arm64 release APK is packaged without `libtdjson`, without FVP/FFmpeg, and without extra CPU ABIs or alternate Mithka launcher icons, so it stays under the ~50 MB budget (P3 artifact: `/workspace/qingliao-mithka-p3-arm64.apk`, version 0.4.0+7).
+arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控制在约 50 MB 以内（当前制品：`/workspace/qingliao-0.4.1-arm64.apk`，版本 0.4.1+8）。
 
-TDLib’s native `libtdjson` is not shipped. `TdBindings` is a pure-Dart implementation that routes each request through `QlTdEngine`, which talks to the 轻聊 backend (`REST` + `WS /v1/ws` with seq/ack and difference sync). Unsupported methods return a TDLib `error` object (`QL_UNSUPPORTED: <method>`) — never a crash and never a fake success. A small allow-list (`qlEmptyResultMethods`) returns a truthful empty collection for list queries the backend genuinely does not have (sessions/passkeys, custom emoji packs, live story albums, communities, …).
+原生 `libtdjson` 不再随包提供。`TdBindings` 是纯 Dart 实现，把请求交给 `QlTdEngine`，由它对接轻聊后端（`REST` + `WS /v1/ws`，带 seq/ack 与增量同步）。尚未支持的方法返回 TDLib 风格的 `error`（`QL_UNSUPPORTED: <method>`），不会崩溃，也不会假装成功。一小份白名单（`qlEmptyResultMethods`）对后端确实没有的列表查询返回真实的空集合（登录设备/通行密钥、自定义表情包、直播动态专辑、社区等）。
 
-## Settings
+## 设置
 
-Mithka’s Settings layout is kept (search + the same groups). Client-local pages work in P1 when they already lived in Mithka:
+设置页保留搜索和原有分组。本地即可工作的页面包括：主题、外观/界面、聊天行为、解锁/密码、内容过滤（本机关键词）、数据与存储（本地缓存）、语言、关于，以及可选的桌面快捷键。
 
-- Theme, Appearance / Interface, Chat behavior, Unlock / passcode, Content filter (on-device keywords), Data & storage (local cache), language, About, optional desktop hotkeys.
+仍没有真实轻聊接口的服务端页面会留在列表里，带「暂未开放 / Not yet」标签并打开占位页：
 
-Server-backed pages that still have no real 轻聊 endpoint stay in the list with a trailing **暂未开放 / Not yet** label and open a placeholder:
+- 代理。通话和厂商推送保持隐藏/暂未开放（需要 coturn/SFU 以及小米推送/FCM 凭证）。隐私与安全里的两步验证、登录设备、通行密钥、注销账号也尚未实现；可见性规则本身已接通。
 
-- Proxy. Calls and vendor push stay hidden / 暂未开放 (they need coturn/SFU and Mi Push/FCM credentials). Inside Privacy & Security, 2FA / active sessions / passkeys / account deletion are still not implemented; the visibility rules themselves are real.
+已接通贴纸（内置「轻聊」PNG 包与用户包包，非外部素材；`.tgs` / `.webm` 因体积暂缓）、投票、清单、链接预览、联系人、聊天文件夹、通知范围、隐私规则、已读回执开关、动态（24 小时图片/视频，查看、回应、举报；没有直播）、更完整的富文本实体、本机会话备份与恢复，以及多账号槽位。应用内更新只读取 `zf-lxx/qingliao` 的发行，并能从历史标签或 `v0.4.1` 这类版本号解析出版本。输入栏回复引用的 X 在键盘保持打开时也可以取消回复。
 
-**P3 first wave** wires stickers (built-in 「轻聊」 PNG pack + user packs, not Telegram assets; `.tgs`/`.webm` deferred), polls, checklists, link previews, contacts, chat folders, notification scopes, privacy rules, read-receipt privacy, moments/stories (24h photo/video, views, reactions, reports; no live RTMP stories), richer text entities, local account session backup/restore, and multi-account slots (a `td.binlog` marker is written so extra slots are not quarantined). The in-app updater only reads `zf-lxx/qingliao` releases and parses versions from tags like `mithka-p2-0.3.2`. The composer reply-bar X now dismisses the reply target.
+「已屏蔽用户」此前已经接通，不会标成暂未开放。
 
-**Blocked users** was already wired in P2 and is not marked 暂未开放.
+## 覆盖摘要
 
-## Coverage summary
+客户端 UI 会调用 **457** 个互不相同的 TDLib 风格方法（对 `TdClient` / 界面查询点的静态盘点）。当前状态：
 
-The Mithka UI calls **457** distinct TDLib methods (static inventory of `TdClient` / UI query sites). P3 status among those:
+- 已实现：约 **120**（含贴纸、投票、清单、文件夹、联系人、隐私、通知范围、链接预览、动态及相关写入）
+- 空结果（真实空集合）：约 **20**（登录设备、自定义表情包、动态专辑、社区等）
+- 未支持（`QL_UNSUPPORTED`）：约 **317**
 
-- implemented: **~120** (P2's 77 plus stickers, polls, checklists, folders, contacts, privacy, notification scopes, link previews, stories, and related mutators)
-- empty (truthful empty result): **~20** (sessions, custom emoji packs, story albums, communities, …)
-- unsupported (`QL_UNSUPPORTED`): **~317**
+直播动态、通话、Bot API 和厂商推送仍未支持或已隐藏。
 
-Live stories, calls, Bot API, and vendor push remain unsupported or hidden.
-
-Qingliao-only methods (`qlLogin`, `qlRegister`, `qlGetServer`) are also implemented and used by the login screen; they are listed first.
+轻聊自有方法（`qlLogin`、`qlRegister`、`qlGetServer`）已实现，供登录页使用，并排在方法表最前。
 
 ## Method table
 

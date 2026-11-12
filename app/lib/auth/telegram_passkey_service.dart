@@ -55,7 +55,7 @@ class TelegramPasskeyService {
   TelegramPasskeyService._();
 
   static final TelegramPasskeyService shared = TelegramPasskeyService._();
-  static const MethodChannel _channel = MethodChannel('mithka/passkeys');
+  static const MethodChannel _channel = MethodChannel('qingliao/passkeys');
 
   final TdClient _client = TdClient.shared;
 

@@ -7,12 +7,12 @@ import 'package:flutter_sound_platform_interface/flutter_sound_recorder_platform
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker_platform_interface/image_picker_platform_interface.dart';
 import 'package:logger/logger.dart' show Level;
-import 'package:mithka/media/app_asset_picker.dart';
-import 'package:mithka/platform/ohos_media_bridge.dart';
-import 'package:mithka/platform/ohos_support.dart';
+import 'package:qingliao/media/app_asset_picker.dart';
+import 'package:qingliao/platform/ohos_media_bridge.dart';
+import 'package:qingliao/platform/ohos_support.dart';
 import 'package:permission_handler_platform_interface/permission_handler_platform_interface.dart';
 
-/// Plays the native side of `mithka/ohos_media`, recording every call.
+/// Plays the native side of `qingliao/ohos_media`, recording every call.
 class _FakeNative {
   _FakeNative() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

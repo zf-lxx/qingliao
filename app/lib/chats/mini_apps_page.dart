@@ -6,7 +6,7 @@
 //
 
 import 'package:flutter/material.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 
 import '../chat/telegram_mini_app_recents.dart';
 import '../chat/telegram_mini_app_view.dart';

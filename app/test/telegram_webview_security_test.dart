@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/telegram_webview_security.dart';
+import 'package:qingliao/chat/telegram_webview_security.dart';
 
 void main() {
   group('Telegram WebView origins', () {

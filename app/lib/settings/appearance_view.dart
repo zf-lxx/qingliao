@@ -16,8 +16,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:intl/intl.dart' show DateFormat;
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/l10n/preview_texts.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/preview_texts.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 

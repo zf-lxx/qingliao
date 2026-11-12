@@ -17,7 +17,7 @@ class StoreSourceTest(unittest.TestCase):
         (self.root / "scripts").mkdir()
         for name in ["verify-store-source.sh", "apple_marketing_version.sh"]:
             shutil.copyfile(ROOT / "scripts" / name, self.root / "scripts" / name)
-        (self.root / "pubspec.yaml").write_text("name: mithka\nversion: 1.8.8+296\n")
+        (self.root / "pubspec.yaml").write_text("name: qingliao\nversion: 1.8.8+296\n")
         self.env = dict(
             os.environ,
             GITHUB_REPOSITORY="iebb/mithka",

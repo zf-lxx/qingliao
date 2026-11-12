@@ -240,7 +240,7 @@ def replacement_for(key: str, placeholders: list[str]) -> str:
 
 
 def ensure_import(text: str) -> str:
-    imp = "import 'package:mithka/l10n/app_localizations.dart';"
+    imp = "import 'package:qingliao/l10n/app_localizations.dart';"
     if imp in text:
         return text
     matches = list(re.finditer(r"^import .+;\n", text, re.M))

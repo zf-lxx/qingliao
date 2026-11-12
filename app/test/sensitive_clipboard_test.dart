@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/security/sensitive_clipboard.dart';
+import 'package:qingliao/security/sensitive_clipboard.dart';
 
 void main() {
   test(

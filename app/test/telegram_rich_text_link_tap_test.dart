@@ -2,8 +2,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/telegram_rich_text.dart';
-import 'package:mithka/tdlib/td_models.dart';
+import 'package:qingliao/chat/telegram_rich_text.dart';
+import 'package:qingliao/tdlib/td_models.dart';
 
 Iterable<TextSpan> _textSpans(InlineSpan span) sync* {
   if (span is! TextSpan) return;

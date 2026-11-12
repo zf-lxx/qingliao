@@ -1,9 +1,9 @@
 [Desktop Entry]
 Type=Application
-Name=Mithka
+Name=轻聊
 Comment=Telegram client
-Exec=mithka %U
-Icon=ad.neko.mithka
+Exec=qingliao %U
+Icon=xyz.qingliao.app
 Terminal=false
 Categories=Network;InstantMessaging;
-StartupWMClass=ad.neko.mithka
+StartupWMClass=xyz.qingliao.app

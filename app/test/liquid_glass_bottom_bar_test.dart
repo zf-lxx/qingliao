@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/app/liquid_glass_bottom_bar.dart';
-import 'package:mithka/components/ui_components.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/settings/app_icon_controller.dart';
-import 'package:mithka/settings/appearance_view.dart';
-import 'package:mithka/theme/app_theme.dart';
-import 'package:mithka/theme/theme_controller.dart';
+import 'package:qingliao/app/liquid_glass_bottom_bar.dart';
+import 'package:qingliao/components/ui_components.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/settings/app_icon_controller.dart';
+import 'package:qingliao/settings/appearance_view.dart';
+import 'package:qingliao/theme/app_theme.dart';
+import 'package:qingliao/theme/theme_controller.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 

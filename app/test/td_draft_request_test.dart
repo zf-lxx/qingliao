@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/tdlib/td_requests.dart';
+import 'package:qingliao/tdlib/td_requests.dart';
 
 void main() {
   test('text chat drafts use pinned TDLib draftMessageContentText', () {

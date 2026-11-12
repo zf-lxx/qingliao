@@ -43,7 +43,7 @@ static void my_application_activate(GApplication* application) {
   // right edge where they cannot be clicked, and the strip they should have
   // covered is left unpainted. Never installing the header bar keeps one
   // window size in play for the whole session.
-  gtk_window_set_title(window, "Mithka");
+  gtk_window_set_title(window, "轻聊");
   gtk_window_set_decorated(window, FALSE);
 
   gtk_window_set_default_size(window, 1280, 720);

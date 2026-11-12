@@ -3,7 +3,7 @@ import Intents
 import UIKit
 import UserNotifications
 
-let mithkaNotificationAppGroup = "group.ad.neko.mithka.notifications"
+let mithkaNotificationAppGroup = "group.xyz.qingliao.app.notifications"
 
 /// Keys the service extension stamps onto a delivered notification so the tap
 /// that follows knows which account it belongs to.

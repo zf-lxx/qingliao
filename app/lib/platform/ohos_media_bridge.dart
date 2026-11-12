@@ -6,7 +6,7 @@
 //  photo_manager, image_picker, camera and flutter_sound have no native side
 //  on HarmonyOS, and permission_handler's channel is not served there (its
 //  OHOS port speaks a different API). The app-owned native bridge
-//  (ohos/entry/src/main/ets/mithka/MithkaMediaPlugin.ets) answers one channel
+//  (ohos/entry/src/main/ets/qingliao/MithkaMediaPlugin.ets) answers one channel
 //  with the system photo picker, the system camera, AVRecorder, AVPlayer and
 //  the microphone permission; the classes below plug it in behind the
 //  platform interfaces the app already calls, so the shared code paths stay
@@ -27,11 +27,11 @@ import 'package:permission_handler_platform_interface/permission_handler_platfor
 
 enum OhosMediaKind { image, video, imageAndVideo }
 
-/// Dart side of the `mithka/ohos_media` channel.
+/// Dart side of the `qingliao/ohos_media` channel.
 class OhosMediaBridge {
   const OhosMediaBridge([this.channel = const MethodChannel(channelName)]);
 
-  static const channelName = 'mithka/ohos_media';
+  static const channelName = 'qingliao/ohos_media';
 
   static OhosMediaBridge instance = const OhosMediaBridge();
 

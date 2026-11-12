@@ -2,7 +2,7 @@
 //  deep_link_service.dart
 //
 //  Bridges OS-delivered deep links into the in-app link handler. The app
-//  registers the mk:// and mithka:// URL schemes (tg:// grammar) on macOS,
+//  registers the mk:// and qingliao:// URL schemes (tg:// grammar) on macOS,
 //  iOS, and Android; app_links surfaces both the launch URI and URIs that
 //  arrive while running.
 //

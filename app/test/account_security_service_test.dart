@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/auth/premium_auth_purchase_service.dart';
+import 'package:qingliao/auth/premium_auth_purchase_service.dart';
 
 void main() {
   test('Premium authorization requests preserve App Store receipt bytes', () {

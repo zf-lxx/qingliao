@@ -5,8 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/qingliao/ql_login_view.dart';
-import 'package:mithka/theme/app_theme.dart';
+import 'package:qingliao/qingliao/ql_login_view.dart';
+import 'package:qingliao/theme/app_theme.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 Future<void> _loadFonts() async {

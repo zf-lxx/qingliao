@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:mithka/config/build_flags.dart';
+import 'package:qingliao/config/build_flags.dart';
 
 void main() {
   // CI sets this separate expectation only for the explicitly opted-in build.

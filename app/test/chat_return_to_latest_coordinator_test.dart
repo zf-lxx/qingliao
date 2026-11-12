@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/chat_return_to_latest_coordinator.dart';
+import 'package:qingliao/chat/chat_return_to_latest_coordinator.dart';
 
 void main() {
   test('button upgrades an automatic request already in flight', () async {

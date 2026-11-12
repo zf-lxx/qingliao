@@ -11,11 +11,11 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chats/chat_list_view_model.dart';
-import 'package:mithka/chats/local_pin_store.dart';
-import 'package:mithka/tdlib/json_helpers.dart';
-import 'package:mithka/tdlib/td_bindings.dart';
-import 'package:mithka/tdlib/td_client.dart';
+import 'package:qingliao/chats/chat_list_view_model.dart';
+import 'package:qingliao/chats/local_pin_store.dart';
+import 'package:qingliao/tdlib/json_helpers.dart';
+import 'package:qingliao/tdlib/td_bindings.dart';
+import 'package:qingliao/tdlib/td_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// The account the fake transport's chats belong to.

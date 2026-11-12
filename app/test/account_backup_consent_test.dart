@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/auth/account_backup_service.dart';
+import 'package:qingliao/auth/account_backup_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -43,7 +43,7 @@ void main() {
     'migration deletes legacy auto-backups and preserves explicit consent',
     () async {
       SharedPreferences.setMockInitialValues({});
-      const channel = MethodChannel('mithka/account_backup.migration_test');
+      const channel = MethodChannel('qingliao/account_backup.migration_test');
       final deletedIds = <String>[];
       final records = <Uint8List>[
         _backupRecord(format: 'mithka.tdlib.session_string.v1', id: '1001'),
@@ -93,7 +93,7 @@ void main() {
       'mithka.accountBackup.explicitConsentMigration.v1': true,
       'mithka.accountBackup.consent.4004': true,
     });
-    const channel = MethodChannel('mithka/account_backup.local_test');
+    const channel = MethodChannel('qingliao/account_backup.local_test');
     final deletedStorages = <String>[];
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
@@ -143,13 +143,13 @@ void main() {
     'a mobile host without the native channel reports unsupported, not a throw',
     () async {
       // The submitted HarmonyOS host registers only generated plugins and has
-      // no `mithka/account_backup` handler: every call throws
+      // no `qingliao/account_backup` handler: every call throws
       // MissingPluginException. Eligibility is the mobile branch, so this is
       // the exact production state on ohos.
       SharedPreferences.setMockInitialValues({
         'mithka.accountBackup.explicitConsentMigration.v1': true,
       });
-      const channel = MethodChannel('mithka/account_backup.missing_test');
+      const channel = MethodChannel('qingliao/account_backup.missing_test');
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (call) async {
             throw MissingPluginException();
@@ -182,7 +182,7 @@ void main() {
       SharedPreferences.setMockInitialValues({
         'mithka.accountBackup.explicitConsentMigration.v1': true,
       });
-      const channel = MethodChannel('mithka/account_backup.error_test');
+      const channel = MethodChannel('qingliao/account_backup.error_test');
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (call) async {
             throw PlatformException(code: 'keychain_unavailable');

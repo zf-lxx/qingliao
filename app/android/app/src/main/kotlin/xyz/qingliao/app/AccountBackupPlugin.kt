@@ -1,4 +1,4 @@
-package ad.neko.mithka
+package xyz.qingliao.app
 
 import android.app.backup.BackupManager
 import android.content.Context
@@ -150,7 +150,7 @@ class AccountBackupPlugin(
     }
 
     companion object {
-        private const val CHANNEL = "mithka/account_backup"
+        private const val CHANNEL = "qingliao/account_backup"
         private const val BACKUP_DIRECTORY = "account_backups"
         private const val LOCAL_BACKUP_DIRECTORY = "account_backups_local"
         private const val LOCAL_STORAGE = "local"

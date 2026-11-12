@@ -120,7 +120,7 @@ class MusicPlaylistService {
       throw const FormatException('Message has no playable audio');
     }
     if (sourceChatId == null || sourceChatId == 0 || source.id == 0) {
-      throw const FormatException('Message has no Telegram source');
+      throw const FormatException('Message has no media source');
     }
     await assertForwardAllowed(
       query: _query,

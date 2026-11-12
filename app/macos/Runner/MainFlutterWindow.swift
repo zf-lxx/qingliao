@@ -129,7 +129,7 @@ final class DesktopClipboardImagesPlugin: NSObject, FlutterPlugin {
 
   static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(
-      name: "mithka/clipboard",
+      name: "qingliao/clipboard",
       binaryMessenger: registrar.messenger
     )
     let instance = DesktopClipboardImagesPlugin()
@@ -244,7 +244,7 @@ final class DesktopMediaDropView: NSView {
   static func register(with registrar: FlutterPluginRegistrar) {
     guard let view = registrar.view else { return }
     let channel = FlutterMethodChannel(
-      name: "mithka/media_drop", binaryMessenger: registrar.messenger
+      name: "qingliao/media_drop", binaryMessenger: registrar.messenger
     )
     let dropView = DesktopMediaDropView(frame: view.bounds) { method, arguments in
       channel.invokeMethod(method, arguments: arguments)

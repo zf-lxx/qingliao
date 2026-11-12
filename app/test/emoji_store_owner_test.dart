@@ -12,9 +12,9 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/emoji_store.dart';
-import 'package:mithka/tdlib/td_bindings.dart';
-import 'package:mithka/tdlib/td_client.dart';
+import 'package:qingliao/chat/emoji_store.dart';
+import 'package:qingliao/tdlib/td_bindings.dart';
+import 'package:qingliao/tdlib/td_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 const _alpha = _Pack(3101, 'Alpha', [7301, 7302]);

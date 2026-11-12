@@ -48,7 +48,7 @@ jobs:
     timeout-minutes: 120
     env:
       APP_STORE_ID: '6783830742'
-      BUNDLE_ID: ad.neko.mithka
+      BUNDLE_ID: xyz.qingliao.app
       DEVELOPMENT_TEAM: 7P8CLHDH5G
       MITHKA_CI_PLATFORM: ios
       TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}

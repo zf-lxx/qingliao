@@ -1,4 +1,4 @@
-package ad.neko.mithka
+package xyz.qingliao.app
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -280,7 +280,7 @@ class NowPlayingPlugin(
     }
 
     companion object {
-        const val CHANNEL = "mithka/now_playing"
+        const val CHANNEL = "qingliao/now_playing"
         private const val NOTIFICATION_CHANNEL = "mithka_music_playback"
         const val NOTIFICATION_ID = 0x6d757369
 
@@ -296,11 +296,11 @@ class NowPlayingPlugin(
                 PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
                 PlaybackStateCompat.ACTION_SEEK_TO or
                 PlaybackStateCompat.ACTION_STOP
-        internal const val ACTION_PLAY = "ad.neko.mithka.music.PLAY"
-        internal const val ACTION_PAUSE = "ad.neko.mithka.music.PAUSE"
-        internal const val ACTION_NEXT = "ad.neko.mithka.music.NEXT"
-        internal const val ACTION_PREVIOUS = "ad.neko.mithka.music.PREVIOUS"
-        internal const val ACTION_STOP = "ad.neko.mithka.music.STOP"
+        internal const val ACTION_PLAY = "xyz.qingliao.app.music.PLAY"
+        internal const val ACTION_PAUSE = "xyz.qingliao.app.music.PAUSE"
+        internal const val ACTION_NEXT = "xyz.qingliao.app.music.NEXT"
+        internal const val ACTION_PREVIOUS = "xyz.qingliao.app.music.PREVIOUS"
+        internal const val ACTION_STOP = "xyz.qingliao.app.music.STOP"
 
         @Volatile
         internal var active: NowPlayingPlugin? = null

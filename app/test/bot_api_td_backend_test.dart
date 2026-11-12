@@ -3,10 +3,10 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/testing.dart';
-import 'package:mithka/bot_api/bot_api_account.dart';
-import 'package:mithka/bot_api/bot_api_client.dart';
-import 'package:mithka/bot_api/bot_api_store.dart';
-import 'package:mithka/bot_api/bot_api_td_backend.dart';
+import 'package:qingliao/bot_api/bot_api_account.dart';
+import 'package:qingliao/bot_api/bot_api_client.dart';
+import 'package:qingliao/bot_api/bot_api_store.dart';
+import 'package:qingliao/bot_api/bot_api_td_backend.dart';
 
 void main() {
   late Directory temporaryDirectory;

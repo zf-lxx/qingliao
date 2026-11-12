@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:mithka/platform/android_share_intent.dart';
+import 'package:qingliao/platform/android_share_intent.dart';
 
 void main() {
   test('normalizes a native share payload', () {

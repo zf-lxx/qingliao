@@ -12,8 +12,8 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/notifications/scope_notification_settings.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/notifications/scope_notification_settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../channels/topic_list_actions.dart';
@@ -3572,7 +3572,7 @@ class ChatViewModel extends ChangeNotifier {
       'message_ids': [message.id],
       'sender_id': sender,
       'option_id': '',
-      'text': 'Objectionable or abusive content reported from Mithka.',
+      'text': 'Objectionable or abusive content reported from 轻聊.',
     };
     final result = await _client.query(base);
     if (result.type != 'reportChatResultOptionRequired') return;

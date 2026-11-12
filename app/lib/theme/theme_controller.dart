@@ -13,8 +13,8 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/l10n/preview_texts.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/preview_texts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../chat/quick_reaction_choice.dart';

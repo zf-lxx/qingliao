@@ -16,7 +16,7 @@ final class NowPlayingBridge {
   private var artwork: MPMediaItemArtwork?
 
   init(messenger: FlutterBinaryMessenger) {
-    channel = FlutterMethodChannel(name: "mithka/now_playing", binaryMessenger: messenger)
+    channel = FlutterMethodChannel(name: "qingliao/now_playing", binaryMessenger: messenger)
     channel.setMethodCallHandler { [weak self] call, result in
       guard let self else {
         result(nil)

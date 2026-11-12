@@ -1,4 +1,4 @@
-; Mithka's per-user Windows installer.
+; 轻聊 per-user Windows installer.
 ;
 ; Required preprocessor values are supplied by
 ; scripts/build-windows-installer.ps1 so the same definition packages x64 and
@@ -27,15 +27,15 @@
 
 [Setup]
 AppId={{{#AppId}}
-AppName=Mithka
+AppName=轻聊
 AppVersion={#AppVersion}
-AppVerName=Mithka {#AppVersion}
+AppVerName=轻聊 {#AppVersion}
 AppPublisher=iebb
-AppPublisherURL=https://github.com/iebb/mithka
-AppSupportURL=https://github.com/iebb/mithka/issues
-AppUpdatesURL=https://github.com/iebb/mithka/releases/latest
-DefaultDirName={localappdata}\Programs\Mithka
-DefaultGroupName=Mithka
+AppPublisherURL=https://github.com/zf-lxx/qingliao
+AppSupportURL=https://github.com/zf-lxx/qingliao/issues
+AppUpdatesURL=https://github.com/zf-lxx/qingliao/releases/latest
+DefaultDirName={localappdata}\Programs\Qingliao
+DefaultGroupName=轻聊
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir={#OutputDir}
@@ -48,10 +48,10 @@ WizardStyle=modern
 CloseApplications=yes
 RestartApplications=no
 UsePreviousAppDir=yes
-UninstallDisplayIcon={app}\mithka.exe
+UninstallDisplayIcon={app}\qingliao.exe
 ; The in-app updater atomically replaces {app}. Keep uninstall metadata beside
 ; it so updating cannot delete Add/Remove Programs support.
-UninstallFilesDir={localappdata}\Programs\Mithka Uninstall
+UninstallFilesDir={localappdata}\Programs\Qingliao Uninstall
 
 #if Architecture == "arm64"
 ArchitecturesAllowed=arm64
@@ -77,11 +77,11 @@ Type: filesandordirs; Name: "{app}\data\flutter_assets"
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Excludes: "*.exp,*.ilk,*.lib,*.pdb"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\Mithka"; Filename: "{app}\mithka.exe"; WorkingDir: "{app}"
-Name: "{autodesktop}\Mithka"; Filename: "{app}\mithka.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\轻聊"; Filename: "{app}\qingliao.exe"; WorkingDir: "{app}"
+Name: "{autodesktop}\轻聊"; Filename: "{app}\qingliao.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\mithka.exe"; Description: "Launch Mithka"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\qingliao.exe"; Description: "Launch 轻聊"; WorkingDir: "{app}"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 ; Portable auto-updates can introduce files that were not present when this

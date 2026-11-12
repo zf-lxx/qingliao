@@ -118,7 +118,7 @@ class UnsupportedGroupCallMediaEngine implements GroupCallMediaEngine {
   }) {
     return Future.error(
       UnsupportedError(
-        'Telegram group-call media is unavailable on this build',
+        'Group-call media is unavailable on this build',
       ),
     );
   }

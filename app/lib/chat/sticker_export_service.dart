@@ -49,7 +49,7 @@ extension StickerExportFormatLabel on StickerExportFormat {
 class StickerExportService {
   const StickerExportService._();
 
-  static const MethodChannel _channel = MethodChannel('mithka/sticker_export');
+  static const MethodChannel _channel = MethodChannel('qingliao/sticker_export');
   static const int _maximumDimension = 512;
   static const int _maximumFrames = 180;
 

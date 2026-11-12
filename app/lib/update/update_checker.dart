@@ -20,7 +20,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../app/app_version.dart';
@@ -40,7 +40,7 @@ class UpdateChecker {
   UpdateChecker._();
 
   static const _isGooglePlayBuild = bool.fromEnvironment('GOOGLE_PLAY_BUILD');
-  static const _channel = MethodChannel('mithka/app_info');
+  static const _channel = MethodChannel('qingliao/app_info');
   static bool _checkedThisLaunch = false;
 
   /// Google Play builds update through the store and must not offer APKs from

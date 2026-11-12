@@ -22,7 +22,7 @@ class FullscreenSystemUi extends StatefulWidget {
 }
 
 class _FullscreenSystemUiState extends State<FullscreenSystemUi> {
-  static const _channel = MethodChannel('mithka/fullscreen_system_ui');
+  static const _channel = MethodChannel('qingliao/fullscreen_system_ui');
   static final _owners = <_FullscreenSystemUiState>{};
 
   @override

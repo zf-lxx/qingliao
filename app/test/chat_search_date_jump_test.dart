@@ -3,11 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/chat_message_search_bar.dart';
-import 'package:mithka/chat/chat_message_search_controller.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/tdlib/td_client.dart';
-import 'package:mithka/theme/app_theme.dart';
+import 'package:qingliao/chat/chat_message_search_bar.dart';
+import 'package:qingliao/chat/chat_message_search_controller.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/tdlib/td_client.dart';
+import 'package:qingliao/theme/app_theme.dart';
 
 /// The search header's calendar affordance: pick a date, land on the first
 /// message of that day via `getChatMessageByDate` + backward `getChatHistory`

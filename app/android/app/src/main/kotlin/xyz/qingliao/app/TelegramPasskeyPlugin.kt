@@ -1,4 +1,4 @@
-package ad.neko.mithka
+package xyz.qingliao.app
 
 import android.os.Build
 import android.os.CancellationSignal
@@ -251,7 +251,7 @@ class TelegramPasskeyPlugin(
     }
 
     private companion object {
-        const val CHANNEL = "mithka/passkeys"
+        const val CHANNEL = "qingliao/passkeys"
         const val TELEGRAM_RP_ID = "telegram.org"
         const val TELEGRAM_ORIGIN = "https://telegram.org"
     }

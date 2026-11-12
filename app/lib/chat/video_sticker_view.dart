@@ -416,7 +416,7 @@ class _VideoStickerViewState extends State<VideoStickerView>
   static Future<int?> _androidSdkInt() async {
     try {
       final info = await const MethodChannel(
-        'mithka/app_info',
+        'qingliao/app_info',
       ).invokeMapMethod<String, Object?>('info');
       final sdkInt = info?['sdkInt'];
       return sdkInt is int ? sdkInt : null;

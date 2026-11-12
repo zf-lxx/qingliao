@@ -186,7 +186,7 @@ class ApplePccApi {
   }) : _invokeMethod = invokeMethod ?? _defaultInvokeMethod,
        _aiLogger = aiLogger ?? aiStdoutLogger;
 
-  static const channelName = 'mithka/apple_ai';
+  static const channelName = 'qingliao/apple_ai';
   static const _channel = MethodChannel(channelName);
 
   final ApplePccMethodInvoker _invokeMethod;

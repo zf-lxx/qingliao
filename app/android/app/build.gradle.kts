@@ -14,7 +14,7 @@ val googleServicesFile = file("google-services.json")
 val hasFirebaseConfig = googleServicesFile.isFile && Regex(
     "\\\"mobilesdk_app_id\\\"\\s*:\\s*\\\"1:[0-9]+:android:[0-9a-fA-F]+\\\"",
 ).containsMatchIn(googleServicesFile.readText()) && Regex(
-    "\\\"package_name\\\"\\s*:\\s*\\\"ad\\.neko\\.mithka\\\"",
+    "\\\"package_name\\\"\\s*:\\s*\\\"xyz\\.qingliao\\.app\\\"",
 ).containsMatchIn(googleServicesFile.readText())
 if (hasFirebaseConfig) {
     apply(plugin = "com.google.gms.google-services")
@@ -35,7 +35,7 @@ val sentryDsn = providers.environmentVariable("SENTRY_DSN").orNull.orEmpty()
 val sentryEnvironment = providers.environmentVariable("SENTRY_ENVIRONMENT").orNull ?: "production"
 
 android {
-    namespace = "ad.neko.mithka"
+    namespace = "xyz.qingliao.app"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -47,7 +47,7 @@ android {
 
     defaultConfig {
         // 轻聊 keeps the 0.x applicationId so it upgrades in place; the Kotlin
-        // namespace stays ad.neko.mithka (source package only).
+        // namespace stays xyz.qingliao.app (source package only).
         applicationId = "xyz.qingliao.app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.

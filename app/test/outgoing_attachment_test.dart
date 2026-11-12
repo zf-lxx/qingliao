@@ -1,9 +1,9 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/outgoing_attachment.dart';
-import 'package:mithka/tdlib/td_image_loader.dart';
-import 'package:mithka/tdlib/td_models.dart';
+import 'package:qingliao/chat/outgoing_attachment.dart';
+import 'package:qingliao/tdlib/td_image_loader.dart';
+import 'package:qingliao/tdlib/td_models.dart';
 
 OutgoingAttachment attachment(
   String path,

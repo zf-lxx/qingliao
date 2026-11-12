@@ -21,8 +21,8 @@ class TgcallsMediaEngine implements CallMediaEngine {
     _events.receiveBroadcastStream().listen(_onEvent, onError: (_) {});
   }
 
-  static const _methods = MethodChannel('mithka/call_media');
-  static const _events = EventChannel('mithka/call_media/events');
+  static const _methods = MethodChannel('qingliao/call_media');
+  static const _events = EventChannel('qingliao/call_media/events');
 
   void Function(Uint8List data)? _onSignalingData;
 

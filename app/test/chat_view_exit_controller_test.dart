@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/chat_view.dart';
+import 'package:qingliao/chat/chat_view.dart';
 
 void main() {
   test(

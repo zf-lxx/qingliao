@@ -247,7 +247,7 @@ class AiModelCandidate {
     AiModelCandidateKind.appleOnDevice => AiProviderMode.appleOnDevice,
     AiModelCandidateKind.server => AiProviderMode.openAiCompatible,
     AiModelCandidateKind.telegramCocoon => throw UnsupportedError(
-      'Telegram Cocoon is a specialized TDLib provider.',
+      'Cocoon is a specialized AI provider.',
     ),
   };
 

@@ -3,15 +3,15 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/video_note_crop_service.dart';
-import 'package:mithka/chat/video_note_recorder_view.dart';
+import 'package:qingliao/chat/video_note_crop_service.dart';
+import 'package:qingliao/chat/video_note_recorder_view.dart';
 
 /// Service/channel boundaries are driven directly here. The companion recorder
 /// tests also mount the real recorder State and dispose it during camera stop
 /// and native export, proving cleanup cannot reclaim another producer's file.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  const channel = MethodChannel('mithka/media_editor');
+  const channel = MethodChannel('qingliao/media_editor');
 
   void answer(Future<Object?> Function(MethodCall call) handler) {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

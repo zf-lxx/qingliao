@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/app/chat_deep_link_controller.dart';
+import 'package:qingliao/app/chat_deep_link_controller.dart';
 
 /// A chat id is only meaningful inside the account that produced it, so these
 /// cover the one thing that must never happen: a notification for one account

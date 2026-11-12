@@ -122,7 +122,7 @@ jobs:
               key_id: ENV.fetch("ASC_KEY_ID"), issuer_id: ENV.fetch("ASC_ISSUER_ID"),
               key_path: ENV.fetch("ASC_KEY_PATH"))
             app = client.get("/apps/6783830742").fetch("data")
-            abort "ASC app identity mismatch" unless app.dig("attributes", "bundleId") == "ad.neko.mithka"
+            abort "ASC app identity mismatch" unless app.dig("attributes", "bundleId") == "xyz.qingliao.app"
             puts "App Store Connect credential verified for Mithka."
           '
 

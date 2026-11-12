@@ -14,7 +14,7 @@ import 'package:apple_maps_flutter/apple_maps_flutter.dart' as amap;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 
 import '../components/app_icons.dart';
 import '../components/ui_components.dart';
@@ -79,7 +79,7 @@ class _LocationDetailViewState extends State<LocationDetailView> {
       });
       final client = HttpClient();
       final req = await client.getUrl(uri);
-      req.headers.set(HttpHeaders.userAgentHeader, 'Mithka/1.0');
+      req.headers.set(HttpHeaders.userAgentHeader, 'Qingliao/1.0');
       final res = await req.close();
       final body = await res.transform(utf8.decoder).join();
       client.close();
@@ -134,7 +134,7 @@ class _LocationDetailViewState extends State<LocationDetailView> {
       children: [
         TileLayer(
           urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-          userAgentPackageName: 'ad.neko.mithka',
+          userAgentPackageName: 'xyz.qingliao.app',
         ),
         MarkerLayer(
           markers: [

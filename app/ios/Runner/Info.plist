@@ -7,7 +7,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Mithka</string>
+	<string>轻聊</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -21,13 +21,13 @@
 			<string>$(PRODUCT_BUNDLE_IDENTIFIER).deeplink</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>mk</string>
-				<string>mithka</string>
+				<string>ql</string>
+				<string>qingliao</string>
 			</array>
 		</dict>
 	</array>
 	<key>CFBundleName</key>
-	<string>Mithka</string>
+	<string>轻聊</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -46,24 +46,24 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>Mithka uses the camera for photos and videos you choose to send, Telegram video calls, and login QR codes.</string>
+	<string>轻聊 uses the camera for photos and videos you choose to send, video calls, and login QR codes.</string>
 	<key>NSFaceIDUsageDescription</key>
-	<string>Mithka uses Face ID to unlock the app and when you approve biometric access for a Telegram Mini App.</string>
+	<string>轻聊 uses Face ID to unlock the app and when you approve biometric access for a Mini App.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
-	<string>Mithka needs your location to share where you are.</string>
+	<string>轻聊 needs your location to share where you are.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Mithka needs your location to share where you are.</string>
+	<string>轻聊 needs your location to share where you are.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Mithka uses the microphone for voice messages and Telegram voice or video calls.</string>
+	<string>轻聊 uses the microphone for voice messages and voice or video calls.</string>
 	<key>NSMotionUsageDescription</key>
-	<string>Mithka uses device motion to animate wallpapers when Motion is enabled.</string>
+	<string>轻聊 uses device motion to animate wallpapers when Motion is enabled.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Mithka needs photo access to send and save images and videos.</string>
+	<string>轻聊 needs photo access to send and save images and videos.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Mithka needs permission to save images and videos to Photos.</string>
+	<string>轻聊 needs permission to save images and videos to Photos.</string>
 	<key>NSUserActivityTypes</key>
 	<array>
-		<string>ad.neko.mithka.chat</string>
+		<string>xyz.qingliao.app.chat</string>
 		<string>INSendMessageIntent</string>
 	</array>
 	<key>SentryDSNEncoded</key>

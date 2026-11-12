@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/chat_message_merge.dart';
-import 'package:mithka/tdlib/td_models.dart';
+import 'package:qingliao/chat/chat_message_merge.dart';
+import 'package:qingliao/tdlib/td_models.dart';
 
 ChatMessage _message(int id, String text, {int? date}) =>
     ChatMessage(id: id, isOutgoing: false, text: text, date: date ?? id);

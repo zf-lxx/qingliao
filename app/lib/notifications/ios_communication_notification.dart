@@ -7,7 +7,7 @@ import 'package:flutter/services.dart';
 /// the notification with an `INSendMessageIntent` for that presentation.
 class IOSCommunicationNotificationBridge {
   const IOSCommunicationNotificationBridge({
-    this.channel = const MethodChannel('mithka/communication_notifications'),
+    this.channel = const MethodChannel('qingliao/communication_notifications'),
   });
 
   final MethodChannel channel;

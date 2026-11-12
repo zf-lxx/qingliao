@@ -48,7 +48,7 @@ REMOVED = {
         "dartjni.dll",
     ),
 }
-# Matches the installer's Excludes list in windows/installer/mithka.iss.
+# Matches the installer's Excludes list in windows/installer/qingliao.iss.
 WINDOWS_BUILD_BY_PRODUCTS = ("*.exp", "*.ilk", "*.lib", "*.pdb")
 
 
@@ -107,7 +107,7 @@ def remove(bundle: Path, platform: str) -> list[tuple[Path, int]]:
 
 def strip(bundle: Path, platform: str, tool: str | None) -> list[tuple[Path, int]]:
     if platform == "linux":
-        files = [bundle / "mithka", *sorted((bundle / "lib").iterdir())]
+        files = [bundle / "qingliao", *sorted((bundle / "lib").iterdir())]
         targets = [
             path
             for path in files

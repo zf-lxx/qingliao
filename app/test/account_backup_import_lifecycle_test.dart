@@ -4,10 +4,10 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/tdlib/gram_js_session.dart';
-import 'package:mithka/tdlib/td_bindings.dart';
-import 'package:mithka/tdlib/td_client.dart';
-import 'package:mithka/tdlib/td_session_string.dart';
+import 'package:qingliao/tdlib/gram_js_session.dart';
+import 'package:qingliao/tdlib/td_bindings.dart';
+import 'package:qingliao/tdlib/td_client.dart';
+import 'package:qingliao/tdlib/td_session_string.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Synthetic credentials only: every auth key here is generated from a seed,

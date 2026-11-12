@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import '../l10n/app_localizations.dart';
 
 abstract final class VideoTrimService {
-  static const _channel = MethodChannel('mithka/media_editor');
+  static const _channel = MethodChannel('qingliao/media_editor');
 
   static Future<String> trim({
     required String path,

@@ -180,7 +180,7 @@ enum VideoNoteExportError: Error, Sendable {
   }
 
   private static func sentryReleaseName(info: [String: Any]) -> String {
-    let bundleId = info["CFBundleIdentifier"] as? String ?? "ad.neko.mithka"
+    let bundleId = info["CFBundleIdentifier"] as? String ?? "xyz.qingliao.app"
     let version = info["CFBundleShortVersionString"] as? String ?? "0"
     let build = info["CFBundleVersion"] as? String ?? "0"
     return "\(bundleId)@\(version)+\(build)"
@@ -333,13 +333,13 @@ enum VideoNoteExportError: Error, Sendable {
     didRegisterFlutterPlugins = true
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NativeGlassSurface") {
-      registrar.register(NativeGlassSurfaceFactory(registrar: registrar), withId: "mithka/native_glass")
+      registrar.register(NativeGlassSurfaceFactory(registrar: registrar), withId: "qingliao/native_glass")
     }
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "NativeTabBar") {
-      registrar.register(NativeTabBarFactory(registrar: registrar), withId: "mithka/native_tab_bar")
+      registrar.register(NativeTabBarFactory(registrar: registrar), withId: "qingliao/native_tab_bar")
     }
     let nativeTabAvailability = FlutterMethodChannel(
-      name: "mithka/native_tab_bar",
+      name: "qingliao/native_tab_bar",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     nativeTabAvailability.setMethodCallHandler { call, result in
@@ -350,7 +350,7 @@ enum VideoNoteExportError: Error, Sendable {
       if #available(iOS 26.0, *) { result(true) } else { result(false) }
     }
     let windowGeometryChannel = FlutterMethodChannel(
-      name: "mithka/window_geometry",
+      name: "qingliao/window_geometry",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     windowGeometryChannel.setMethodCallHandler { call, result in
@@ -398,7 +398,7 @@ enum VideoNoteExportError: Error, Sendable {
       messenger: engineBridge.applicationRegistrar.messenger()
     )
     let clipboardChannel = FlutterMethodChannel(
-      name: "mithka/clipboard",
+      name: "qingliao/clipboard",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     clipboardChannel.setMethodCallHandler { call, result in
@@ -480,7 +480,7 @@ enum VideoNoteExportError: Error, Sendable {
       result(nil)
     }
     let mediaEditorChannel = FlutterMethodChannel(
-      name: "mithka/media_editor",
+      name: "qingliao/media_editor",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     mediaEditorChannel.setMethodCallHandler { [weak self] call, result in
@@ -551,7 +551,7 @@ enum VideoNoteExportError: Error, Sendable {
       }
     }
     let animatedAvatarChannel = FlutterMethodChannel(
-      name: "mithka/animated_avatar",
+      name: "qingliao/animated_avatar",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     animatedAvatarChannel.setMethodCallHandler { call, result in
@@ -590,7 +590,7 @@ enum VideoNoteExportError: Error, Sendable {
       }
     }
     let stickerExportChannel = FlutterMethodChannel(
-      name: "mithka/sticker_export",
+      name: "qingliao/sticker_export",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     stickerExportChannel.setMethodCallHandler { call, result in
@@ -625,7 +625,7 @@ enum VideoNoteExportError: Error, Sendable {
     )
 
     let fontsChannel = FlutterMethodChannel(
-      name: "mithka/fonts",
+      name: "qingliao/fonts",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     fontsChannel.setMethodCallHandler { call, result in
@@ -651,7 +651,7 @@ enum VideoNoteExportError: Error, Sendable {
     }
 
     let appIconChannel = FlutterMethodChannel(
-      name: "mithka/app_icon",
+      name: "qingliao/app_icon",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     appIconChannel.setMethodCallHandler { call, result in
@@ -737,7 +737,7 @@ enum VideoNoteExportError: Error, Sendable {
     }
 
     let wakelockChannel = FlutterMethodChannel(
-      name: "mithka/screen_wakelock",
+      name: "qingliao/screen_wakelock",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     wakelockChannel.setMethodCallHandler { call, result in
@@ -754,7 +754,7 @@ enum VideoNoteExportError: Error, Sendable {
     }
 
     let appLockPrivacyChannel = FlutterMethodChannel(
-      name: "mithka/app_lock_privacy",
+      name: "qingliao/app_lock_privacy",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     appLockPrivacyChannel.setMethodCallHandler { [weak self] call, result in
@@ -769,7 +769,7 @@ enum VideoNoteExportError: Error, Sendable {
     }
 
     let firebaseConfigurationChannel = FlutterMethodChannel(
-      name: "mithka/firebase_configuration",
+      name: "qingliao/firebase_configuration",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     firebaseConfigurationChannel.setMethodCallHandler { call, result in
@@ -789,7 +789,7 @@ enum VideoNoteExportError: Error, Sendable {
     }
 
     let playerBrightnessChannel = FlutterMethodChannel(
-      name: "mithka/player_brightness",
+      name: "qingliao/player_brightness",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     playerBrightnessChannel.setMethodCallHandler { call, result in
@@ -816,7 +816,7 @@ enum VideoNoteExportError: Error, Sendable {
     }
 
     let accountBackupChannel = FlutterMethodChannel(
-      name: "mithka/account_backup",
+      name: "qingliao/account_backup",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     let accountBackup = AccountSessionBackupKeychain()
@@ -841,7 +841,7 @@ enum VideoNoteExportError: Error, Sendable {
     )
 
     let pushChannel = FlutterMethodChannel(
-      name: "mithka/push",
+      name: "qingliao/push",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     self.pushChannel = pushChannel
@@ -855,7 +855,7 @@ enum VideoNoteExportError: Error, Sendable {
     }
 
     let notificationTapChannel = FlutterMethodChannel(
-      name: "mithka/notification_tap",
+      name: "qingliao/notification_tap",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     self.notificationTapChannel = notificationTapChannel
@@ -892,7 +892,7 @@ enum VideoNoteExportError: Error, Sendable {
       )
     } else {
       let liveCommunicationChannel = FlutterMethodChannel(
-        name: "mithka/live_communication",
+        name: "qingliao/live_communication",
         binaryMessenger: engineBridge.applicationRegistrar.messenger()
       )
       liveCommunicationChannel.setMethodCallHandler { call, result in
@@ -906,7 +906,7 @@ enum VideoNoteExportError: Error, Sendable {
     }
 
     let nativeTranslationChannel = FlutterMethodChannel(
-      name: "mithka/native_translation",
+      name: "qingliao/native_translation",
       binaryMessenger: engineBridge.applicationRegistrar.messenger()
     )
     if #available(iOS 18.0, *) {
@@ -1493,7 +1493,7 @@ private enum StickerAlphaMovError: LocalizedError {
 /// a matching background.
 private enum StickerAlphaMovTranscoder {
   private static let queue = DispatchQueue(
-    label: "ad.neko.mithka.sticker-export",
+    label: "xyz.qingliao.app.sticker-export",
     qos: .userInitiated
   )
   private static let defaultFrameDuration = 1.0 / 30.0
@@ -1719,7 +1719,7 @@ private struct AnimatedAvatarCropRegion: Sendable {
 
 private enum AnimatedAvatarTranscoder {
   private static let queue = DispatchQueue(
-    label: "ad.neko.mithka.animated-avatar",
+    label: "xyz.qingliao.app.animated-avatar",
     qos: .userInitiated
   )
   private static let maximumDuration = 10.0
@@ -2099,7 +2099,7 @@ private final class LiveCommunicationBridge: NSObject, ConversationManagerDelega
     audioSessionChanged: @escaping (Bool) -> Void
   ) {
     channel = FlutterMethodChannel(
-      name: "mithka/live_communication",
+      name: "qingliao/live_communication",
       binaryMessenger: messenger
     )
     let configuration = ConversationManager.Configuration(
@@ -2289,7 +2289,7 @@ private final class AccountSessionBackupKeychain {
   private let localService: String
 
   init() {
-    let bundleId = Bundle.main.bundleIdentifier ?? "ad.neko.mithka"
+    let bundleId = Bundle.main.bundleIdentifier ?? "xyz.qingliao.app"
     self.syncedService = "\(bundleId).sessionsbackup"
     self.localService = "\(bundleId).sessionsbackup.local"
   }

@@ -5,8 +5,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:mithka/bot_api/bot_api_account.dart';
-import 'package:mithka/bot_api/bot_api_client.dart';
+import 'package:qingliao/bot_api/bot_api_account.dart';
+import 'package:qingliao/bot_api/bot_api_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -162,7 +162,7 @@ void main() {
     await BotApiAccountRegistry.readToken(account.slot);
 
     expect(operationOptions['write'], operationOptions['read']);
-    expect(operationOptions['write']?['accountName'], 'ad.neko.mithka.bot-api');
+    expect(operationOptions['write']?['accountName'], 'xyz.qingliao.app.bot-api');
     expect(operationOptions['write']?['accessibility'], 'unlocked');
     expect(operationOptions['write']?['synchronizable'], 'true');
     expect(operationOptions['write'], isNot(contains('groupId')));

@@ -7,8 +7,8 @@
 //
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/chat_info_view.dart';
-import 'package:mithka/chat/chat_members_cache.dart';
+import 'package:qingliao/chat/chat_info_view.dart';
+import 'package:qingliao/chat/chat_members_cache.dart';
 
 ChatMember member(int id) => ChatMember(id, 'User $id', null);
 

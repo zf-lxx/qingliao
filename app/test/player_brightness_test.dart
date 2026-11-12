@@ -2,12 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/platform/player_brightness.dart';
+import 'package:qingliao/platform/player_brightness.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  const channel = MethodChannel('mithka/player_brightness');
+  const channel = MethodChannel('qingliao/player_brightness');
   final calls = <MethodCall>[];
 
   setUp(() {

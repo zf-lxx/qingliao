@@ -1,5 +1,5 @@
 import 'package:flutter/widgets.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 
 import '../chat/stretchable_message_bubble_background.dart';
 import '../theme/app_theme.dart';

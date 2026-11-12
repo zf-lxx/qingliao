@@ -9,9 +9,9 @@ import 'package:camera_platform_interface/camera_platform_interface.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/video_note_crop_service.dart';
-import 'package:mithka/chat/video_note_recorder_view.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/chat/video_note_crop_service.dart';
+import 'package:qingliao/chat/video_note_recorder_view.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 
 /// The shapes the pinned package produces for the fixtures below, written out
 /// so a test never just echoes the helper under test.
@@ -43,7 +43,7 @@ void main() {
         final exported = Completer<String?>();
         platform.stoppedVideo = stopped.future;
         var cropsStarted = 0;
-        const channel = MethodChannel('mithka/media_editor');
+        const channel = MethodChannel('qingliao/media_editor');
         final messenger =
             TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
         messenger.setMockMethodCallHandler(channel, (call) async {
@@ -127,7 +127,7 @@ void main() {
         final cropped = File('${directory.path}/cropped.mp4')
           ..writeAsBytesSync([2]);
         platform.stoppedVideo = Future.value(XFile(recording.path));
-        const channel = MethodChannel('mithka/media_editor');
+        const channel = MethodChannel('qingliao/media_editor');
         final messenger =
             TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
         var cropsStarted = 0;

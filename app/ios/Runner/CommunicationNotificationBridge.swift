@@ -99,7 +99,7 @@ final class CommunicationNotificationBridge {
     notificationCenter: UNUserNotificationCenter = .current()
   ) {
     channel = FlutterMethodChannel(
-      name: "mithka/communication_notifications",
+      name: "qingliao/communication_notifications",
       binaryMessenger: messenger
     )
     self.notificationCenter = notificationCenter

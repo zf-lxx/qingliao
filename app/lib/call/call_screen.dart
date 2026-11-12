@@ -15,7 +15,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 
 import '../components/app_icons.dart';
 import '../components/app_interactive_surface.dart';
@@ -261,7 +261,7 @@ class _CallScreenState extends State<CallScreen> {
   Widget _localPreview(bool isLandscape) {
     // Show our own camera feed when it's on; otherwise a placeholder glyph.
     // The engine capability (a native tgcalls implementation owns the
-    // `mithka/video_view` platform views) decides, not the form factor: a
+    // `qingliao/video_view` platform views) decides, not the form factor: a
     // mobile host without the engine keeps the placeholder instead of
     // mounting a view type nothing renders into.
     final showVideo =
@@ -297,13 +297,13 @@ class _CallScreenState extends State<CallScreen> {
     final creationParams = {'role': role};
     if (Platform.isIOS) {
       return UiKitView(
-        viewType: 'mithka/video_view',
+        viewType: 'qingliao/video_view',
         creationParams: creationParams,
         creationParamsCodec: creationParamsCodec,
       );
     }
     return AndroidView(
-      viewType: 'mithka/video_view',
+      viewType: 'qingliao/video_view',
       creationParams: creationParams,
       creationParamsCodec: creationParamsCodec,
     );

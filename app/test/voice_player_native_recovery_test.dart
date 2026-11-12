@@ -8,10 +8,10 @@ import 'package:flutter_sound_platform_interface/flutter_sound_player_platform_i
 // ignore: depend_on_referenced_packages
 import 'package:flutter_sound_platform_interface/method_channel_flutter_sound_player.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/voice_audio.dart';
-import 'package:mithka/tdlib/td_client.dart';
-import 'package:mithka/tdlib/td_image_loader.dart';
-import 'package:mithka/tdlib/td_models.dart';
+import 'package:qingliao/chat/voice_audio.dart';
+import 'package:qingliao/tdlib/td_client.dart';
+import 'package:qingliao/tdlib/td_image_loader.dart';
+import 'package:qingliao/tdlib/td_models.dart';
 
 // Drives the production VoicePlayer against a fake native audio stack.
 //

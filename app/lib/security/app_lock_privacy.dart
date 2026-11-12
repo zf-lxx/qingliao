@@ -9,7 +9,7 @@ import 'package:flutter/services.dart';
 class AppLockPrivacyPlatform {
   const AppLockPrivacyPlatform._();
 
-  static const _channel = MethodChannel('mithka/app_lock_privacy');
+  static const _channel = MethodChannel('qingliao/app_lock_privacy');
 
   static Future<void> setPrivacyShieldVisible(bool visible) async {
     if (kIsWeb ||

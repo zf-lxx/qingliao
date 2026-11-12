@@ -9,7 +9,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 import 'package:provider/provider.dart';
 
 import '../app/primary_chat_launcher.dart';
@@ -887,7 +887,7 @@ Future<bool> _openTelegramFallback(
   final uri = Uri.tryParse(link);
   if (uri == null) return false;
 
-  // mk:// and mithka:// are the app's own registered schemes; they carry the
+  // mk:// and qingliao:// are the app's own registered schemes; they carry the
   // same path/query grammar as tg:// links.
   const appSchemes = {'tg', 'mk', 'mithka'};
   if (appSchemes.contains(uri.scheme.toLowerCase())) {
@@ -2224,7 +2224,7 @@ Future<void> _showStoreDependency(
         ),
         TelegramLinkDetail(
           AppStrings.t(AppStringKeys.linkHandlerDetailAuthorization),
-          'Telegram canPurchaseFromStore required',
+          'canPurchaseFromStore required',
         ),
         const TelegramLinkDetail('iOS', 'StoreKit 2 receipt assignment'),
         const TelegramLinkDetail(
@@ -2265,8 +2265,8 @@ Future<bool> _preflightStorePurchase(
 }
 
 String _premiumGiftLabel(int months) => switch (months) {
-  1 => '1 month of Telegram Premium',
-  _ => '$months months of Telegram Premium',
+  1 => '1 month of Premium',
+  _ => '$months months of Premium',
 };
 
 Future<void> _openVideoChat(

@@ -1,6 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/settings/app_icon_controller.dart';
+import 'package:qingliao/settings/app_icon_controller.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
@@ -9,7 +9,7 @@ void main() {
   test('controller reads and changes the native runtime icon', () async {
     SharedPreferences.setMockInitialValues({'selected_app_icon': 'purple'});
     final calls = <MethodCall>[];
-    const channel = MethodChannel('mithka/app_icon');
+    const channel = MethodChannel('qingliao/app_icon');
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
           calls.add(call);

@@ -12,8 +12,8 @@
 
 import 'package:flutter/foundation.dart' show DebugPrintCallback, debugPrint;
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/app/diagnostic_breadcrumbs.dart';
-import 'package:mithka/chat/voice_recording_session.dart';
+import 'package:qingliao/app/diagnostic_breadcrumbs.dart';
+import 'package:qingliao/chat/voice_recording_session.dart';
 
 void main() {
   group('activateConfiguredSession', () {

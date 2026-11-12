@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chats/chat_list_view_model.dart';
-import 'package:mithka/communities/community_models.dart';
+import 'package:qingliao/chats/chat_list_view_model.dart';
+import 'package:qingliao/communities/community_models.dart';
 
 void main() {
   test('hiding "All" offers only real folders and moves the selection', () {

@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 class PlayerBrightness {
   PlayerBrightness._();
 
-  static const _channel = MethodChannel('mithka/player_brightness');
+  static const _channel = MethodChannel('qingliao/player_brightness');
 
   static Future<double?> current() async {
     try {

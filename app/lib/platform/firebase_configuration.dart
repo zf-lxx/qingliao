@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 class FirebaseConfiguration {
   FirebaseConfiguration._();
 
-  static const _channel = MethodChannel('mithka/firebase_configuration');
+  static const _channel = MethodChannel('qingliao/firebase_configuration');
 
   static Future<bool> get isAvailable async {
     try {

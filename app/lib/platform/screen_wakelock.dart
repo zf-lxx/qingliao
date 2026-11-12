@@ -14,7 +14,7 @@ import 'package:flutter/services.dart';
 class ScreenWakelock {
   ScreenWakelock._();
 
-  static const _channel = MethodChannel('mithka/screen_wakelock');
+  static const _channel = MethodChannel('qingliao/screen_wakelock');
 
   /// Prevent the screen from dimming or sleeping.
   static Future<void> enable() async {

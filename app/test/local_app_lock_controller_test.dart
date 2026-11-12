@@ -4,7 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_auth/local_auth.dart';
-import 'package:mithka/security/local_app_lock_controller.dart';
+import 'package:qingliao/security/local_app_lock_controller.dart';
 
 void main() {
   test('four-digit PIN is hashed, verified, and restored as locked', () async {

@@ -1,4 +1,4 @@
-package ad.neko.mithka
+package xyz.qingliao.app
 
 /**
  * Dependency-free regression entry point: compile with the pure

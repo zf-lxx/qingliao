@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/forward_markdown.dart';
-import 'package:mithka/chat/forward_options.dart';
-import 'package:mithka/tdlib/td_client.dart';
+import 'package:qingliao/chat/forward_markdown.dart';
+import 'package:qingliao/chat/forward_options.dart';
+import 'package:qingliao/tdlib/td_client.dart';
 
 class _Accounts implements TdClient {
   @override

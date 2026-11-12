@@ -32,7 +32,7 @@
          variants all use the same install flow. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <!-- light_compressor_v2 declares these for its optional BackgroundConfig.
-         Mithka never opts into background compression, so keep them out of the
+         the app never opts into background compression, so keep them out of the
          release manifest and the Google Play foreground-service declaration. -->
     <uses-permission
         android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"
@@ -106,17 +106,17 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
             <!-- The app's own deep-link schemes (tg:// grammar): mk:// and
-                 mithka://. Registered here instead of tg:// so Mithka never
+                 qingliao://. Registered here instead of tg:// so the app never
                  competes with official Telegram clients for their links. -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW"/>
                 <category android:name="android.intent.category.DEFAULT"/>
                 <category android:name="android.intent.category.BROWSABLE"/>
-                <data android:scheme="mk"/>
-                <data android:scheme="mithka"/>
+                <data android:scheme="ql"/>
+                <data android:scheme="qingliao"/>
             </intent-filter>
             <!-- Receive text and files shared from other Android apps. The
-                 payload is copied into Mithka's private cache before it is
+                 payload is copied into the app's private cache before it is
                  shown in the existing chat picker/composer flow. -->
             <intent-filter>
                 <action android:name="android.intent.action.SEND" />

@@ -1,9 +1,9 @@
 //  scope_notification_settings.dart
 //  Cached scope-level notification settings (mute_for) used to compute effective mute state.
 
-import 'package:mithka/tdlib/json_helpers.dart';
-import 'package:mithka/tdlib/td_client.dart';
-import 'package:mithka/tdlib/td_models.dart' show ChatKind;
+import 'package:qingliao/tdlib/json_helpers.dart';
+import 'package:qingliao/tdlib/td_client.dart';
+import 'package:qingliao/tdlib/td_models.dart' show ChatKind;
 
 class ScopeNotificationSettings {
   ScopeNotificationSettings._();

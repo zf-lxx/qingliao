@@ -2,8 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/theme/app_motion.dart';
-import 'package:mithka/theme/app_theme.dart';
+import 'package:qingliao/theme/app_motion.dart';
+import 'package:qingliao/theme/app_theme.dart';
 
 void main() {
   late AnimationController controller;

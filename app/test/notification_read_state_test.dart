@@ -1,6 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/notifications/notification_controller.dart';
-import 'package:mithka/notifications/notification_target.dart';
+import 'package:qingliao/notifications/notification_controller.dart';
+import 'package:qingliao/notifications/notification_target.dart';
 
 Map<String, dynamic> _newMessage({
   required int chatId,

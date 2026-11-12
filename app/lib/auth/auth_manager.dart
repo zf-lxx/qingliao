@@ -9,8 +9,8 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/notifications/scope_notification_settings.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/notifications/scope_notification_settings.dart';
 
 import '../chat/chat_members_cache.dart';
 import '../config/secrets.dart';
@@ -294,7 +294,7 @@ class AuthManager extends ChangeNotifier {
     }
     _showStartupFailure(
       StateError(
-        'Mithka is taking longer than expected to connect. '
+        '轻聊 is taking longer than expected to connect. '
         'Check your internet connection and try again.',
       ),
     );
@@ -305,7 +305,7 @@ class AuthManager extends ChangeNotifier {
     _cancelStartupWatchdog();
     _errorMessage = error is StateError
         ? error.message.toString()
-        : 'Mithka could not finish connecting. Check your internet connection '
+        : 'Could not finish connecting. Check your internet connection '
               'and try again.';
     _set(const AuthWaitPhoneNumber());
   }
@@ -322,7 +322,7 @@ class AuthManager extends ChangeNotifier {
       _set(const AuthMissingCredentials());
       return;
     }
-    debugPrint('🔑 [Mithka] authorizationState → ${state.type ?? 'nil'}');
+    debugPrint('🔑 [Qingliao] authorizationState → ${state.type ?? 'nil'}');
     if (state.type != 'authorizationStateWaitTdlibParameters') {
       _cancelStartupWatchdog();
     }

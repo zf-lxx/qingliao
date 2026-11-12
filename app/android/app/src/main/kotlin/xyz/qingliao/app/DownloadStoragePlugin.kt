@@ -1,4 +1,4 @@
-package ad.neko.mithka
+package xyz.qingliao.app
 
 import android.content.Intent
 import android.net.Uri
@@ -22,7 +22,7 @@ class DownloadStoragePlugin(
     private val activity: FlutterFragmentActivity,
     messenger: BinaryMessenger,
 ) : MethodChannel.MethodCallHandler {
-    private val channel = MethodChannel(messenger, "mithka/download_storage")
+    private val channel = MethodChannel(messenger, "qingliao/download_storage")
     private val preferences = activity.getSharedPreferences("download_storage", 0)
     private val executor = Executors.newSingleThreadExecutor()
     private val main = Handler(Looper.getMainLooper())

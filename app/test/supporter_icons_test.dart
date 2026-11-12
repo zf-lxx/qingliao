@@ -3,18 +3,18 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/pro/mithka_pro_service.dart';
-import 'package:mithka/pro/mithka_pro_view.dart';
-import 'package:mithka/settings/app_icon_controller.dart';
-import 'package:mithka/settings/appearance_view.dart';
-import 'package:mithka/theme/app_theme.dart';
-import 'package:mithka/theme/theme_controller.dart';
+import 'package:qingliao/pro/mithka_pro_service.dart';
+import 'package:qingliao/pro/mithka_pro_view.dart';
+import 'package:qingliao/settings/app_icon_controller.dart';
+import 'package:qingliao/settings/appearance_view.dart';
+import 'package:qingliao/theme/app_theme.dart';
+import 'package:qingliao/theme/theme_controller.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  const iconChannel = MethodChannel('mithka/app_icon');
+  const iconChannel = MethodChannel('qingliao/app_icon');
   final nativeChanges = <String>[];
   String currentIcon = 'default';
   bool failNative = false;

@@ -1,7 +1,7 @@
-name: mithka
-description: "轻聊 — a Flutter messenger client based on Mithka, talking to the 轻聊 backend."
+name: qingliao
+description: "轻聊 — a Flutter messenger talking to the 轻聊 backend."
 publish_to: 'none'
-version: 0.4.0+7
+version: 0.4.1+8
 
 environment:
   sdk: ^3.12.2
@@ -36,7 +36,7 @@ dependencies:
   lottie: ^3.5.1
   archive: ^4.2.0
 
-  # Voice notes: record + play Telegram's OGG/Opus (bundles libopus, so it works
+  # Voice notes: record + play OGG/Opus (bundles libopus, so it works
   # on iOS where AVFoundation can't decode Opus). + mic permission.
   audio_session: ^0.2.4
   # 9.30.0 advertises desktop plugins whose native registration metadata is
@@ -86,7 +86,7 @@ dependencies:
   apple_maps_flutter: ^1.4.0
 
   # Animated .webm (VP9 + alpha) video stickers. fvp is an MDK/FFmpeg backend for
-  # video_player that decodes VP8/VP9 transparent WebM (Telegram video stickers) —
+  # video_player that decodes VP8/VP9 transparent WebM (video stickers) —
   # replaces the old ffmpeg_kit→WebP transcode.
   video_player: ^2.14.0
   # Reusable player controls, scrub previews, and independent desktop windows.
@@ -107,7 +107,7 @@ dependencies:
   # Story video preparation: native 60-second segmentation and mobile-friendly
   # re-encoding before TDLib's inputStoryContentVideo upload.
   light_compressor_v2: ^1.9.0
-  # Direct because Mithka also consumes FVP-specific controller and PiP APIs.
+  # Direct because the client also consumes FVP-specific controller and PiP APIs.
   fvp: ^0.37.3
   f_videoplayer_pip:
     git:
@@ -126,7 +126,7 @@ dependencies:
   flutter_svg: ^2.3.0
   vector_graphics: ^1.2.3
   image: ^4.9.2
-  # Accelerometer-backed parallax for Telegram wallpaper Motion.
+  # Accelerometer-backed parallax for wallpaper Motion.
   sensors_plus: ^7.1.0
   heroicons_flutter: ^0.5.0
   mobile_scanner: ^7.4.0

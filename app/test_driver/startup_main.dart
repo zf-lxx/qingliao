@@ -8,7 +8,7 @@
 //
 
 import 'package:flutter_driver/driver_extension.dart';
-import 'package:mithka/main.dart' as app;
+import 'package:qingliao/main.dart' as app;
 
 void main() {
   enableFlutterDriverExtension();

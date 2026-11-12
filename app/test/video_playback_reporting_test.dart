@@ -4,7 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/media/video_playback_reporting.dart';
+import 'package:qingliao/media/video_playback_reporting.dart';
 import 'package:sentry_flutter/sentry_flutter.dart';
 import 'package:video_player/video_player.dart';
 
@@ -103,7 +103,7 @@ void main() {
         kernelVersion: 'PRIVATE',
       );
       final app = SentryApp.fromJson({
-        'app_identifier': 'ad.neko.mithka',
+        'app_identifier': 'xyz.qingliao.app',
         'app_version': '1.5.3',
         'app_memory': 123456,
         'device_app_hash': 'PRIVATE',

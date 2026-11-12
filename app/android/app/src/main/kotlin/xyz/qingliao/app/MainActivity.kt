@@ -1,4 +1,4 @@
-package ad.neko.mithka
+package xyz.qingliao.app
 
 import android.content.ClipData
 import android.content.ClipDescription
@@ -158,7 +158,7 @@ class MainActivity : FlutterFragmentActivity() {
             this,
             flutterEngine.dartExecutor.binaryMessenger,
         )
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/fullscreen_system_ui")
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qingliao/fullscreen_system_ui")
             .setMethodCallHandler { call, result ->
                 if (call.method == "setFullscreen") {
                     fullscreenSystemUi = call.arguments == true
@@ -184,7 +184,7 @@ class MainActivity : FlutterFragmentActivity() {
         // App info for the GitHub-release update checker: the device's supported
         // ABIs (preference-ordered, so we can match the right per-ABI APK asset)
         // and the installed version name (the semver compared to the latest tag).
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/app_info")
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qingliao/app_info")
             .setMethodCallHandler { call, result ->
                 if (call.method == "info") {
                     val pkg = packageManager.getPackageInfo(packageName, 0)
@@ -205,7 +205,7 @@ class MainActivity : FlutterFragmentActivity() {
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
-            "mithka/firebase_configuration",
+            "qingliao/firebase_configuration",
         ).setMethodCallHandler { call, result ->
             if (call.method != "isAvailable") {
                 result.notImplemented()
@@ -216,7 +216,7 @@ class MainActivity : FlutterFragmentActivity() {
             result.success(appId.isNotBlank())
         }
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/app_icon")
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qingliao/app_icon")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "isSupported" -> result.success(true)
@@ -314,7 +314,7 @@ class MainActivity : FlutterFragmentActivity() {
             }
 
         // 轻聊: on-device ML Kit translation removed to keep the APK small.
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/native_translation")
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qingliao/native_translation")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "capabilities" -> result.success(emptyList<String>())
@@ -323,7 +323,7 @@ class MainActivity : FlutterFragmentActivity() {
                 }
             }
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/fonts")
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qingliao/fonts")
             .setMethodCallHandler { call, result ->
                 if (call.method == "listFonts") {
                     result.success(listSystemFonts())
@@ -332,7 +332,7 @@ class MainActivity : FlutterFragmentActivity() {
                 }
             }
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/screen_wakelock")
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qingliao/screen_wakelock")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "enable" -> {
@@ -353,7 +353,7 @@ class MainActivity : FlutterFragmentActivity() {
 
         MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
-            "mithka/app_lock_privacy",
+            "qingliao/app_lock_privacy",
         ).setMethodCallHandler { call, result ->
             if (call.method != "setPrivacyShieldVisible") {
                 result.notImplemented()
@@ -370,7 +370,7 @@ class MainActivity : FlutterFragmentActivity() {
             result.success(null)
         }
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/player_brightness")
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qingliao/player_brightness")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "get" -> {
@@ -412,7 +412,7 @@ class MainActivity : FlutterFragmentActivity() {
                 }
             }
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/system_media_volume")
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qingliao/system_media_volume")
             .setMethodCallHandler { call, result ->
                 val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
                 when (call.method) {
@@ -451,7 +451,7 @@ class MainActivity : FlutterFragmentActivity() {
                 }
             }
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/clipboard")
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qingliao/clipboard")
             .setMethodCallHandler { call, result ->
                 var clipboardDescription: ClipDescription? = null
                 val requestedMimeType: String?
@@ -569,7 +569,7 @@ class MainActivity : FlutterFragmentActivity() {
                 }
             }
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/media_editor")
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qingliao/media_editor")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
                     "trimVideo" -> {
@@ -607,7 +607,7 @@ class MainActivity : FlutterFragmentActivity() {
             }
         mediaDropChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
-            "mithka/media_drop",
+            "qingliao/media_drop",
         )
         window.decorView.setOnDragListener { _, event -> handleMediaDragEvent(event) }
     }
@@ -621,7 +621,7 @@ class MainActivity : FlutterFragmentActivity() {
     private fun configureShareIntentChannel(flutterEngine: FlutterEngine) {
         shareIntentChannel = MethodChannel(
             flutterEngine.dartExecutor.binaryMessenger,
-            "mithka/share_intent",
+            "qingliao/share_intent",
         )
         shareIntentChannel?.setMethodCallHandler { call, result ->
             when (call.method) {

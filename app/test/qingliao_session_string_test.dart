@@ -2,8 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/tdlib/td_bindings.dart';
-import 'package:mithka/tdlib/td_session_string.dart';
+import 'package:qingliao/tdlib/td_bindings.dart';
+import 'package:qingliao/tdlib/td_session_string.dart';
 
 void main() {
   test('qingliao session strings round-trip through the TDLib packing', () {

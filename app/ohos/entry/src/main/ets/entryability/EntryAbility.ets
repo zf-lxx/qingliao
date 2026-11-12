@@ -1,6 +1,6 @@
 
 import { FlutterAbility, FlutterEngine } from '@ohos/flutter_ohos';
-import MithkaMediaPlugin from '../mithka/MithkaMediaPlugin';
+import MithkaMediaPlugin from '../qingliao/MithkaMediaPlugin';
 import { GeneratedPluginRegistrant } from '../plugins/GeneratedPluginRegistrant';
 
 export default class EntryAbility extends FlutterAbility {

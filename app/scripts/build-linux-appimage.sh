@@ -26,7 +26,7 @@ import struct
 import sys
 
 bundle = pathlib.Path(sys.argv[1])
-for name in ('mithka', 'lib/libflutter_linux_gtk.so', 'lib/libapp.so', 'lib/libtdjson.so'):
+for name in ('qingliao', 'lib/libflutter_linux_gtk.so', 'lib/libapp.so', 'lib/libtdjson.so'):
     with (bundle / name).open('rb') as binary:
         header = binary.read(20)
     if (len(header) != 20 or header[:6] != b'\x7fELF\x02\x01'
@@ -57,7 +57,7 @@ python3 "$repository_root/scripts/prune-desktop-bundle.py" linux "$appdir/usr/bi
 rm -f "$appdir/usr/lib/libmdk-rockchip.so"
 install -m 0644 \
   "$repository_root/macos/Runner/Assets.xcassets/AppIcon.appiconset/app_icon_512.png" \
-  "$work/ad.neko.mithka.png"
+  "$work/xyz.qingliao.app.png"
 
 tool="$work/linuxdeploy-$appimage_arch.AppImage"
 curl --fail --location --retry 3 \
@@ -85,8 +85,8 @@ export DEPLOY_GTK_VERSION=3
 export LD_LIBRARY_PATH="$appdir/usr/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 "$tool" --appdir "$appdir" --executable "$appdir/usr/bin/mithka" \
   "${libraries[@]}" --plugin gtk \
-  --desktop-file "$repository_root/linux/appimage/ad.neko.mithka.desktop" \
-  --icon-file "$work/ad.neko.mithka.png" \
+  --desktop-file "$repository_root/linux/appimage/xyz.qingliao.app.desktop" \
+  --icon-file "$work/xyz.qingliao.app.png" \
   --custom-apprun "$repository_root/linux/appimage/AppRun" --output appimage
 test -s "$output"
 chmod 0755 "$output"

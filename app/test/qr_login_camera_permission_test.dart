@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/platform/camera_permission.dart';
-import 'package:mithka/settings/qr_login_scanner_view.dart';
-import 'package:mithka/theme/app_theme.dart';
-import 'package:mithka/theme/theme_controller.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/platform/camera_permission.dart';
+import 'package:qingliao/settings/qr_login_scanner_view.dart';
+import 'package:qingliao/theme/app_theme.dart';
+import 'package:qingliao/theme/theme_controller.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 

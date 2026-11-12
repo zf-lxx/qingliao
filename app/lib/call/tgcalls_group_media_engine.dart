@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'group_call_media_engine.dart';
 
 class TgcallsGroupMediaEngine implements GroupCallMediaEngine {
-  static const _methods = MethodChannel('mithka/call_media');
+  static const _methods = MethodChannel('qingliao/call_media');
 
   @override
   Future<bool> get isSupported async =>

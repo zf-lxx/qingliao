@@ -34,7 +34,7 @@ final class MacOSAppIconPlugin: NSObject, FlutterPlugin {
 
   static func register(with registrar: FlutterPluginRegistrar) {
     let channel = FlutterMethodChannel(
-      name: "mithka/app_icon",
+      name: "qingliao/app_icon",
       binaryMessenger: registrar.messenger
     )
     let instance = MacOSAppIconPlugin(registrar: registrar)

@@ -221,7 +221,7 @@ class GroupCallController extends ChangeNotifier {
     if (session != null) return;
     if (!await _engine.isSupported) {
       throw UnsupportedError(
-        'This build does not include Telegram group-call media for this platform',
+        'This build does not include group-call media for this platform',
       );
     }
     await _ensurePermissions(isVideo);
@@ -239,7 +239,7 @@ class GroupCallController extends ChangeNotifier {
       });
       groupCallId = created.integer('id') ?? 0;
       if (groupCallId == 0) {
-        throw StateError('Telegram did not return a group call identifier');
+        throw StateError('The server did not return a group call identifier');
       }
     }
 
@@ -313,7 +313,7 @@ class GroupCallController extends ChangeNotifier {
     if (link.isEmpty) throw ArgumentError.value(inviteLink, 'inviteLink');
     if (!await _engine.isSupported) {
       throw UnsupportedError(
-        'This build does not include Telegram group-call media for this platform',
+        'This build does not include group-call media for this platform',
       );
     }
     await _ensurePermissions(isVideo);
@@ -337,7 +337,7 @@ class GroupCallController extends ChangeNotifier {
     final responsePayload = response.str('join_payload') ?? '';
     if (groupCallId == 0 || responsePayload.isEmpty) {
       _engine.stop();
-      throw StateError('Telegram returned invalid group-call join data');
+      throw StateError('The server returned invalid group-call join data');
     }
     final uuid = LiveCommunicationBridge.newUuid();
     session = ActiveGroupCall(
@@ -499,7 +499,7 @@ class GroupCallController extends ChangeNotifier {
     final response = await _client.query(request);
     final responsePayload = response.str('text');
     if (responsePayload == null || responsePayload.isEmpty) {
-      throw StateError('Telegram returned no tgcalls response payload');
+      throw StateError('The server returned no group-call response payload');
     }
     await _engine.connect(responsePayload);
   }

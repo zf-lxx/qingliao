@@ -22,7 +22,7 @@ final class ApplePCCBridge {
 
   init(messenger: FlutterBinaryMessenger) {
     channel = FlutterMethodChannel(
-      name: "mithka/apple_ai",
+      name: "qingliao/apple_ai",
       binaryMessenger: messenger
     )
     channel.setMethodCallHandler { [weak self] call, result in

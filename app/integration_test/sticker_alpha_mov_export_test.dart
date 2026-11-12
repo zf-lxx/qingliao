@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
-import 'package:mithka/chat/sticker_export_service.dart';
+import 'package:qingliao/chat/sticker_export_service.dart';
 import 'package:path_provider/path_provider.dart';
 
 void main() {
@@ -36,7 +36,7 @@ void main() {
     await source.writeAsBytes(apng!, flush: true);
 
     final outputPath = await const MethodChannel(
-      'mithka/sticker_export',
+      'qingliao/sticker_export',
     ).invokeMethod<String>('encodeAlphaMov', {'path': source.path});
     expect(outputPath, isNotNull);
     final output = File(outputPath!);

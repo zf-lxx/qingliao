@@ -335,7 +335,7 @@ class CallManager extends ChangeNotifier {
         'is_video': requestedCall.isVideo,
       }, requestedCall.clientId);
     } catch (error, stackTrace) {
-      debugPrint('Failed to create Telegram call: $error\n$stackTrace');
+      debugPrint('Failed to create call: $error\n$stackTrace');
       if (identical(call, requestedCall)) _end(reportSystem: true);
     }
   }
@@ -356,7 +356,7 @@ class CallManager extends ChangeNotifier {
         'protocol': _callProtocol,
       }, requestedCall.clientId);
     } catch (error, stackTrace) {
-      debugPrint('Failed to accept Telegram call: $error\n$stackTrace');
+      debugPrint('Failed to accept call: $error\n$stackTrace');
       if (identical(call, requestedCall)) _end(reportSystem: true);
     }
   }
@@ -677,7 +677,7 @@ class CallManager extends ChangeNotifier {
     try {
       await LiveCommunicationBridge.instance.start(
         uuid: active.systemUuid,
-        title: active.peerName.isEmpty ? 'Telegram' : active.peerName,
+        title: active.peerName.isEmpty ? '轻聊' : active.peerName,
         isVideo: active.isVideo,
         memberHandles: [active.peerUserId.toString()],
       );

@@ -427,7 +427,7 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
   }) {
     if (isBotApi) return [_allTabs[0]];
     // 轻聊: channels and moments (stories) have no backend yet — see
-    // docs/mithka-adapter.md. Only messages and contacts are shown.
+    // docs/adapter-coverage.md. Only messages and contacts are shown.
     return [
       _allTabs[0],
       if (theme.showContactsTab) _allTabs[2],

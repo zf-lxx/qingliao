@@ -14,7 +14,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app/chat_deep_link_controller.dart';
@@ -110,7 +110,7 @@ class NotificationController with WidgetsBindingObserver, ChangeNotifier {
         importance: Importance.high,
       );
   static const _notificationTapChannel = MethodChannel(
-    'mithka/notification_tap',
+    'qingliao/notification_tap',
   );
   static const _inAppBannersKey = 'mithka.notifications.inAppBanners.v1';
 
@@ -184,8 +184,8 @@ class NotificationController with WidgetsBindingObserver, ChangeNotifier {
           defaultPresentBadge: false,
         ),
         windows: WindowsInitializationSettings(
-          appName: 'Mithka',
-          appUserModelId: 'Iebb.Mithka.Desktop',
+          appName: '轻聊',
+          appUserModelId: 'Qingliao.Desktop',
           guid: '19a46b98-1781-4d9e-92ed-bd0576e48e2d',
         ),
       ),
@@ -413,7 +413,7 @@ class NotificationController with WidgetsBindingObserver, ChangeNotifier {
       final sender = showPreview
           ? await _senderLabel(raw, chat, clientId)
           : null;
-      final chatTitle = chat.str('title') ?? 'Mithka';
+      final chatTitle = chat.str('title') ?? '轻聊';
       final isTargetAccountActive = clientId == _client.activeClientId;
       final accountName = isTargetAccountActive
           ? null
@@ -457,14 +457,14 @@ class NotificationController with WidgetsBindingObserver, ChangeNotifier {
       return;
     }
     if (surface != NotificationSurface.system) return;
-    final chatTitle = chat.str('title') ?? 'Mithka';
+    final chatTitle = chat.str('title') ?? '轻聊';
     final isTargetAccountActive = clientId == _client.activeClientId;
     final accountName = isTargetAccountActive
         ? null
         : await _notificationAccountName(clientId);
     final visibleTitle = _notificationPreferences.namesOnLockScreen
         ? chatTitle
-        : 'Mithka';
+        : '轻聊';
     final title = notificationTitleForAccount(
       title: visibleTitle,
       isActiveAccount: isTargetAccountActive,
@@ -1231,7 +1231,7 @@ class NotificationController with WidgetsBindingObserver, ChangeNotifier {
     _lastOpenedAt = now;
     ChatDeepLinkController.shared.openChat(
       chatId: target.chatId,
-      title: target.title ?? 'Mithka',
+      title: target.title ?? '轻聊',
       messageId: target.messageId,
       accountUserId: target.accountUserId,
       accountSlot: target.accountSlot,

@@ -26,23 +26,23 @@ import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:heroicons_flutter/heroicons_flutter.dart';
-import 'package:mithka/app/chat_deep_link_controller.dart';
-import 'package:mithka/app/liquid_glass_bottom_bar.dart';
-import 'package:mithka/app/main_tab_view.dart';
-import 'package:mithka/app/native_glass_surface.dart';
-import 'package:mithka/app/native_tab_bar.dart';
-import 'package:mithka/auth/account_store.dart';
-import 'package:mithka/auth/auth_manager.dart';
-import 'package:mithka/components/app_icons.dart';
-import 'package:mithka/components/app_interactive_surface.dart';
-import 'package:mithka/components/app_press_ripple.dart';
-import 'package:mithka/components/drawer_controller.dart' as dc;
-import 'package:mithka/l10n/app_locale_controller.dart';
-import 'package:mithka/l10n/app_localizations.dart';
-import 'package:mithka/settings/translation_controller.dart';
-import 'package:mithka/tdlib/td_client.dart';
-import 'package:mithka/theme/app_theme.dart';
-import 'package:mithka/theme/theme_controller.dart';
+import 'package:qingliao/app/chat_deep_link_controller.dart';
+import 'package:qingliao/app/liquid_glass_bottom_bar.dart';
+import 'package:qingliao/app/main_tab_view.dart';
+import 'package:qingliao/app/native_glass_surface.dart';
+import 'package:qingliao/app/native_tab_bar.dart';
+import 'package:qingliao/auth/account_store.dart';
+import 'package:qingliao/auth/auth_manager.dart';
+import 'package:qingliao/components/app_icons.dart';
+import 'package:qingliao/components/app_interactive_surface.dart';
+import 'package:qingliao/components/app_press_ripple.dart';
+import 'package:qingliao/components/drawer_controller.dart' as dc;
+import 'package:qingliao/l10n/app_locale_controller.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
+import 'package:qingliao/settings/translation_controller.dart';
+import 'package:qingliao/tdlib/td_client.dart';
+import 'package:qingliao/theme/app_theme.dart';
+import 'package:qingliao/theme/theme_controller.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -778,7 +778,7 @@ class GlassSurfaceMock {
 
   void install() {
     _messenger.setMockMethodCallHandler(
-      const MethodChannel('mithka/native_tab_bar'),
+      const MethodChannel('qingliao/native_tab_bar'),
       (call) async => false,
     );
     _messenger.setMockMethodCallHandler(SystemChannels.platform_views, (
@@ -793,7 +793,7 @@ class GlassSurfaceMock {
               )
               as Map<Object?, Object?>,
         );
-        final channel = MethodChannel('mithka/native_glass/$id');
+        final channel = MethodChannel('qingliao/native_glass/$id');
         _channels[id] = channel;
         _messenger.setMockMethodCallHandler(channel, (call) async {
           calls.add(call);
@@ -806,7 +806,7 @@ class GlassSurfaceMock {
 
   void dispose() {
     _messenger.setMockMethodCallHandler(
-      const MethodChannel('mithka/native_tab_bar'),
+      const MethodChannel('qingliao/native_tab_bar'),
       null,
     );
     _messenger.setMockMethodCallHandler(SystemChannels.platform_views, null);

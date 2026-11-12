@@ -3,8 +3,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/media_library_saver.dart';
-import 'package:mithka/tdlib/td_models.dart';
+import 'package:qingliao/chat/media_library_saver.dart';
+import 'package:qingliao/tdlib/td_models.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

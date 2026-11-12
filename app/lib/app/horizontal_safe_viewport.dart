@@ -26,7 +26,7 @@ class HorizontalSafeViewport extends StatefulWidget {
 
 class _HorizontalSafeViewportState extends State<HorizontalSafeViewport> {
   late final _entry = OverlayEntry(builder: _buildViewport);
-  static const _geometryChannel = MethodChannel('mithka/window_geometry');
+  static const _geometryChannel = MethodChannel('qingliao/window_geometry');
   MediaQueryData? _queriedMedia;
   double? _sideTopFraction;
   TopOcclusionData? _topOcclusion;

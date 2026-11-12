@@ -1,8 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:mithka/chat/telegram_mini_app_recents.dart';
-import 'package:mithka/chat/telegram_mini_app_view.dart';
+import 'package:qingliao/chat/telegram_mini_app_recents.dart';
+import 'package:qingliao/chat/telegram_mini_app_view.dart';
 
 void main() {
   test(

@@ -86,7 +86,7 @@ class AndroidShareIntentController extends ChangeNotifier {
 
   static final shared = AndroidShareIntentController._();
 
-  static const _channel = MethodChannel('mithka/share_intent');
+  static const _channel = MethodChannel('qingliao/share_intent');
   bool _started = false;
   AndroidShareIntentPayload? _pending;
   final List<AndroidShareIntentPayload> _queued = <AndroidShareIntentPayload>[];

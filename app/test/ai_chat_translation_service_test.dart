@@ -3,10 +3,10 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
-import 'package:mithka/chat/ai_chat_translation_service.dart';
-import 'package:mithka/settings/ai_settings_controller.dart';
-import 'package:mithka/settings/ai_stdout_logger.dart';
-import 'package:mithka/settings/translation_api.dart';
+import 'package:qingliao/chat/ai_chat_translation_service.dart';
+import 'package:qingliao/settings/ai_settings_controller.dart';
+import 'package:qingliao/settings/ai_stdout_logger.dart';
+import 'package:qingliao/settings/translation_api.dart';
 
 void main() {
   test(
