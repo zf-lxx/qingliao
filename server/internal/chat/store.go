@@ -61,12 +61,24 @@ type User struct {
 	LastSeen string `json:"last_seen"`
 	Online   bool   `json:"online"`
 }
+type MediaInfo struct {
+	ID          string `json:"id"`
+	MIME        string `json:"mime,omitempty"`
+	Bytes       int64  `json:"bytes,omitempty"`
+	Width       int    `json:"width,omitempty"`
+	Height      int    `json:"height,omitempty"`
+	DurationMs  int    `json:"duration_ms,omitempty"`
+	Waveform    string `json:"waveform,omitempty"`
+	FileName    string `json:"file_name,omitempty"`
+	ThumbnailID string `json:"thumbnail_id,omitempty"`
+}
 type Message struct {
 	Entities      []Entity        `json:"entities"`
 	LinkPreview   *LinkPreview    `json:"link_preview,omitempty"`
 	ReplyMarkup   *ReplyMarkup    `json:"reply_markup,omitempty"`
 	ViaBotID      string          `json:"via_bot_id,omitempty"`
 	ForwardOrigin json.RawMessage `json:"forward_origin,omitempty"`
+	Media         *MediaInfo      `json:"media,omitempty"`
 	ID            string          `json:"id"`
 	ChatID        string          `json:"conversation_id"`
 	Seq           int64           `json:"conversation_seq"`
@@ -75,7 +87,9 @@ type Message struct {
 	Kind          string          `json:"kind"`
 	Text          string          `json:"text"`
 	MediaID       string          `json:"media_id,omitempty"`
+	AlbumID       string          `json:"album_id,omitempty"`
 	ReplyTo       string          `json:"reply_to,omitempty"`
+	ReplyToSeq    int64           `json:"reply_to_seq,omitempty"`
 	Created       string          `json:"created_at"`
 	Edited        string          `json:"edited_at,omitempty"`
 	Deleted       bool            `json:"deleted"`
@@ -89,6 +103,7 @@ type Send struct {
 	Kind          string       `json:"kind"`
 	Text          string       `json:"text"`
 	MediaID       string       `json:"media_id"`
+	AlbumID       string       `json:"album_id,omitempty"`
 	ReplyTo       string       `json:"reply_to"`
 }
 type Event struct {

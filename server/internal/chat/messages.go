@@ -10,16 +10,17 @@ import (
 	"unicode/utf8"
 )
 
-const msgColumns = "id,chat_id,seq,sender,client_id,kind,text,media_id,reply_to,created,edited,deleted,entities_json,preview_json,reply_markup_json,via_bot_id,forward_origin_json"
+const msgColumns = "id,chat_id,seq,sender,client_id,kind,text,media_id,reply_to,created,edited,deleted,entities_json,preview_json,reply_markup_json,via_bot_id,forward_origin_json,media_meta_json,album_id"
 
 type scanner interface{ Scan(...any) error }
 
 func scanMessage(row scanner) (Message, error) {
 	var m Message
 	var d int
-	var entities, preview, markup, origin string
-	e := row.Scan(&m.ID, &m.ChatID, &m.Seq, &m.Sender, &m.ClientID, &m.Kind, &m.Text, &m.MediaID, &m.ReplyTo, &m.Created, &m.Edited, &d, &entities, &preview, &markup, &m.ViaBotID, &origin)
+	var entities, preview, markup, origin, meta, album string
+	e := row.Scan(&m.ID, &m.ChatID, &m.Seq, &m.Sender, &m.ClientID, &m.Kind, &m.Text, &m.MediaID, &m.ReplyTo, &m.Created, &m.Edited, &d, &entities, &preview, &markup, &m.ViaBotID, &origin, &meta, &album)
 	m.Deleted = d == 1
+	m.AlbumID = album
 	m.Entities = []Entity{}
 	json.Unmarshal([]byte(entities), &m.Entities)
 	if preview != "" {
@@ -31,10 +32,19 @@ func scanMessage(row scanner) (Message, error) {
 	if origin != "" {
 		m.ForwardOrigin = json.RawMessage(origin)
 	}
+	if meta != "" {
+		var info MediaInfo
+		if json.Unmarshal([]byte(meta), &info) == nil {
+			if info.ID == "" {
+				info.ID = m.MediaID
+			}
+			m.Media = &info
+		}
+	}
 	return m, e
 }
 func (a *App) CreateChat(p Principal, kind, title string, ids []string) (string, error) {
-	if kind != "direct" && kind != "group" {
+	if kind != "direct" && kind != "group" && kind != "channel" {
 		return "", ErrInvalid
 	}
 	set := map[string]bool{p.UserID: true}
@@ -46,7 +56,7 @@ func (a *App) CreateChat(p Principal, kind, title string, ids []string) (string,
 		users = append(users, u)
 	}
 	sort.Strings(users)
-	if len(users) < 2 || len(users) > 100 || len(title) > 200 || (kind == "direct" && len(users) != 2) {
+	if len(title) > 200 || (kind == "direct" && (len(users) != 2 || title != "")) || (kind != "direct" && (strings.TrimSpace(title) == "" || len(users) < 1 || len(users) > 1000)) || (kind == "group" && len(users) < 2) {
 		return "", ErrInvalid
 	}
 	cid := id()
@@ -91,7 +101,7 @@ func (a *App) ChangeMember(p Principal, cid, user, action, role string) error {
 		if e = tx.QueryRow("SELECT kind,last_seq FROM chats WHERE id=?", cid).Scan(&kind, &seq); e != nil {
 			return e
 		}
-		if kind != "group" {
+		if kind != "group" && kind != "channel" {
 			return ErrForbidden
 		}
 		target, _, te := member(tx, cid, user)
@@ -165,7 +175,10 @@ func (a *App) SendMessage(p Principal, cid string, s Send) (Message, error) {
 	if len(s.ClientID) < 1 || len(s.ClientID) > 128 || len(s.Text) > 16384 || !utf8.ValidString(s.Text) {
 		return Message{}, ErrInvalid
 	}
-	if s.Kind != "text" && s.Kind != "image" && s.Kind != "voice" && s.Kind != "file" {
+	if s.Kind != "text" && s.Kind != "image" && s.Kind != "voice" && s.Kind != "file" && s.Kind != "video" {
+		return Message{}, ErrInvalid
+	}
+	if s.AlbumID != "" && (len(s.AlbumID) > 64 || !albumIDRE.MatchString(s.AlbumID) || s.Kind == "text") {
 		return Message{}, ErrInvalid
 	}
 	if s.Kind == "text" && (strings.TrimSpace(s.Text) == "" || s.MediaID != "") {
@@ -237,16 +250,29 @@ func (a *App) SendMessage(p Principal, cid string, s Send) (Message, error) {
 			if s.Kind == "voice" && !strings.HasPrefix(mime, "audio/") {
 				return ErrInvalid
 			}
+			if s.Kind == "video" && !strings.HasPrefix(mime, "video/") {
+				return ErrInvalid
+			}
 		}
 		var seq int64
 		if e = tx.QueryRow("UPDATE chats SET last_seq=last_seq+1,last_activity=? WHERE id=? RETURNING last_seq", time.Now().UnixMicro(), cid).Scan(&seq); e != nil {
 			return e
 		}
-		out = Message{ID: id(), ChatID: cid, Seq: seq, Sender: p.UserID, ClientID: s.ClientID, Kind: s.Kind, Text: s.Text, MediaID: s.MediaID, ReplyTo: s.ReplyTo, Created: now(), Entities: s.Entities, LinkPreview: preview, ReplyMarkup: s.ReplyMarkup, ViaBotID: s.ViaBotID}
+		out = Message{ID: id(), ChatID: cid, Seq: seq, Sender: p.UserID, ClientID: s.ClientID, Kind: s.Kind, Text: s.Text, MediaID: s.MediaID, AlbumID: s.AlbumID, ReplyTo: s.ReplyTo, Created: now(), Entities: s.Entities, LinkPreview: preview, ReplyMarkup: s.ReplyMarkup, ViaBotID: s.ViaBotID}
 		if out.Entities == nil {
 			out.Entities = []Entity{}
 		}
-		_, e = tx.Exec("INSERT INTO messages(id,chat_id,seq,sender,client_id,kind,text,media_id,reply_to,payload_hash,created,entities_json,preview_json,reply_markup_json,via_bot_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", out.ID, cid, seq, p.UserID, s.ClientID, s.Kind, s.Text, s.MediaID, s.ReplyTo, digest, out.Created, jsonText(s.Entities, "[]"), jsonText(preview, ""), jsonText(s.ReplyMarkup, ""), s.ViaBotID)
+		if s.MediaID != "" {
+			meta, e2 := mediaSnapshot(tx, s.MediaID)
+			if e2 != nil {
+				return e2
+			}
+			out.Media = meta
+		}
+		if s.ReplyTo != "" {
+			_ = tx.QueryRow("SELECT seq FROM messages WHERE id=?", s.ReplyTo).Scan(&out.ReplyToSeq)
+		}
+		_, e = tx.Exec("INSERT INTO messages(id,chat_id,seq,sender,client_id,kind,text,media_id,reply_to,payload_hash,created,entities_json,preview_json,reply_markup_json,via_bot_id,forward_origin_json,media_meta_json,album_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", out.ID, cid, seq, p.UserID, s.ClientID, s.Kind, s.Text, s.MediaID, s.ReplyTo, digest, out.Created, jsonText(s.Entities, "[]"), jsonText(preview, ""), jsonText(s.ReplyMarkup, ""), s.ViaBotID, "", jsonText(out.Media, ""), s.AlbumID)
 		if e != nil {
 			return e
 		}
@@ -315,7 +341,7 @@ func (a *App) AlterMessage(p Principal, mid, action, text string) error {
 					return e
 				}
 			}
-			_, e = tx.Exec("UPDATE messages SET text='',media_id='',entities_json='[]',preview_json='',reply_markup_json='',deleted=1 WHERE id=?", mid)
+			_, e = tx.Exec("UPDATE messages SET text='',media_id='',media_meta_json='',album_id='',entities_json='[]',preview_json='',reply_markup_json='',deleted=1 WHERE id=?", mid)
 		} else {
 			return ErrInvalid
 		}
@@ -435,6 +461,10 @@ func (a *App) History(p Principal, cid string, before int64, limit int) ([]Messa
 		}
 		out = append(out, m)
 	}
-	return out, rows.Err()
+	if e = rows.Err(); e != nil {
+		return nil, e
+	}
+	attachReplySeqs(a.DB, out)
+	return out, nil
 }
 func prefixColumns(p, cols string) string { return p + "." + strings.ReplaceAll(cols, ",", ","+p+".") }

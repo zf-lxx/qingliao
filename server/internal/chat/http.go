@@ -70,6 +70,8 @@ func (a *App) auth(fn authed) http.HandlerFunc {
 }
 func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
+	a.discoveryRoutes(mux)
+	a.p2Routes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if e := a.Ping(r.Context()); e != nil {
 			respond(w, 503, map[string]bool{"ok": false})
@@ -107,6 +109,7 @@ func (a *App) Handler() http.Handler {
 			fail(w, e)
 			return
 		}
+		a.hideBlockedPresence(p.UserID, &u)
 		respond(w, 200, u)
 	}))
 	mux.HandleFunc("GET /v1/devices", a.auth(a.devices))
@@ -152,6 +155,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/conversations/{id}/moderation", a.auth(a.moderate))
 	mux.HandleFunc("GET /v1/conversations/{id}/audit", a.auth(a.auditList))
 	mux.HandleFunc("PATCH /v1/conversations/{id}/state", a.auth(a.dialogState))
+	mux.HandleFunc("PATCH /v1/conversations/{id}", a.auth(a.patchConversation))
 	mux.HandleFunc("GET /v1/folders", a.auth(a.folders))
 	mux.HandleFunc("POST /v1/folders", a.auth(a.folders))
 	mux.HandleFunc("PATCH /v1/folders/{id}", a.auth(a.folders))
@@ -453,7 +457,7 @@ func (a *App) users(w http.ResponseWriter, r *http.Request, p Principal) {
 		fail(w, ErrInvalid)
 		return
 	}
-	rows, e := a.DB.Query("SELECT id,handle,name,avatar,last_seen FROM users WHERE instr(handle,?)>0 ORDER BY handle LIMIT 30", strings.ToLower(q))
+	rows, e := a.DB.Query("SELECT id,handle,name,avatar,last_seen,EXISTS(SELECT 1 FROM user_blocks x WHERE (x.owner=? AND x.target=users.id) OR (x.target=? AND x.owner=users.id)) FROM users WHERE instr(handle,?)>0 ORDER BY handle LIMIT 30", p.UserID, p.UserID, strings.ToLower(q))
 	if e != nil {
 		fail(w, e)
 		return
@@ -462,11 +466,16 @@ func (a *App) users(w http.ResponseWriter, r *http.Request, p Principal) {
 	out := []User{}
 	for rows.Next() {
 		var u User
-		if e = rows.Scan(&u.ID, &u.Handle, &u.Name, &u.Avatar, &u.LastSeen); e != nil {
+		var blocked int
+		if e = rows.Scan(&u.ID, &u.Handle, &u.Name, &u.Avatar, &u.LastSeen, &blocked); e != nil {
 			fail(w, e)
 			return
 		}
 		u.Online = a.online(u.ID)
+		if blocked > 0 {
+			u.Online = false
+			u.LastSeen = ""
+		}
 		out = append(out, u)
 	}
 	respond(w, 200, map[string]any{"users": out})

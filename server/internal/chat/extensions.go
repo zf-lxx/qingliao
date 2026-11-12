@@ -8,9 +8,10 @@ import (
 
 func (a *App) migrateExtensions() error {
 	for table, columns := range map[string]map[string]string{
-		"messages": {"entities_json": "TEXT NOT NULL DEFAULT '[]'", "preview_json": "TEXT NOT NULL DEFAULT ''", "reply_markup_json": "TEXT NOT NULL DEFAULT ''", "via_bot_id": "TEXT NOT NULL DEFAULT ''", "forward_origin_json": "TEXT NOT NULL DEFAULT ''"},
+		"messages": {"media_meta_json": "TEXT NOT NULL DEFAULT ''", "album_id": "TEXT NOT NULL DEFAULT ''", "entities_json": "TEXT NOT NULL DEFAULT '[]'", "preview_json": "TEXT NOT NULL DEFAULT ''", "reply_markup_json": "TEXT NOT NULL DEFAULT ''", "via_bot_id": "TEXT NOT NULL DEFAULT ''", "forward_origin_json": "TEXT NOT NULL DEFAULT ''"},
+		"media":    {"width": "INTEGER NOT NULL DEFAULT 0", "height": "INTEGER NOT NULL DEFAULT 0", "duration_ms": "INTEGER NOT NULL DEFAULT 0", "waveform": "TEXT NOT NULL DEFAULT ''", "file_name": "TEXT NOT NULL DEFAULT ''", "thumbnail_id": "TEXT NOT NULL DEFAULT ''"},
+		"chats":    {"last_activity": "INTEGER NOT NULL DEFAULT 0", "avatar": "TEXT NOT NULL DEFAULT ''"},
 		"users":    {"read_receipts_enabled": "INTEGER NOT NULL DEFAULT 1"},
-		"chats":    {"last_activity": "INTEGER NOT NULL DEFAULT 0"},
 		"members":  {"manual_unread": "INTEGER NOT NULL DEFAULT 0", "archived": "INTEGER NOT NULL DEFAULT 0", "pin_order": "INTEGER NOT NULL DEFAULT 0", "notification_mute_until": "INTEGER NOT NULL DEFAULT 0", "draft_json": "TEXT NOT NULL DEFAULT ''", "joined_at": "INTEGER NOT NULL DEFAULT 0", "muted_until": "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		rows, e := a.DB.Query("PRAGMA table_info(" + table + ")")
@@ -37,7 +38,7 @@ func (a *App) migrateExtensions() error {
 			}
 		}
 	}
-	_, e := a.DB.Exec(extensionSchema)
+	_, e := a.DB.Exec(extensionSchema+discoverySchema+p2Schema)
 	return e
 }
 
@@ -84,3 +85,9 @@ func jsonText(v any, empty string) string {
 	}
 	return string(b)
 }
+
+const p2Schema = `
+CREATE INDEX IF NOT EXISTS messages_album ON messages(chat_id,album_id) WHERE album_id<>'';
+CREATE INDEX IF NOT EXISTS chat_avatar ON chats(avatar) WHERE avatar<>'';
+PRAGMA user_version=5;
+`

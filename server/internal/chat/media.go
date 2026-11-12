@@ -156,10 +156,12 @@ func (a *App) upload(w http.ResponseWriter, r *http.Request, p Principal) {
 		fail(w, ErrInvalid)
 		return
 	}
-	mime := http.DetectContentType(head)
-	if mime == "application/ogg" {
-		mime = "audio/ogg"
+	meta, e := parseMediaHeaders(r)
+	if e != nil {
+		fail(w, e)
+		return
 	}
+	mime := sniffMedia(head, http.DetectContentType(head))
 	if strings.Contains(mime, "html") || strings.Contains(mime, "xml") || strings.Contains(mime, "svg") {
 		fail(w, ErrInvalid)
 		return
@@ -182,13 +184,22 @@ func (a *App) upload(w http.ResponseWriter, r *http.Request, p Principal) {
 		fail(w, ErrForbidden)
 		return
 	}
-	_, e = a.DB.Exec("INSERT INTO media(id,owner,chat_id,mime,bytes,sha256,created) VALUES(?,?,?,?,?,?,?)", mid, p.UserID, cid, mime, n64, hex.EncodeToString(digest.Sum(nil)), now())
+	if meta.ThumbnailID != "" {
+		var tmime string
+		e = a.DB.QueryRow("SELECT mime FROM media WHERE id=? AND owner=?", meta.ThumbnailID, p.UserID).Scan(&tmime)
+		if e != nil || !strings.HasPrefix(tmime, "image/") || meta.ThumbnailID == mid {
+			a.storage.Delete(r.Context(), mid)
+			fail(w, ErrInvalid)
+			return
+		}
+	}
+	_, e = a.DB.Exec("INSERT INTO media(id,owner,chat_id,mime,bytes,sha256,created,width,height,duration_ms,waveform,file_name,thumbnail_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", mid, p.UserID, cid, mime, n64, hex.EncodeToString(digest.Sum(nil)), now(), meta.Width, meta.Height, meta.DurationMs, meta.Waveform, meta.FileName, meta.ThumbnailID)
 	if e != nil {
 		a.storage.Delete(r.Context(), mid)
 		fail(w, e)
 		return
 	}
-	respond(w, 201, map[string]any{"id": mid, "mime": mime, "bytes": n64, "sha256": hex.EncodeToString(digest.Sum(nil)), "storage": "local"})
+	respond(w, 201, map[string]any{"id": mid, "mime": mime, "bytes": n64, "sha256": hex.EncodeToString(digest.Sum(nil)), "storage": "local", "width": meta.Width, "height": meta.Height, "duration_ms": meta.DurationMs, "waveform": meta.Waveform, "file_name": meta.FileName, "thumbnail_id": meta.ThumbnailID})
 }
 func (a *App) download(w http.ResponseWriter, r *http.Request, p Principal) {
 	mid := r.PathValue("id")
@@ -201,7 +212,7 @@ func (a *App) download(w http.ResponseWriter, r *http.Request, p Principal) {
 	}
 	if owner != p.UserID {
 		var allowed int
-		e = a.DB.QueryRow(`SELECT (SELECT count(*) FROM messages m JOIN members b ON b.chat_id=m.chat_id WHERE m.media_id=? AND b.user_id=? AND m.seq>b.joined_seq AND m.deleted=0)+(SELECT count(*) FROM users WHERE avatar=?)`, mid, p.UserID, mid).Scan(&allowed)
+		e = a.DB.QueryRow(`SELECT (SELECT count(*) FROM messages m JOIN members b ON b.chat_id=m.chat_id WHERE m.media_id=? AND b.user_id=? AND m.seq>b.joined_seq AND m.deleted=0)+(SELECT count(*) FROM users WHERE avatar=?)+(SELECT count(*) FROM chats WHERE avatar=?)+(SELECT count(*) FROM messages m JOIN media x ON x.id=m.media_id JOIN members b ON b.chat_id=m.chat_id WHERE x.thumbnail_id=? AND b.user_id=? AND m.seq>b.joined_seq AND m.deleted=0)`, mid, p.UserID, mid, mid, mid, p.UserID).Scan(&allowed)
 		if e != nil || allowed == 0 {
 			fail(w, ErrForbidden)
 			return
@@ -231,7 +242,7 @@ func (a *App) deleteMedia(w http.ResponseWriter, r *http.Request, p Principal) {
 		return
 	}
 	var refs int
-	a.DB.QueryRow("SELECT (SELECT count(*) FROM messages WHERE media_id=? AND deleted=0)+(SELECT count(*) FROM users WHERE avatar=?)", mid, mid).Scan(&refs)
+	a.DB.QueryRow("SELECT (SELECT count(*) FROM messages WHERE media_id=? AND deleted=0)+(SELECT count(*) FROM users WHERE avatar=?)+(SELECT count(*) FROM chats WHERE avatar=?)+(SELECT count(*) FROM media WHERE thumbnail_id=?)", mid, mid, mid, mid).Scan(&refs)
 	if refs > 0 {
 		fail(w, ErrConflict)
 		return

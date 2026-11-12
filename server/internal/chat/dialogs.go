@@ -382,8 +382,8 @@ func (a *App) dialogs(w http.ResponseWriter, r *http.Request, p Principal) {
 	}
 	folder := r.URL.Query().Get("folder_id")
 	// One SELECT: indexed message ranges + last-message lookup + badge + keyset pagination.
-	query := dialogStatsCTE + `SELECT c.id,c.kind,c.title,c.last_seq,c.last_activity,b.read_seq,b.role,(SELECT read_receipts_enabled FROM users WHERE id=b.user_id),b.archived,b.pin_order,b.notification_mute_until,b.manual_unread,b.draft_json,x.unread_count,x.mentions,z.total,COALESCE(m.id,''),COALESCE(m.seq,0),COALESCE(m.sender,''),COALESCE(m.kind,''),COALESCE(substr(m.text,1,180),''),COALESCE(m.deleted,0),COALESCE(m.edited,''),(SELECT count(*) FROM members r JOIN users ru ON ru.id=r.user_id WHERE r.chat_id=c.id AND r.user_id<>m.sender AND r.read_seq>=m.seq AND ru.read_receipts_enabled=1),(SELECT count(*) FROM members r WHERE r.chat_id=c.id AND r.user_id<>m.sender) FROM members b JOIN chats c ON c.id=b.chat_id JOIN counts x ON x.chat_id=c.id CROSS JOIN badge z LEFT JOIN messages m ON m.id=(SELECT mm.id FROM messages mm WHERE mm.chat_id=c.id AND mm.seq>b.joined_seq ORDER BY mm.seq DESC LIMIT 1) LEFT JOIN folders f ON f.id=? AND f.user_id=b.user_id WHERE b.user_id=? AND (?=-1 OR b.archived=?) AND (?='' OR (f.id IS NOT NULL AND ` + folderPredicate + `)) AND ((CASE WHEN b.pin_order>0 THEN 0 ELSE 1 END,CASE WHEN b.pin_order>0 THEN b.pin_order ELSE 0 END,-c.last_activity,c.id)>(?,?,?,?)) ORDER BY CASE WHEN b.pin_order>0 THEN 0 ELSE 1 END,CASE WHEN b.pin_order>0 THEN b.pin_order ELSE 0 END,-c.last_activity,c.id LIMIT ?`
-	query = dialogStatsCTE + ",paged AS (" + strings.TrimPrefix(query, dialogStatsCTE) + ") SELECT * FROM paged UNION ALL SELECT '','','',0,0,0,'',0,0,0,0,0,'',0,0,z.total,'',0,'','','',0,'',0,0 FROM badge z"
+	query := dialogStatsCTE + `SELECT c.id,c.kind,c.title,c.avatar,c.last_seq,c.last_activity,b.read_seq,b.role,(SELECT read_receipts_enabled FROM users WHERE id=b.user_id),b.archived,b.pin_order,b.notification_mute_until,b.manual_unread,b.draft_json,x.unread_count,x.mentions,z.total,COALESCE(m.id,''),COALESCE(m.seq,0),COALESCE(m.sender,''),COALESCE(m.kind,''),COALESCE(substr(m.text,1,180),''),COALESCE(m.deleted,0),COALESCE(m.edited,''),(SELECT count(*) FROM members r JOIN users ru ON ru.id=r.user_id WHERE r.chat_id=c.id AND r.user_id<>m.sender AND r.read_seq>=m.seq AND ru.read_receipts_enabled=1),(SELECT count(*) FROM members r WHERE r.chat_id=c.id AND r.user_id<>m.sender) FROM members b JOIN chats c ON c.id=b.chat_id JOIN counts x ON x.chat_id=c.id CROSS JOIN badge z LEFT JOIN messages m ON m.id=(SELECT mm.id FROM messages mm WHERE mm.chat_id=c.id AND mm.seq>b.joined_seq ORDER BY mm.seq DESC LIMIT 1) LEFT JOIN folders f ON f.id=? AND f.user_id=b.user_id WHERE b.user_id=? AND (?=-1 OR b.archived=?) AND (?='' OR (f.id IS NOT NULL AND ` + folderPredicate + `)) AND ((CASE WHEN b.pin_order>0 THEN 0 ELSE 1 END,CASE WHEN b.pin_order>0 THEN b.pin_order ELSE 0 END,-c.last_activity,c.id)>(?,?,?,?)) ORDER BY CASE WHEN b.pin_order>0 THEN 0 ELSE 1 END,CASE WHEN b.pin_order>0 THEN b.pin_order ELSE 0 END,-c.last_activity,c.id LIMIT ?`
+	query = dialogStatsCTE + ",paged AS (" + strings.TrimPrefix(query, dialogStatsCTE) + ") SELECT * FROM paged UNION ALL SELECT '','','','',0,0,0,'',0,0,0,0,0,'',0,0,z.total,'',0,'','','',0,'',0,0 FROM badge z"
 	rows, e := a.DB.Query(query, p.UserID, p.UserID, folder, p.UserID, arch, arch, folder, cur.Class, cur.Order, cur.Activity, cur.ID, limit+1)
 	if e != nil {
 		fail(w, e)
@@ -396,10 +396,10 @@ func (a *App) dialogs(w http.ResponseWriter, r *http.Request, p Principal) {
 	hasMore := false
 	for rows.Next() {
 
-		var cid, kind, title, role, draft, mid, sender, mkind, text, edited string
+		var cid, kind, title, avatar, role, draft, mid, sender, mkind, text, edited string
 		var ownPrivacy int64
 		var seq, activity, read, archived, pin, mute, manual, unread, mentions, mseq, deleted, readers, recipients int64
-		if e = rows.Scan(&cid, &kind, &title, &seq, &activity, &read, &role, &ownPrivacy, &archived, &pin, &mute, &manual, &draft, &unread, &mentions, &total, &mid, &mseq, &sender, &mkind, &text, &deleted, &edited, &readers, &recipients); e != nil {
+		if e = rows.Scan(&cid, &kind, &title, &avatar, &seq, &activity, &read, &role, &ownPrivacy, &archived, &pin, &mute, &manual, &draft, &unread, &mentions, &total, &mid, &mseq, &sender, &mkind, &text, &deleted, &edited, &readers, &recipients); e != nil {
 			fail(w, e)
 			return
 		}
@@ -410,7 +410,7 @@ func (a *App) dialogs(w http.ResponseWriter, r *http.Request, p Principal) {
 			hasMore = true
 			continue
 		}
-		d := map[string]any{"id": cid, "kind": kind, "title": title, "last_seq": seq, "last_activity": activity, "last_read_seq": read, "role": role, "archived": archived == 1, "pinned_order": pin, "notification_mute_until": mute, "manual_unread": manual == 1, "unread_count": unread, "unread_mention_count": mentions, "last_message_read_count": readers, "last_message_recipient_count": recipients, "draft": nil, "last_message": nil}
+		d := map[string]any{"id": cid, "kind": kind, "title": title, "avatar_media_id": avatar, "last_seq": seq, "last_activity": activity, "last_read_seq": read, "role": role, "archived": archived == 1, "pinned_order": pin, "notification_mute_until": mute, "manual_unread": manual == 1, "unread_count": unread, "unread_mention_count": mentions, "last_message_read_count": readers, "last_message_recipient_count": recipients, "draft": nil, "last_message": nil}
 		d["read_receipts_visible"] = a.C.ReadReceiptsEnabled && ownPrivacy == 1
 		if !a.C.ReadReceiptsEnabled || ownPrivacy != 1 {
 			d["last_message_read_count"] = nil

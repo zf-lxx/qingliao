@@ -24,7 +24,7 @@ func (a *App) pin(w http.ResponseWriter, r *http.Request, p Principal) {
 		if e = tx.QueryRow("SELECT kind FROM chats WHERE id=?", cid).Scan(&kind); e != nil {
 			return e
 		}
-		if kind == "group" && role != "owner" && role != "admin" {
+		if kind != "direct" && role != "owner" && role != "admin" {
 			return ErrForbidden
 		}
 		var n int

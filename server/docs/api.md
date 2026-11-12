@@ -40,8 +40,8 @@
 
 | 方法 / 路径 | 内容 |
 |---|---|
-| POST `/conversations` | `{kind:"direct"或"group",title?,member_ids:["u2"]}`；包含自己；direct 双人 pair 唯一，重复返回同 id；group 初始最多 100 人 |
-| GET `/conversations` | `{conversations:[{id,kind,title,last_seq,last_read_seq,role,unread_count}]}`；unread 统计自己未读、别人发送、未删除消息 |
+| POST `/conversations` | `{kind:"direct"或"group"或"channel",title?,member_ids:["u2"]}`；包含自己；direct 双人 pair 唯一，重复返回同 id；group 至少 2 人、最多 100 人；channel 必须有标题，成员可仅创建者（订阅者），只有 owner/admin 可发消息 |
+| GET `/conversations` | `{conversations:[{id,kind,title,avatar_media_id,last_seq,last_read_seq,role,unread_count,...}]}`；unread 统计自己未读、别人发送、未删除消息 |
 | GET `/conversations/{id}/members` | 成员 user_id、role、joined_seq、last_read_seq |
 | POST `/conversations/{id}/members` | `{user_id,action:"add"或"remove"或"role",role?:"admin"或"member"}` |
 | GET `/conversations/{id}/messages?before=100&limit=50` | 按 conversation_seq **倒序**；before 严格小于，上限 100；返回 `{messages:[]}` |
@@ -51,6 +51,16 @@
 | PUT `/messages/{id}/reactions` | `{emoji:"👍",remove:false}`；每用户每消息最多 8 种，每种最多 32 字节 |
 | GET `/messages/{id}/reactions` | `{reactions:[{user_id,emoji}]}` |
 | POST `/conversations/{id}/read` | `{last_read_seq:42}`，只增不减，不能超过会话 last_seq；产生 read.updated |
+| PATCH `/conversations/{id}` | `{title?,avatar_media_id?}`；group/channel 的 owner/admin 可改标题和头像 |
+| GET `/conversations/{id}/search?q=&before=&limit=` | 中文 FTS5（`qing_tokens`：单字 Han + 拉丁词）；`before` 为 conversation_seq；返回 `{messages:[]}` |
+| GET `/conversations/{id}/media?kind=image\|video\|file\|voice\|link\|all&before=&before_date=&limit=` | 共享媒体。`counts` 按 kind 统计全历史；`months` 按 Asia/Shanghai 月桶（count/first_seq/last_seq）；列表按 seq 倒序，`before`/`before_date`（RFC3339 或 YYYY-MM-DD）分页，`has_more`/`next_before` |
+| POST `/conversations/{id}/clear` | `{both:false}`；默认只对自己隐藏到当前 last_seq（抬高 joined_seq）。`both:true` 在群/频道需 owner/admin，会标记已有消息删除并通知所有成员 |
+| POST `/conversations/{id}/report` | `{message_id?,reason}`；reason 1–2000 字；201 `{id,status:"submitted"}`。管理员 `GET /admin/reports` |
+| PUT `/users/{id}/block` | `{blocked:true\|false}` |
+| GET `/me/blocks` | `{user_ids:[]}` |
+| POST `/messages/{id}/forward` | `{conversation_id,client_msg_id}`；服务端写入 `forward_origin`（不可伪造），复用同一 `media_id` |
+| GET `/conversations/{id}/pins` | `{messages:[]}` 当前置顶（最多 50） |
+| PUT `/conversations/{id}/pins` | `{message_id,remove:false}`；群/频道需 owner/admin |
 
 角色：群 owner 可增删成员/设置 admin，admin 可增删普通成员但不能踢 owner 或其他 admin；普通成员可自己退出，owner 暂不能退出/转让。direct 不改成员。**本版新加入/重新加入者只能读取 joined_seq 之后的新消息**，不能看加入前历史；退群后不能读历史和附件（自己拥有的附件除外）。小圈子一期策略，不等于所有聊天产品通用策略。
 
@@ -58,7 +68,7 @@
 ```json
 {"client_msg_id":"持久随机 UUID","kind":"text","text":"你好","media_id":"","reply_to":""}
 ```
-kind 支持 `text/image/voice/file`。text 不可空白；其余需先上传并引用本人的、绑定当前会话的 media_id；image/voice 检查检测 MIME 前缀。text 字段最长 16KiB。reply_to 必须是本会话、当前可见、未删除消息。
+kind 支持 `text/image/voice/file/video`。text 不可空白；其余需先上传并引用本人的、绑定当前会话的 media_id；image/voice/video 检查检测 MIME（video 识别 MP4 `ftyp` 盒）。可选 `album_id`（`[A-Za-z0-9_-]{1,64}`）把多条消息编成相册。text 字段最长 16KiB。reply_to 必须是本会话、当前可见、未删除消息。返回含 `media`（width/height/duration_ms/waveform/file_name/thumbnail_id）、`album_id`、`forward_origin`、`reply_to_seq`。
 
 返回：
 ```json
@@ -74,7 +84,7 @@ GET `/sync?after=0&limit=100`，最大 200：
 ```
 示例 data 是缩略，message.* 事件实际上带完整 Message。事件游标是**每用户单独**的连续序号；消息 seq 是会话内序号，不能混用。after<0 或超过当前最高值返回 400。
 
-持久事件：`conversation.created`、`membership.changed`、`message.created/edited/deleted`、`reaction.updated`、`read.updated`。成员变化和消息、用户事件、推送作业同 SQLite 事务；WS 直接从持久事件拉取，不把内存广播当唯一消息源。
+持久事件：`conversation.created`、`membership.changed`、`message.created/edited/deleted`、`reaction.updated`、`read.updated`、`message.pinned`/`message.unpinned`、`conversation.cleared`、`block.updated`、`dialog.updated`。成员变化和消息、用户事件、推送作业同 SQLite 事务；WS 直接从持久事件拉取，不把内存广播当唯一消息源。
 
 当前事件**不裁剪**，因此没有游标过期/reset 实现；不能先删 events 再假装游标完整。后续必须补保留策略、reset/snapshot 和清理。退出会话之前合法收到的历史事件不会抹除；撤回不是安全抹除（事件日志、备份中仍可能保留原文）。
 
@@ -118,7 +128,7 @@ GET `/sync?after=0&limit=100`，最大 200：
 
 ## 6. 媒体
 
-1. POST `/media`，Bearer；**原始二进制请求体**（不是 multipart），会话附件加 `X-Conversation-ID: c1`。头像可不带会话。MIME 由前 512 字节检测，不信扩展名/声明。返回 `{id,mime,bytes,sha256,storage:"local"}`。
+1. POST `/media`，Bearer；**原始二进制请求体**（不是 multipart），会话附件加 `X-Conversation-ID: c1`。头像可不带会话。可选元数据头：`X-Media-Width`、`X-Media-Height`、`X-Media-Duration-Ms`、`X-Media-Waveform`（Base64，解码后 ≤256 字节）、`X-Media-Filename`、`X-Thumbnail-ID`（须为本会话已有媒体）。MIME 由前 512 字节检测，不信扩展名/声明（MP4 看 `ftyp`）。返回 `{id,mime,bytes,sha256,storage:"local",width,height,duration_ms,waveform,file_name,thumbnail_id}`。
 2. 发消息引用 media_id。未绑定到会话的头像不能直接发作会话附件，需另传。
 3. GET `/media/{id}`，Bearer，支持 HTTP Range；仅所有者、合法消息所属会话中有权看该消息的成员，或已登录用户读取被设置为头像的图片。默认 attachment + nosniff + CSP sandbox；网页端请鉴权 fetch 成 Blob 播放，不往 URL 塞 token。
 4. DELETE `/media/{id}`，仅所有者，尚有消息/头像引用则 409；取消上传/撤回后可以清孤儿。
@@ -127,7 +137,7 @@ GET `/sync?after=0&limit=100`，最大 200：
 
 Storage 接口含 Put/Open/Delete/Usage/PresignUpload，local 实现可用；`CHAT_STORAGE=local`。其他值明确报“不支持”，**R2/S3 适配器和预签名上传流程尚未实现**，不是现在改个 key 就能切换。将来先建 R2 adapter，再做 upload-init/finalize/对象校验。
 
-客户端负责压缩、去 EXIF、缩略图、媒体尺寸/时长/波形；本版尚无这些结构化元数据/缩略图引用 API，也无病毒扫描/超大图片像素检测/自动孤儿清理，正式开放媒体前需补齐。服务器只存原始已压缩字节，不宣称已有安全转码。
+客户端负责压缩、去 EXIF 和缩略图生成；服务端保存客户端上报的尺寸/时长/波形/文件名和缩略图引用，不做 ffmpeg/转码，也不做病毒扫描或超大图片像素检测。服务器只存原始已压缩字节，不宣称已有安全转码。自动孤儿清理仍未实现。
 
 ## 7. 推送与 Bot 边界
 

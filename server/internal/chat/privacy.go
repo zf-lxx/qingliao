@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strings"
 )
 
 func (a *App) receiptsOn(user string) bool {
@@ -99,6 +100,30 @@ func (a *App) redactEvents(user string, events []Event) {
 	canSee := a.receiptsOn(user)
 	for i := range events {
 		ev := &events[i]
+		if strings.HasPrefix(ev.Type, "message.") {
+			var m Message
+			if json.Unmarshal(ev.Data, &m) == nil && m.ID != "" {
+				var visible int
+				a.DB.QueryRow("SELECT count(*) FROM messages m JOIN members b ON b.chat_id=m.chat_id WHERE m.id=? AND b.user_id=? AND m.seq>b.joined_seq AND (m.deleted=0 OR ?)", m.ID, user, m.Deleted).Scan(&visible)
+				if visible == 0 {
+					ev.Type = "privacy.redacted"
+					ev.Data = json.RawMessage(`{}`)
+				}
+			}
+		}
+		if ev.Type == "dialog.updated" {
+			var d map[string]any
+			if json.Unmarshal(ev.Data, &d) == nil {
+				if m, ok := d["last_message"].(map[string]any); ok {
+					var cutoff int64
+					a.DB.QueryRow("SELECT joined_seq FROM members WHERE chat_id=? AND user_id=?", ev.ChatID, user).Scan(&cutoff)
+					if seq, ok := m["conversation_seq"].(float64); ok && int64(seq) <= cutoff {
+						d["last_message"] = nil
+						ev.Data, _ = json.Marshal(d)
+					}
+				}
+			}
+		}
 		if ev.Type == "read.updated" {
 			var b struct {
 				UserID string `json:"user_id"`
