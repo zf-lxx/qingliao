@@ -240,7 +240,7 @@ func (a *App) folderCounts(tx *sql.Tx, user string) (map[string]int64, error) {
 	return out, rows.Err()
 }
 func validateFilter(f *FolderFilter) error {
-	if len(f.Include) > 200 || len(f.Exclude) > 200 || len(f.Types) > 2 {
+	if len(f.Include) > 200 || len(f.Exclude) > 200 || len(f.Types) > 4 {
 		return ErrInvalid
 	}
 	if f.Include == nil {
@@ -253,7 +253,7 @@ func validateFilter(f *FolderFilter) error {
 		f.Types = []string{}
 	}
 	for _, t := range f.Types {
-		if t != "direct" && t != "group" {
+		if t != "direct" && t != "group" && t != "channel" {
 			return ErrInvalid
 		}
 	}

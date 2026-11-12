@@ -79,6 +79,8 @@ type Message struct {
 	ViaBotID      string          `json:"via_bot_id,omitempty"`
 	ForwardOrigin json.RawMessage `json:"forward_origin,omitempty"`
 	Media         *MediaInfo      `json:"media,omitempty"`
+	Poll          any             `json:"poll,omitempty"`
+	Checklist     any             `json:"checklist,omitempty"`
 	ID            string          `json:"id"`
 	ChatID        string          `json:"conversation_id"`
 	Seq           int64           `json:"conversation_seq"`
@@ -105,6 +107,7 @@ type Send struct {
 	MediaID       string       `json:"media_id"`
 	AlbumID       string       `json:"album_id,omitempty"`
 	ReplyTo       string       `json:"reply_to"`
+	StickerID     string       `json:"sticker_id,omitempty"`
 }
 type Event struct {
 	V      int             `json:"v"`

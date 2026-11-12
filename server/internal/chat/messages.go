@@ -175,7 +175,7 @@ func (a *App) SendMessage(p Principal, cid string, s Send) (Message, error) {
 	if len(s.ClientID) < 1 || len(s.ClientID) > 128 || len(s.Text) > 16384 || !utf8.ValidString(s.Text) {
 		return Message{}, ErrInvalid
 	}
-	if s.Kind != "text" && s.Kind != "image" && s.Kind != "voice" && s.Kind != "file" && s.Kind != "video" {
+	if s.Kind != "text" && s.Kind != "image" && s.Kind != "voice" && s.Kind != "file" && s.Kind != "video" && s.Kind != "sticker" && s.Kind != "poll" && s.Kind != "checklist" {
 		return Message{}, ErrInvalid
 	}
 	if s.AlbumID != "" && (len(s.AlbumID) > 64 || !albumIDRE.MatchString(s.AlbumID) || s.Kind == "text") {
@@ -184,7 +184,7 @@ func (a *App) SendMessage(p Principal, cid string, s Send) (Message, error) {
 	if s.Kind == "text" && (strings.TrimSpace(s.Text) == "" || s.MediaID != "") {
 		return Message{}, ErrInvalid
 	}
-	if s.Kind != "text" && s.MediaID == "" {
+	if s.Kind != "text" && s.Kind != "poll" && s.Kind != "checklist" && s.MediaID == "" && s.StickerID == "" {
 		return Message{}, ErrInvalid
 	}
 	var ve error
@@ -254,11 +254,31 @@ func (a *App) SendMessage(p Principal, cid string, s Send) (Message, error) {
 				return ErrInvalid
 			}
 		}
+		if s.Kind == "sticker" {
+			if s.StickerID == "" {
+				return ErrInvalid
+			}
+			var mid, fid, emoji string
+			if e = tx.QueryRow("SELECT media_id,file_id,emoji FROM stickers s JOIN sticker_packs p ON p.id=s.pack_id WHERE s.id=? AND (p.owner='' OR p.owner=?)", s.StickerID, p.UserID).Scan(&mid, &fid, &emoji); e != nil {
+				return ErrInvalid
+			}
+			s.MediaID = mid
+			if s.Text == "" {
+				s.Text = emoji
+			}
+		}
 		var seq int64
 		if e = tx.QueryRow("UPDATE chats SET last_seq=last_seq+1,last_activity=? WHERE id=? RETURNING last_seq", time.Now().UnixMicro(), cid).Scan(&seq); e != nil {
 			return e
 		}
 		out = Message{ID: id(), ChatID: cid, Seq: seq, Sender: p.UserID, ClientID: s.ClientID, Kind: s.Kind, Text: s.Text, MediaID: s.MediaID, AlbumID: s.AlbumID, ReplyTo: s.ReplyTo, Created: now(), Entities: s.Entities, LinkPreview: preview, ReplyMarkup: s.ReplyMarkup, ViaBotID: s.ViaBotID}
+		if s.Kind == "sticker" {
+			info := MediaInfo{FileName: s.StickerID, MIME: "image/png"}
+			if s.MediaID != "" {
+				info.ID = s.MediaID
+			}
+			out.Media = &info
+		}
 		if out.Entities == nil {
 			out.Entities = []Entity{}
 		}
@@ -465,6 +485,8 @@ func (a *App) History(p Principal, cid string, before int64, limit int) ([]Messa
 		return nil, e
 	}
 	attachReplySeqs(a.DB, out)
+	a.attachPolls(out, p.UserID)
+	a.attachChecklists(out)
 	return out, nil
 }
 func prefixColumns(p, cols string) string { return p + "." + strings.ReplaceAll(cols, ",", ","+p+".") }

@@ -38,7 +38,7 @@ func (a *App) migrateExtensions() error {
 			}
 		}
 	}
-	_, e := a.DB.Exec(extensionSchema+discoverySchema+p2Schema)
+	_, e := a.DB.Exec(extensionSchema+discoverySchema+p2Schema+p3Schema+p4Schema)
 	return e
 }
 
@@ -90,4 +90,28 @@ const p2Schema = `
 CREATE INDEX IF NOT EXISTS messages_album ON messages(chat_id,album_id) WHERE album_id<>'';
 CREATE INDEX IF NOT EXISTS chat_avatar ON chats(avatar) WHERE avatar<>'';
 PRAGMA user_version=5;
+`
+
+const p3Schema = `
+CREATE TABLE IF NOT EXISTS contacts(owner TEXT NOT NULL REFERENCES users(id),user_id TEXT NOT NULL REFERENCES users(id),first_name TEXT NOT NULL DEFAULT '',last_name TEXT NOT NULL DEFAULT '',created TEXT NOT NULL,PRIMARY KEY(owner,user_id));
+CREATE TABLE IF NOT EXISTS notification_scopes(user_id TEXT NOT NULL REFERENCES users(id),scope TEXT NOT NULL,mute_until INTEGER NOT NULL DEFAULT 0,show_preview INTEGER NOT NULL DEFAULT 1,settings_json TEXT NOT NULL DEFAULT '{}',PRIMARY KEY(user_id,scope));
+CREATE TABLE IF NOT EXISTS privacy_rules(user_id TEXT NOT NULL REFERENCES users(id),setting TEXT NOT NULL,rules_json TEXT NOT NULL,PRIMARY KEY(user_id,setting));
+CREATE TABLE IF NOT EXISTS checklists(id TEXT PRIMARY KEY,chat_id TEXT NOT NULL REFERENCES chats(id),message_id TEXT UNIQUE REFERENCES messages(id),creator_id TEXT NOT NULL REFERENCES users(id),title TEXT NOT NULL,others_can_add INTEGER NOT NULL DEFAULT 0,others_can_mark INTEGER NOT NULL DEFAULT 1,created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS checklist_tasks(id TEXT PRIMARY KEY,checklist_id TEXT NOT NULL REFERENCES checklists(id),task_no INTEGER NOT NULL,text TEXT NOT NULL,completed_by TEXT NOT NULL DEFAULT '',completed_at TEXT NOT NULL DEFAULT '',UNIQUE(checklist_id,task_no));
+CREATE TABLE IF NOT EXISTS sticker_packs(id TEXT PRIMARY KEY,owner TEXT NOT NULL DEFAULT '',title TEXT NOT NULL,is_emoji INTEGER NOT NULL DEFAULT 0,created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS sticker_files(id TEXT PRIMARY KEY,mime TEXT NOT NULL,bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,data BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS stickers(id TEXT PRIMARY KEY,pack_id TEXT NOT NULL REFERENCES sticker_packs(id),emoji TEXT NOT NULL,media_id TEXT NOT NULL DEFAULT '',file_id TEXT NOT NULL DEFAULT '',sort_order INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS sticker_favorites(user_id TEXT NOT NULL REFERENCES users(id),sticker_id TEXT NOT NULL REFERENCES stickers(id),created TEXT NOT NULL,PRIMARY KEY(user_id,sticker_id));
+CREATE INDEX IF NOT EXISTS stickers_pack ON stickers(pack_id,sort_order);
+PRAGMA user_version=6;
+`
+
+const p4Schema = `
+CREATE TABLE IF NOT EXISTS stories(author_id TEXT NOT NULL REFERENCES users(id),story_no INTEGER NOT NULL,media_id TEXT NOT NULL,kind TEXT NOT NULL,caption TEXT NOT NULL DEFAULT '',entities_json TEXT NOT NULL DEFAULT '[]',privacy_json TEXT NOT NULL DEFAULT '{"type":"everyone"}',areas_json TEXT NOT NULL DEFAULT '[]',created INTEGER NOT NULL,expires INTEGER NOT NULL,deleted INTEGER NOT NULL DEFAULT 0,posted_to_page INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(author_id,story_no));
+CREATE INDEX IF NOT EXISTS stories_active ON stories(author_id,expires,deleted);
+CREATE TABLE IF NOT EXISTS story_views(author_id TEXT NOT NULL,story_no INTEGER NOT NULL,viewer_id TEXT NOT NULL REFERENCES users(id),viewed_at INTEGER NOT NULL,PRIMARY KEY(author_id,story_no,viewer_id));
+CREATE TABLE IF NOT EXISTS story_reactions(author_id TEXT NOT NULL,story_no INTEGER NOT NULL,user_id TEXT NOT NULL REFERENCES users(id),emoji TEXT NOT NULL,PRIMARY KEY(author_id,story_no,user_id));
+CREATE TABLE IF NOT EXISTS story_reads(viewer_id TEXT NOT NULL REFERENCES users(id),author_id TEXT NOT NULL,max_read_no INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(viewer_id,author_id));
+CREATE TABLE IF NOT EXISTS story_reports(id TEXT PRIMARY KEY,reporter_id TEXT NOT NULL REFERENCES users(id),author_id TEXT NOT NULL,story_no INTEGER NOT NULL,reason TEXT NOT NULL,created TEXT NOT NULL);
+PRAGMA user_version=7;
 `

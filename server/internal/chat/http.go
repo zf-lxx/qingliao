@@ -72,6 +72,8 @@ func (a *App) Handler() http.Handler {
 	mux := http.NewServeMux()
 	a.discoveryRoutes(mux)
 	a.p2Routes(mux)
+	a.p3Routes(mux)
+	a.storyRoutes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if e := a.Ping(r.Context()); e != nil {
 			respond(w, 503, map[string]bool{"ok": false})
@@ -160,10 +162,10 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/folders", a.auth(a.folders))
 	mux.HandleFunc("PATCH /v1/folders/{id}", a.auth(a.folders))
 	mux.HandleFunc("DELETE /v1/folders/{id}", a.auth(a.deleteFolder))
-	mux.HandleFunc("POST /v1/conversations/{id}/polls", a.auth(a.pollStub))
-	mux.HandleFunc("GET /v1/conversations/{id}/polls/{poll_id}", a.auth(a.pollStub))
-	mux.HandleFunc("POST /v1/conversations/{id}/polls/{poll_id}/vote", a.auth(a.pollStub))
-	mux.HandleFunc("POST /v1/conversations/{id}/polls/{poll_id}/close", a.auth(a.pollStub))
+	mux.HandleFunc("POST /v1/conversations/{id}/polls", a.auth(a.createPoll))
+	mux.HandleFunc("GET /v1/conversations/{id}/polls/{poll_id}", a.auth(a.getPoll))
+	mux.HandleFunc("POST /v1/conversations/{id}/polls/{poll_id}/vote", a.auth(a.votePoll))
+	mux.HandleFunc("POST /v1/conversations/{id}/polls/{poll_id}/close", a.auth(a.closePoll))
 	mux.HandleFunc("POST /v1/messages/{id}/callback", a.auth(a.callbackStub))
 	mux.HandleFunc("GET /v1/conversations/{id}/members", a.auth(a.listMembers))
 	mux.HandleFunc("POST /v1/conversations/{id}/members", a.auth(func(w http.ResponseWriter, r *http.Request, p Principal) {

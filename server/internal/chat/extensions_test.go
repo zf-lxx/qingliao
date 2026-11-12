@@ -127,15 +127,18 @@ func TestMultiplePinsAndPollStubs(t *testing.T) {
 	}
 	mid := v["messages"].([]any)[0].(map[string]any)["id"].(string)
 	req(t, f.s, "PUT", "/v1/conversations/"+cid+"/pins", f.at, map[string]any{"message_id": mid, "remove": true}, 200)
-	req(t, f.s, "POST", "/v1/conversations/"+cid+"/polls", f.bt, map[string]any{"question": "Which?", "options": []string{"A", "B"}, "anonymous": true, "client_msg_id": "poll1"}, 501)
+	created := req(t, f.s, "POST", "/v1/conversations/"+cid+"/polls", f.bt, map[string]any{"question": "Which?", "options": []string{"A", "B"}, "anonymous": true, "client_msg_id": "poll1"}, 201)
+	if created["kind"] != "poll" {
+		t.Fatal(created)
+	}
 	correct := 0
 	if validatePoll(PollSpec{Question: "Quiz", Options: []string{"A", "B"}, Quiz: true, Multiple: true, CorrectOption: &correct, ClientID: "x"}) == nil {
 		t.Fatal("multi quiz accepted")
 	}
 	var n int
 	f.a.DB.QueryRow("SELECT count(*) FROM polls").Scan(&n)
-	if n != 0 {
-		t.Fatal("stub created fake poll")
+	if n != 1 {
+		t.Fatal(n)
 	}
 }
 func TestModerationRestrictionsMuteBanAndAudit(t *testing.T) {
@@ -365,7 +368,7 @@ func TestStateMigrationFromV1(t *testing.T) {
 	defer a.Close()
 	var version int
 	a.DB.QueryRow("PRAGMA user_version").Scan(&version)
-	if version != 5 {
+	if version != 7 {
 		t.Fatal(version)
 	}
 }

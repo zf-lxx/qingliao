@@ -158,6 +158,8 @@ func (a *App) Search(p Principal, cid, q string, before int64, limit int) ([]Mes
 		return nil, e
 	}
 	attachReplySeqs(a.DB, items)
+	a.attachPolls(items, p.UserID)
+	a.attachChecklists(items)
 	return items, nil
 }
 func scanMessages(rows *sql.Rows) ([]Message, error) {
@@ -255,6 +257,8 @@ func (a *App) SharedMedia(p Principal, cid, kind string, before int64, date stri
 		return nil, e
 	}
 	attachReplySeqs(a.DB, items)
+	a.attachPolls(items, p.UserID)
+	a.attachChecklists(items)
 	more := len(items) > limit
 	if more {
 		items = items[:limit]

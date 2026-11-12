@@ -15,6 +15,7 @@ type Entity struct {
 	URL           string `json:"url,omitempty"`
 	Language      string `json:"language,omitempty"`
 	CustomEmojiID string `json:"custom_emoji_id,omitempty"`
+	UserID        string `json:"user_id,omitempty"`
 }
 type InlineButton struct {
 	Text         string `json:"text"`
@@ -61,7 +62,7 @@ func validateEntities(text string, entities []Entity) ([]Entity, error) {
 			return nil, ErrInvalid
 		}
 		switch e.Type {
-		case "bold", "italic", "underline", "strikethrough", "code", "pre", "blockquote", "spoiler", "text_link", "url", "mention", "hashtag", "custom_emoji":
+		case "bold", "italic", "underline", "strikethrough", "code", "pre", "blockquote", "spoiler", "text_link", "url", "mention", "hashtag", "custom_emoji", "cashtag", "email", "phone", "bot_command", "text_mention":
 		default:
 			return nil, ErrInvalid
 		}
@@ -93,6 +94,13 @@ func validateEntities(text string, entities []Entity) ([]Entity, error) {
 				return nil, ErrInvalid
 			}
 		} else if e.CustomEmojiID != "" {
+			return nil, ErrInvalid
+		}
+		if e.Type == "text_mention" {
+			if e.UserID == "" || len(e.UserID) > 64 {
+				return nil, ErrInvalid
+			}
+		} else if e.UserID != "" {
 			return nil, ErrInvalid
 		}
 		for j := 0; j < i; j++ {

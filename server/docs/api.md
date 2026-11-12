@@ -152,3 +152,17 @@ Storage 接口含 Put/Open/Delete/Usage/PresignUpload，local 实现可用；`CH
 ## 8. 上线前必须补齐
 
 密码更改/账号禁用与会话轮换、可信代理限流、浏览器安全会话策略、设备数量限制、媒体元数据/扫描/保留清理、事件/推送作业保留、备份恢复演练、崩溃故障注入、更多离线多设备/群边界测试、真实厂商推送、容器构建/实际 HK 资源测试。单 SQLite 写连接不是横向扩展方案；不支持多个实例共享一个文件广播。E2EE/音视频通话/机器人平台都不在本版。
+
+## P3 / 动态扩展
+
+所有路径仍在 `/v1`，需登录。schema `PRAGMA user_version=7`。
+
+- 联系人：`GET /v1/me/contacts`，`PUT/DELETE /v1/me/contacts/{id}`
+- 通知范围：`GET /v1/me/notification-scopes`，`PUT /v1/me/notification-scopes/{private|group|channel}`（`mute_until` unix，`show_preview`）
+- 隐私规则：`GET /v1/me/privacy/rules?setting=`，`PUT /v1/me/privacy/rules`（规则数组按 TDLib `userPrivacySettingRule*` 原样存储）。已有的 `GET/PUT /v1/me/privacy` 仍只管已读回执。
+- 贴纸：`GET /v1/sticker-packs`，`GET /v1/sticker-packs/{id}`，`POST /v1/sticker-packs`，`POST /v1/sticker-packs/{id}/stickers`，`GET /v1/sticker-files/{id}`，`GET /v1/stickers?q=`，`GET /v1/me/sticker-favorites`，`PUT /v1/me/sticker-favorites/{id}`。内置包 `qingliao-basic`（8 张程序生成的 PNG，不是 Telegram 资源）。`kind=sticker` 的消息用 `sticker_id` 发送。
+- 投票：`POST /v1/conversations/{id}/polls`（201 + 消息），`GET .../polls/{poll_id}`，`POST .../vote`（`option_ids`），`POST .../close`。最多 10 个选项。
+- 清单：`POST /v1/conversations/{id}/checklists`，`GET/PATCH /v1/messages/{id}/checklist`，`POST .../checklist/tasks`，`POST .../checklist/done`（`done_task_ids` / `undone_task_ids`）。
+- 文件夹、链接预览：沿用已有 ` /v1/folders` 与 `POST /v1/link-previews`。文件夹 `types` 现允许 `direct|group|channel`。
+- 动态 / 故事：`POST /v1/stories`（`media_id`, `kind=photo|video`, `caption`, `privacy`），`GET /v1/stories/active`，`GET/PATCH/DELETE /v1/stories/{author}/{no}`，`POST .../open`，`PUT .../privacy`，`PUT .../reaction`，`GET .../interactions`，`POST .../report`，`GET /v1/users/{id}/stories?archived=&from_no=`。默认 24 小时过期。无直播/RTMP。
+- 富文本实体在原有加粗/斜体等之外，允许 `cashtag`、`email`、`phone`、`bot_command`、`text_mention`（`user_id`）。

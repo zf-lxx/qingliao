@@ -212,7 +212,7 @@ func (a *App) download(w http.ResponseWriter, r *http.Request, p Principal) {
 	}
 	if owner != p.UserID {
 		var allowed int
-		e = a.DB.QueryRow(`SELECT (SELECT count(*) FROM messages m JOIN members b ON b.chat_id=m.chat_id WHERE m.media_id=? AND b.user_id=? AND m.seq>b.joined_seq AND m.deleted=0)+(SELECT count(*) FROM users WHERE avatar=?)+(SELECT count(*) FROM chats WHERE avatar=?)+(SELECT count(*) FROM messages m JOIN media x ON x.id=m.media_id JOIN members b ON b.chat_id=m.chat_id WHERE x.thumbnail_id=? AND b.user_id=? AND m.seq>b.joined_seq AND m.deleted=0)`, mid, p.UserID, mid, mid, mid, p.UserID).Scan(&allowed)
+		e = a.DB.QueryRow(`SELECT (SELECT count(*) FROM messages m JOIN members b ON b.chat_id=m.chat_id WHERE m.media_id=? AND b.user_id=? AND m.seq>b.joined_seq AND m.deleted=0)+(SELECT count(*) FROM users WHERE avatar=?)+(SELECT count(*) FROM chats WHERE avatar=?)+(SELECT count(*) FROM messages m JOIN media x ON x.id=m.media_id JOIN members b ON b.chat_id=m.chat_id WHERE x.thumbnail_id=? AND b.user_id=? AND m.seq>b.joined_seq AND m.deleted=0)+(SELECT count(*) FROM stickers WHERE media_id=?)+(SELECT count(*) FROM stories WHERE media_id=? AND deleted=0 AND expires>unixepoch())`, mid, p.UserID, mid, mid, mid, p.UserID, mid, mid).Scan(&allowed)
 		if e != nil || allowed == 0 {
 			fail(w, ErrForbidden)
 			return
@@ -242,7 +242,7 @@ func (a *App) deleteMedia(w http.ResponseWriter, r *http.Request, p Principal) {
 		return
 	}
 	var refs int
-	a.DB.QueryRow("SELECT (SELECT count(*) FROM messages WHERE media_id=? AND deleted=0)+(SELECT count(*) FROM users WHERE avatar=?)+(SELECT count(*) FROM chats WHERE avatar=?)+(SELECT count(*) FROM media WHERE thumbnail_id=?)", mid, mid, mid, mid).Scan(&refs)
+	a.DB.QueryRow("SELECT (SELECT count(*) FROM messages WHERE media_id=? AND deleted=0)+(SELECT count(*) FROM users WHERE avatar=?)+(SELECT count(*) FROM chats WHERE avatar=?)+(SELECT count(*) FROM media WHERE thumbnail_id=?)+(SELECT count(*) FROM stickers WHERE media_id=?)+(SELECT count(*) FROM stories WHERE media_id=?)", mid, mid, mid, mid, mid, mid).Scan(&refs)
 	if refs > 0 {
 		fail(w, ErrConflict)
 		return
