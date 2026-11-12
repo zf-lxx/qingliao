@@ -1309,6 +1309,7 @@ class _ChatViewState extends State<ChatView> {
   Widget? _actionOverlaySnapshot; // last visible overlay, replayed during exit
   int _lastCount = 0;
   bool _didInitialScroll = false; // one-time entry positioning has run
+  Animation<double>? _routeAnimation;
   bool _showJumpDown = false; // scrolled up → show jump-to-bottom button
   bool _bannerDismissed = false; // "N条新消息" banner dismissed / caught up
   Timer? _bannerTimer; // auto-hides the banner a few seconds after it appears
@@ -1803,6 +1804,33 @@ class _ChatViewState extends State<ChatView> {
         : prior?.lastMessageDate ?? 0,
   );
 
+  void _bindRouteAnimation() {
+    final current = ModalRoute.of(context)?.animation;
+    if (identical(_routeAnimation, current)) return;
+    _routeAnimation?.removeStatusListener(_onRouteAnimationStatus);
+    _routeAnimation = current;
+    _routeAnimation?.addStatusListener(_onRouteAnimationStatus);
+  }
+
+  void _onRouteAnimationStatus(AnimationStatus status) {
+    if (status != AnimationStatus.completed &&
+        status != AnimationStatus.dismissed) {
+      return;
+    }
+    if (!mounted || !_modelDirtyWhileInactive || !_viewTickerEnabled) return;
+    _onModel();
+  }
+
+  bool _isOwnRouteTransitioning() {
+    final route = ModalRoute.of(context);
+    if (route is! AppChatPageRoute) return false;
+    if (route.popGestureInProgress) return true;
+    final anim = route.animation;
+    if (anim == null) return false;
+    return anim.status == AnimationStatus.forward ||
+        anim.status == AnimationStatus.reverse;
+  }
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
@@ -1815,6 +1843,7 @@ class _ChatViewState extends State<ChatView> {
       _prepareExitState();
       return false;
     });
+    _bindRouteAnimation();
     final tickerEnabled = TickerMode.valuesOf(context).enabled;
     final reactivated = !_viewTickerEnabled && tickerEnabled;
     _viewTickerEnabled = tickerEnabled;
@@ -3315,6 +3344,13 @@ class _ChatViewState extends State<ChatView> {
       }
       return;
     }
+    // Keep the first unread/last-read jump on the first frame, but do not
+    // rebuild the transcript on every model tick while the route is still
+    // sliding in or out.
+    if (_didInitialScroll && _isOwnRouteTransitioning()) {
+      _modelDirtyWhileInactive = true;
+      return;
+    }
     if (!requiresFullViewSync) return;
     _fullViewRevision = nextFullViewRevision;
     _syncProtectedContentSelectionState();
@@ -4660,6 +4696,8 @@ class _ChatViewState extends State<ChatView> {
 
   @override
   void dispose() {
+    _routeAnimation?.removeStatusListener(_onRouteAnimationStatus);
+    _routeAnimation = null;
     _prepareExitState();
     _detachPaneBackHandler?.call();
     _detachExitController?.call();

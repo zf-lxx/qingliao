@@ -428,10 +428,7 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
     if (isBotApi) return [_allTabs[0]];
     // 轻聊: channels and moments (stories) have no backend yet — see
     // docs/adapter-coverage.md. Only messages and contacts are shown.
-    return [
-      _allTabs[0],
-      if (theme.showContactsTab) _allTabs[2],
-    ];
+    return [_allTabs[0], if (theme.showContactsTab) _allTabs[2]];
   }
 
   Widget _root(int i) => switch (i) {
@@ -747,14 +744,18 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
       // DefaultTextStyle instead of the debug red/yellow-underline fallback.
       child: Material(
         type: MaterialType.transparency,
-        child: PopScope(
-          canPop: false,
-          onPopInvokedWithResult: (didPop, _) async {
-            if (!didPop && await _onWillPop()) {
-              await SystemNavigator.pop();
-            }
-          },
-          child: _rootStack(),
+        child: SnapshotWidget(
+          controller: chatShellSnapshotController,
+          mode: SnapshotMode.permissive,
+          child: PopScope(
+            canPop: false,
+            onPopInvokedWithResult: (didPop, _) async {
+              if (!didPop && await _onWillPop()) {
+                await SystemNavigator.pop();
+              }
+            },
+            child: _rootStack(),
+          ),
         ),
       ),
     );

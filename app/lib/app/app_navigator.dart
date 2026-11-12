@@ -6,11 +6,47 @@ import '../theme/app_motion.dart';
 
 final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
 
+/// Freezes the tab shell (the conversation list) into a texture while a
+/// conversation route is covering it, so enter/exit transitions do not
+/// re-paint that tree every frame.
+final SnapshotController chatShellSnapshotController = SnapshotController();
+
+class ChatShellCover {
+  ChatShellCover._();
+
+  static int _covers = 0;
+
+  static void acquire() {
+    _covers += 1;
+    chatShellSnapshotController.allowSnapshotting = true;
+  }
+
+  static void release() {
+    if (_covers == 0) return;
+    _covers -= 1;
+    if (_covers == 0) {
+      chatShellSnapshotController.allowSnapshotting = false;
+    }
+  }
+
+  @visibleForTesting
+  static int get debugCoverCount => _covers;
+
+  @visibleForTesting
+  static void debugReset() {
+    _covers = 0;
+    chatShellSnapshotController.allowSnapshotting = false;
+  }
+}
+
 /// The shared route for app-level conversation surfaces.
 ///
 /// Its controller is also the single source of truth for a full-page back
 /// swipe, so the navigator can paint the real previous route as soon as the
-/// current page starts moving.
+/// current page starts moving. While the conversation is settled it reports
+/// itself opaque so the list underneath is not painted every frame; during
+/// the enter/exit motion and an in-progress swipe it becomes translucent
+/// again without remounting that list.
 class AppChatPageRoute<T> extends PageRoute<T>
     implements FullPageBackSwipeDriver {
   AppChatPageRoute({
@@ -25,13 +61,17 @@ class AppChatPageRoute<T> extends PageRoute<T>
   @override
   final bool maintainState;
 
-  @override
-  bool get opaque => false;
-
   NavigatorState? _gestureNavigator;
   AnimationController? _gestureController;
   AnimationStatusListener? _gestureStatusListener;
   bool _fullPageBackSwipeActive = false;
+  bool _settledCover = false;
+  bool _coverAcquired = false;
+  Animation<double>? _routeAnimation;
+  CurvedAnimation? _curvedAnimation;
+
+  @override
+  bool get opaque => _settledCover;
 
   @override
   Duration get transitionDuration => QlDuration.page;
@@ -44,6 +84,67 @@ class AppChatPageRoute<T> extends PageRoute<T>
 
   @override
   String? get barrierLabel => null;
+
+  bool get _fingerDriven => _fullPageBackSwipeActive || popGestureInProgress;
+
+  void _acquireCover() {
+    if (_coverAcquired) return;
+    _coverAcquired = true;
+    ChatShellCover.acquire();
+  }
+
+  void _releaseCover() {
+    if (!_coverAcquired) return;
+    _coverAcquired = false;
+    ChatShellCover.release();
+  }
+
+  void _attachRouteAnimation() {
+    final current = animation;
+    if (identical(_routeAnimation, current)) return;
+    _routeAnimation?.removeStatusListener(_onAnimationStatus);
+    _curvedAnimation?.dispose();
+    _curvedAnimation = null;
+    _routeAnimation = current;
+    if (current != null) {
+      _curvedAnimation = CurvedAnimation(
+        parent: current,
+        curve: qlDefaultCurve,
+        reverseCurve: const AndroidDecelerate(1),
+      );
+      current.addStatusListener(_onAnimationStatus);
+    }
+    _syncSettledCover();
+  }
+
+  void _onAnimationStatus(AnimationStatus status) {
+    _syncSettledCover();
+  }
+
+  void _syncSettledCover() {
+    final settled =
+        !_fingerDriven && (controller?.status == AnimationStatus.completed);
+    if (settled == _settledCover) return;
+    _settledCover = settled;
+    if (isActive) {
+      changedInternalState();
+    }
+  }
+
+  @override
+  TickerFuture didPush() {
+    final result = super.didPush();
+    _acquireCover();
+    _attachRouteAnimation();
+    return result;
+  }
+
+  @override
+  void didReplace(Route<dynamic>? oldRoute) {
+    super.didReplace(oldRoute);
+    _acquireCover();
+    _attachRouteAnimation();
+  }
 
   @override
   bool get canStartFullPageBackSwipe =>
@@ -65,6 +166,7 @@ class AppChatPageRoute<T> extends PageRoute<T>
     _gestureNavigator = routeNavigator;
     _gestureController = animationController;
     routeNavigator.didStartUserGesture();
+    _syncSettledCover();
     return true;
   }
 
@@ -170,6 +272,7 @@ class AppChatPageRoute<T> extends PageRoute<T>
     if (routeNavigator?.mounted ?? false) {
       routeNavigator!.didStopUserGesture();
     }
+    _syncSettledCover();
   }
 
   @override
@@ -181,7 +284,7 @@ class AppChatPageRoute<T> extends PageRoute<T>
     return Semantics(
       scopesRoute: true,
       explicitChildNodes: true,
-      child: builder(context),
+      child: RepaintBoundary(child: builder(context)),
     );
   }
 
@@ -195,54 +298,64 @@ class AppChatPageRoute<T> extends PageRoute<T>
     if (AppMotion.usesInPlaceDesktopNavigation(context)) {
       return AppMotion.desktopRouteSurface(context, child);
     }
-    if (AppMotion.isReduced(context) && !_fullPageBackSwipeActive) {
+    if (AppMotion.isReduced(context) && !_fingerDriven) {
       return child;
     }
-    final finger = _fullPageBackSwipeActive || popGestureInProgress;
-    return AnimatedBuilder(
-      animation: animation,
-      child: child,
-      builder: (context, child) {
-        final raw = animation.value;
-        final t = finger
-            ? raw
-            : (animation.status == AnimationStatus.reverse ||
-                  animation.status == AnimationStatus.dismissed)
-            ? const AndroidDecelerate(1).transform(raw)
-            : qlDefaultCurve.transform(raw);
-        final width = MediaQuery.sizeOf(context).width;
-        final translationX = (1 - t) * width;
-        final scrim = qlBackScrimOpacity(t);
-        return Stack(
-          fit: StackFit.expand,
-          children: [
-            if (scrim > 0)
-              IgnorePointer(
-                child: ColoredBox(color: Color.fromRGBO(0, 0, 0, scrim)),
-              ),
-            Transform.translate(
-              offset: Offset(translationX, 0),
-              transformHitTests: false,
-              child: Transform.scale(
-                alignment: Alignment.centerLeft,
-                scale: qlBackPageScale(translationX),
-                child: child,
-              ),
-            ),
-          ],
-        );
-      },
+    final effective = _fingerDriven
+        ? animation
+        : (_curvedAnimation ?? animation);
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        IgnorePointer(
+          child: FadeTransition(
+            opacity: _ScrimOpacity(effective),
+            child: const ColoredBox(color: Color(0x60000000)),
+          ),
+        ),
+        SlideTransition(
+          position: Tween<Offset>(
+            begin: const Offset(1, 0),
+            end: Offset.zero,
+          ).animate(effective),
+          transformHitTests: false,
+          child: child,
+        ),
+      ],
     );
   }
 
   @override
   void dispose() {
+    _routeAnimation?.removeStatusListener(_onAnimationStatus);
+    _routeAnimation = null;
+    _curvedAnimation?.dispose();
+    _curvedAnimation = null;
     _finishFullPageBackSwipe();
+    _releaseCover();
     super.dispose();
   }
 
   @override
   String get debugLabel => '${super.debugLabel}(${settings.name})';
+}
+
+/// Maps a 0–1 cover fraction onto 0–1 opacity for a 96/255 black scrim,
+/// matching [qlBackScrimOpacity] (clamp the cover at 0.8).
+class _ScrimOpacity extends Animation<double>
+    with AnimationWithParentMixin<double> {
+  _ScrimOpacity(this.parent);
+  @override
+  final Animation<double> parent;
+
+  static const _max = 96 / 255;
+
+  @override
+  double get value {
+    final scrim = qlBackScrimOpacity(parent.value);
+    if (scrim <= 0) return 0;
+    return (scrim / _max).clamp(0.0, 1.0);
+  }
 }
 
 Future<T?> pushAppChatRoute<T>(BuildContext context, Route<T> route) {
