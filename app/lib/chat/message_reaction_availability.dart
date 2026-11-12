@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'quick_reaction_choice.dart';
+import '../settings/account_capabilities.dart';
 
 final RegExp _variationSelectors = RegExp('[\uFE0E\uFE0F]');
 
@@ -58,8 +59,11 @@ class MessageReactionAvailability {
       final values = response[key];
       if (values is! List) return;
       for (final value in values) {
-        if (value is! Map || value['needs_premium'] == true) {
-          if (value is! Map || !isPremium) continue;
+        if (value is! Map) continue;
+        if (value['needs_premium'] == true &&
+            !AccountCapabilities.unlocked &&
+            !isPremium) {
+          continue;
         }
         final type = value['type'];
         if (type is! Map) continue;
@@ -93,7 +97,9 @@ class MessageReactionAvailability {
     collect('popular_reactions');
     return MessageReactionAvailability._(
       choices: List.unmodifiable(choices),
-      allowArbitraryCustom: isPremium && response['allow_custom_emoji'] == true,
+      allowArbitraryCustom:
+          (AccountCapabilities.unlocked || isPremium) &&
+          response['allow_custom_emoji'] == true,
       isUnavailable: false,
     );
   }

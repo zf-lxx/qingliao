@@ -1371,7 +1371,6 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
   /// the slightly wider double tick does not cover the clock.
   bool get _stampCarriesMeta =>
       _embedsBubbleStamp &&
-      !_isEmojiOnlyText(_stampTextSource) &&
       formatBubbleStamp(_messageStampDate).isNotEmpty;
 
   DateTime get _messageStampDate =>
@@ -2451,7 +2450,7 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
             mainAxisSize: MainAxisSize.min,
             children: parts,
           );
-    if (!emojiOnly && stamp.isNotEmpty) {
+    if (stamp.isNotEmpty) {
       final stampMeta = (outgoing || message.isEdited)
           ? Padding(
               padding: const EdgeInsets.only(left: 3),

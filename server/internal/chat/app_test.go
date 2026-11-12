@@ -315,6 +315,36 @@ func TestAvatarProfileAndSearch(t *testing.T) {
 	req(t, f.s, "GET", "/v1/media/"+mid, f.bt, nil, 200)
 	req(t, f.s, "PATCH", "/v1/me", f.bt, map[string]any{"display_name": "bad", "avatar_media_id": mid}, 403)
 }
+func TestProfileAvatarVideoMIME(t *testing.T) {
+	f := setup(t)
+	mp4 := []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'i', 's', 'o', 'm', 0, 0, 0, 0, 'i', 's', 'o', 'm', 'm', 'p', '4', '2'}
+	v := uploadReq(t, f, f.at, "", mp4, 201)
+	if v["mime"] != "video/mp4" {
+		t.Fatalf("upload mime %v", v["mime"])
+	}
+	mid := v["id"].(string)
+	me := req(t, f.s, "PATCH", "/v1/me", f.at, map[string]any{"display_name": "管理员", "avatar_media_id": mid}, 200)
+	if me["avatar_media_id"] != mid {
+		t.Fatalf("avatar id %v", me["avatar_media_id"])
+	}
+	if me["avatar_mime"] != "video/mp4" {
+		t.Fatalf("avatar mime %v", me["avatar_mime"])
+	}
+	got := req(t, f.s, "GET", "/v1/users/"+f.admin.UserID, f.bt, nil, 200)
+	if got["avatar_mime"] != "video/mp4" {
+		t.Fatalf("peer mime %v", got["avatar_mime"])
+	}
+	webm := []byte{0x1A, 0x45, 0xDF, 0xA3, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F, 0x42, 0x86, 0x81, 0x01}
+	wv := uploadReq(t, f, f.at, "", webm, 201)
+	if wv["mime"] != "video/webm" {
+		t.Fatalf("webm mime %v", wv["mime"])
+	}
+	req(t, f.s, "PATCH", "/v1/me", f.at, map[string]any{"display_name": "管理员", "avatar_media_id": wv["id"]}, 200)
+	doc := append([]byte("%PDF-1.4\n"), bytes.Repeat([]byte{1}, 32)...)
+	dv := uploadReq(t, f, f.at, "", doc, 201)
+	req(t, f.s, "PATCH", "/v1/me", f.at, map[string]any{"display_name": "管理员", "avatar_media_id": dv["id"]}, 403)
+}
+
 func dial(t *testing.T, f *fixture, token string) *websocket.Conn {
 	t.Helper()
 	h := http.Header{}

@@ -381,9 +381,18 @@ func (a *App) invite(w http.ResponseWriter, r *http.Request, p Principal) {
 	}
 	respond(w, 201, map[string]string{"invite_code": code})
 }
+func isProfileAvatarMIME(mime string) bool {
+	switch mime {
+	case "image/png", "image/jpeg", "image/webp", "image/gif", "video/mp4", "video/webm":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *App) getUser(uid string) (User, error) {
 	var u User
-	e := a.DB.QueryRow("SELECT id,handle,name,avatar,last_seen FROM users WHERE id=?", uid).Scan(&u.ID, &u.Handle, &u.Name, &u.Avatar, &u.LastSeen)
+	e := a.DB.QueryRow("SELECT users.id,users.handle,users.name,users.avatar,users.last_seen,COALESCE(media.mime,'') FROM users LEFT JOIN media ON media.id=users.avatar WHERE users.id=?", uid).Scan(&u.ID, &u.Handle, &u.Name, &u.Avatar, &u.LastSeen, &u.AvatarMIME)
 	u.Online = a.online(uid)
 	return u, e
 }
@@ -402,9 +411,8 @@ func (a *App) profile(w http.ResponseWriter, r *http.Request, p Principal) {
 		return
 	}
 	if b.Avatar != "" {
-		var n int
-		a.DB.QueryRow("SELECT count(*) FROM media WHERE id=? AND owner=? AND mime IN ('image/png','image/jpeg','image/webp','image/gif')", b.Avatar, p.UserID).Scan(&n)
-		if n != 1 {
+		var mime string
+		if e := a.DB.QueryRow("SELECT mime FROM media WHERE id=? AND owner=?", b.Avatar, p.UserID).Scan(&mime); e != nil || !isProfileAvatarMIME(mime) {
 			fail(w, ErrForbidden)
 			return
 		}

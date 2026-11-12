@@ -431,11 +431,33 @@ class _ProfileDetailViewState extends State<ProfileDetailView> {
     }
   }
 
-  void _changeAvatar() {
-    if (!_isMe) return;
+  void _previewAvatar() {
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => const EditProfileView(openAvatarPicker: true),
+      PageRouteBuilder<void>(
+        opaque: false,
+        barrierColor: Colors.black87,
+        barrierDismissible: true,
+        pageBuilder: (context, _, __) {
+          return GestureDetector(
+            onTap: () => Navigator.of(context).pop(),
+            behavior: HitTestBehavior.opaque,
+            child: Scaffold(
+              backgroundColor: Colors.transparent,
+              body: SafeArea(
+                child: Center(
+                  child: Hero(
+                    tag: 'profile-avatar-preview',
+                    child: PhotoAvatar(
+                      title: _name.isEmpty ? '?' : _name,
+                      photo: _photo,
+                      size: 240,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -971,7 +993,7 @@ class _ProfileDetailViewState extends State<ProfileDetailView> {
             children: [
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: _isMe ? _changeAvatar : null,
+                onTap: _previewAvatar,
                 child: Container(
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,

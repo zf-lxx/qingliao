@@ -19,11 +19,14 @@ extension on QlTdEngine {
     return _convMatchesFolder(c, folder);
   }
 
+  bool _isSelfConv(_Conv c) =>
+      !c.isGroup && (c.peerId == _myId || (_myInt != 0 && c.chatId == _myInt));
+
   List<_Conv> _sortedConvs(Object? list) {
     final key = _listKey(list);
     final out = [
       for (final c in _convs.values)
-        if (c.announced && !c.id.startsWith('virtual:') &&
+        if (c.announced && !c.id.startsWith('virtual:') && !_isSelfConv(c) &&
             (key == 'archive'
                 ? c.archived
                 : (key == 'main'
@@ -80,7 +83,7 @@ extension on QlTdEngine {
       ..membersLoaded = true;
     _convs[c.id] = c;
     _assignChatId(c);
-    _announce(c);
+    if (uid != _myId) _announce(c);
     return _tdChat(c);
   }
 
@@ -193,6 +196,9 @@ extension on QlTdEngine {
         if (u is Map && u['handle']?.toString() == handle) {
           final raw = Map<String, dynamic>.from(u);
           _rememberUser(raw);
+          if (raw['id']?.toString() == _myId) {
+            return _error(400, 'USERNAME_NOT_OCCUPIED');
+          }
           return _createPrivateChat(qlUserInt(raw['id'].toString()));
         }
       }
@@ -1317,7 +1323,7 @@ extension on QlTdEngine {
     return {
       '@type': 'userFullInfo',
       'personal_photo': null,
-      'photo': avatar.isEmpty ? null : _chatPhoto(avatar),
+      'photo': avatar.isEmpty ? null : _chatPhoto(avatar, raw),
       'public_photo': null,
       'community_id': 0,
       'block_list': _blockedUserIds.contains(id) ? {'@type': 'blockListMain'} : null,
@@ -1353,8 +1359,19 @@ extension on QlTdEngine {
     };
   }
 
-  Map<String, dynamic> _chatPhoto(String mediaId) {
+  Map<String, dynamic> _chatPhoto(String mediaId, [Map<String, dynamic>? raw]) {
     final dims = _mediaDims[mediaId];
+    final mime = _avatarMimeFor(mediaId, raw);
+    _rememberAvatarMime(mediaId, mime);
+    final file = _fileForMedia(mediaId, kind: 'avatar');
+    final animation = avatarMimeUsesVideoPlayer(mime)
+        ? {
+            '@type': 'animatedChatPhoto',
+            'length': dims?[0] ?? 640,
+            'file': file,
+            'main_frame_timestamp': 0.0,
+          }
+        : null;
     return {
       '@type': 'chatPhoto',
       'id': qlMediaFileId(mediaId),
@@ -1364,14 +1381,14 @@ extension on QlTdEngine {
         {
           '@type': 'photoSize',
           'type': 'x',
-          'photo': _fileForMedia(mediaId, kind: 'avatar'),
+          'photo': file,
           'width': dims?[0] ?? 640,
           'height': dims?[1] ?? 640,
           'progressive_sizes': const <int>[],
         },
       ],
-      'animation': null,
-      'small_animation': null,
+      'animation': animation,
+      'small_animation': animation,
       'sticker': null,
     };
   }
@@ -1383,7 +1400,7 @@ extension on QlTdEngine {
     return {
       '@type': 'chatPhotos',
       'total_count': avatar.isEmpty ? 0 : 1,
-      'photos': [if (avatar.isNotEmpty) _chatPhoto(avatar)],
+      'photos': [if (avatar.isNotEmpty) _chatPhoto(avatar, _users[id])],
     };
   }
 
@@ -1408,20 +1425,35 @@ extension on QlTdEngine {
 
   Future<Map<String, dynamic>> _setProfilePhoto(Map<String, dynamic> r) async {
     final photo = r['photo'];
-    if (photo is! Map || photo['@type'] != 'inputChatPhotoStatic') {
-      return _unsupported('setProfilePhoto(${photo is Map ? photo['@type'] : 'null'})');
+    if (photo is! Map) {
+      return _unsupported('setProfilePhoto(null)');
     }
-    final path = _inputFilePath(photo['photo']);
+    final type = photo['@type']?.toString();
+    final path = switch (type) {
+      'inputChatPhotoStatic' => _inputFilePath(photo['photo']),
+      'inputChatPhotoAnimation' => _inputFilePath(photo['animation'] ?? photo['photo']),
+      _ => null,
+    };
+    if (type != 'inputChatPhotoStatic' && type != 'inputChatPhotoAnimation') {
+      return _unsupported('setProfilePhoto($type)');
+    }
     if (path == null) return _error(400, 'PHOTO_INVALID');
     final uploaded = await _apiOrThrow.uploadFile(path);
     final mediaId = uploaded['id']?.toString() ?? '';
     if (mediaId.isEmpty) return _error(500, 'upload_failed');
+    final mime = uploaded['mime']?.toString() ?? guessAvatarMimeFromPath(path);
     final f = _files.putIfAbsent(qlMediaFileId(mediaId), () => _QlFile(qlMediaFileId(mediaId)));
     f
       ..mediaId = mediaId
       ..kind = 'avatar'
+      ..mime = mime
       ..localPath = path
       ..size = await File(path).length();
+    final me = _users[_myId];
+    if (me != null) {
+      me['avatar_media_id'] = mediaId;
+      me['avatar_mime'] = mime;
+    }
     return _patchMe(avatar: mediaId);
   }
 

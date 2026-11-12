@@ -235,8 +235,26 @@ extension on QlTdEngine {
     return {'@type': 'userStatusOffline', 'was_online': seen};
   }
 
-  Map<String, dynamic>? _profilePhoto(String avatarMediaId) {
+  String _avatarMimeFor(String avatarMediaId, [Map<String, dynamic>? raw]) {
+    final fromUser = raw?['avatar_mime']?.toString() ?? '';
+    if (fromUser.isNotEmpty) return fromUser;
+    final file = _files[qlMediaFileId(avatarMediaId)];
+    if (file != null && file.mime.isNotEmpty) return file.mime;
+    return '';
+  }
+
+  void _rememberAvatarMime(String avatarMediaId, String mime) {
+    if (avatarMediaId.isEmpty || mime.isEmpty) return;
+    final f = _files.putIfAbsent(qlMediaFileId(avatarMediaId), () => _QlFile(qlMediaFileId(avatarMediaId)));
+    f.mediaId = avatarMediaId;
+    f.kind = 'avatar';
+    f.mime = mime;
+  }
+
+  Map<String, dynamic>? _profilePhoto(String avatarMediaId, [Map<String, dynamic>? raw]) {
     if (avatarMediaId.isEmpty) return null;
+    final mime = _avatarMimeFor(avatarMediaId, raw);
+    _rememberAvatarMime(avatarMediaId, mime);
     final file = _fileForMedia(avatarMediaId, kind: 'avatar');
     return {
       '@type': 'profilePhoto',
@@ -244,20 +262,22 @@ extension on QlTdEngine {
       'small': file,
       'big': file,
       'minithumbnail': null,
-      'has_animation': false,
+      'has_animation': avatarMimeUsesVideoPlayer(mime),
       'is_personal': false,
     };
   }
 
-  Map<String, dynamic>? _chatPhotoInfo(String avatarMediaId) {
+  Map<String, dynamic>? _chatPhotoInfo(String avatarMediaId, [Map<String, dynamic>? raw]) {
     if (avatarMediaId.isEmpty) return null;
+    final mime = _avatarMimeFor(avatarMediaId, raw);
+    _rememberAvatarMime(avatarMediaId, mime);
     final file = _fileForMedia(avatarMediaId, kind: 'avatar');
     return {
       '@type': 'chatPhotoInfo',
       'small': file,
       'big': file,
       'minithumbnail': null,
-      'has_animation': false,
+      'has_animation': avatarMimeUsesVideoPlayer(mime),
       'is_personal': false,
     };
   }
@@ -283,7 +303,7 @@ extension on QlTdEngine {
       'status': isMe
           ? {'@type': 'userStatusOnline', 'expires': _nowSeconds() + 300}
           : _userStatus(raw),
-      'profile_photo': _profilePhoto(raw?['avatar_media_id']?.toString() ?? ''),
+      'profile_photo': _profilePhoto(raw?['avatar_media_id']?.toString() ?? '', raw),
       'accent_color_id': qlUserInt(id) % 7,
       'background_custom_emoji_id': 0,
       'profile_accent_color_id': -1,
@@ -318,6 +338,7 @@ extension on QlTdEngine {
       final changed = previous == null ||
           previous['display_name'] != merged['display_name'] ||
           previous['avatar_media_id'] != merged['avatar_media_id'] ||
+          previous['avatar_mime'] != merged['avatar_mime'] ||
           previous['handle'] != merged['handle'];
       if (changed) {
         _emit({'@type': 'updateUser', 'user': _tdUser(id)});
@@ -329,7 +350,7 @@ extension on QlTdEngine {
             _emit({
               '@type': 'updateChatPhoto',
               'chat_id': c.chatId,
-              'photo': _chatPhotoInfo(merged['avatar_media_id']?.toString() ?? ''),
+              'photo': _chatPhotoInfo(merged['avatar_media_id']?.toString() ?? '', merged),
             });
           }
         }
@@ -457,7 +478,7 @@ extension on QlTdEngine {
       'id': c.chatId,
       'type': type,
       'title': _chatTitle(c),
-      'photo': _chatPhotoInfo(avatar),
+      'photo': _chatPhotoInfo(avatar, c.isGroup ? null : (c.peerId == null ? null : _users[c.peerId!])),
       'accent_color_id': c.chatId.abs() % 7,
       'background_custom_emoji_id': 0,
       'upgraded_gift_colors': null,

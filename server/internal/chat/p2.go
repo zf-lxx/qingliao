@@ -313,8 +313,11 @@ func sniffMedia(head []byte, mime string) string {
 	if mime == "application/ogg" {
 		return "audio/ogg"
 	}
-	if len(head) >= 12 && string(head[4:8]) == "ftyp" && (mime == "application/octet-stream" || mime == "application/mp4") {
+	if len(head) >= 12 && string(head[4:8]) == "ftyp" && (mime == "application/octet-stream" || mime == "application/mp4" || mime == "video/mp4") {
 		return "video/mp4"
+	}
+	if len(head) >= 4 && head[0] == 0x1A && head[1] == 0x45 && head[2] == 0xDF && head[3] == 0xA3 {
+		return "video/webm"
 	}
 	return mime
 }

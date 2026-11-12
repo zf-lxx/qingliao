@@ -1,8 +1,9 @@
 Map<String, dynamic>? animatedProfilePhotoRequest({
-  required bool isPremium,
+  bool isPremium = true,
   required String path,
 }) {
-  if (!isPremium || path.isEmpty) return null;
+  // isPremium is ignored: 轻聊 has no membership gate for animated avatars.
+  if (path.isEmpty) return null;
   return {
     '@type': 'setProfilePhoto',
     'photo': {

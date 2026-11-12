@@ -8,6 +8,7 @@ class _QlFile {
   String localPath = '';
   String kind = 'file';
   String fileName = '';
+  String mime = '';
   String stickerId = '';
   String stickerFileId = '';
   int size = 0;
@@ -19,7 +20,8 @@ class _QlFile {
 }
 
 extension on QlTdEngine {
-  String _extFor(String kind, String fileName) {
+  String _extFor(String kind, String fileName, {String mime = ''}) {
+    if (mime.isNotEmpty) return avatarFileExtension(mime, fileName: fileName);
     final dot = fileName.lastIndexOf('.');
     if (dot > 0 && dot < fileName.length - 1 && fileName.length - dot <= 8) {
       return fileName.substring(dot).replaceAll(RegExp(r'[^A-Za-z0-9.]'), '');
@@ -32,8 +34,8 @@ extension on QlTdEngine {
     };
   }
 
-  String _mediaPath(String mediaId, String kind, String fileName) =>
-      '$_filesDir/qingliao/$mediaId${_extFor(kind, fileName)}';
+  String _mediaPath(String mediaId, String kind, String fileName, {String mime = ''}) =>
+      '$_filesDir/qingliao/$mediaId${_extFor(kind, fileName, mime: mime)}';
 
   Map<String, dynamic> _fileForMedia(
     String mediaId, {
@@ -49,7 +51,7 @@ extension on QlTdEngine {
     if (fileName.isNotEmpty) f.fileName = fileName;
     if (size > 0) f.size = size;
     if (f.localPath.isEmpty && _filesDir.isNotEmpty) {
-      final path = _mediaPath(mediaId, f.kind, f.fileName);
+      final path = _mediaPath(mediaId, f.kind, f.fileName, mime: f.mime);
       final file = File(path);
       if (file.existsSync()) {
         f.localPath = path;

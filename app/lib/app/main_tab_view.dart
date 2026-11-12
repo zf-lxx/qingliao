@@ -2093,10 +2093,14 @@ class _LazyTabStackState extends State<_LazyTabStack>
     super.initState();
     _transition = AnimationController(
       vsync: this,
-      duration: AppMotion.deliberate,
+      duration: AppMotion.responsive,
       value: 1,
     );
     _rememberSelection();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _prewarmSiblingTabs();
+    });
   }
 
   @override
@@ -2119,7 +2123,7 @@ class _LazyTabStackState extends State<_LazyTabStack>
     _departingTabIndex = widget.items.any((tab) => tab.index == oldTabIndex)
         ? oldTabIndex
         : null;
-    _transition.duration = AppMotion.duration(context, AppMotion.deliberate);
+    _transition.duration = AppMotion.duration(context, AppMotion.responsive);
     final generation = ++_transitionGeneration;
     if (_transition.duration == Duration.zero) {
       _transition.value = 1;
@@ -2141,6 +2145,15 @@ class _LazyTabStackState extends State<_LazyTabStack>
     final selectedIndex = _selectedPosition(widget);
     final selected = widget.items[selectedIndex];
     _builtTabIndexes.add(selected.index);
+  }
+
+  void _prewarmSiblingTabs() {
+    if (widget.items.length > 4) return;
+    var added = false;
+    for (final tab in widget.items) {
+      added = _builtTabIndexes.add(tab.index) || added;
+    }
+    if (added && mounted) setState(() {});
   }
 
   @override
@@ -2196,13 +2209,8 @@ class _LazyTabStackState extends State<_LazyTabStack>
     final offset = desktopInPlace
         ? 0.0
         : selected
-        ? _direction * 20 * (1 - progress)
-        : -_direction * 10 * progress;
-    final scale = desktopInPlace
-        ? 1.0
-        : selected
-        ? 0.995 + 0.005 * progress
-        : 1 - 0.005 * progress;
+        ? _direction * 8 * (1 - progress)
+        : -_direction * 6 * progress;
 
     return Offstage(
       offstage: !visible,
@@ -2217,15 +2225,11 @@ class _LazyTabStackState extends State<_LazyTabStack>
               child: Transform.translate(
                 key: ValueKey('main-tab-translation-${tab.index}'),
                 offset: Offset(offset, 0),
-                child: Transform.scale(
-                  key: ValueKey('main-tab-scale-${tab.index}'),
-                  scale: scale,
-                  child: KeyedSubtree(
-                    key: ValueKey('main-tab-${tab.index}'),
-                    child: _builtTabIndexes.contains(tab.index)
-                        ? widget.builder(tab)
-                        : const SizedBox.expand(),
-                  ),
+                child: KeyedSubtree(
+                  key: ValueKey('main-tab-${tab.index}'),
+                  child: _builtTabIndexes.contains(tab.index)
+                      ? widget.builder(tab)
+                      : const SizedBox.expand(),
                 ),
               ),
             ),

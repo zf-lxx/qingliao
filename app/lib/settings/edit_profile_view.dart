@@ -29,6 +29,7 @@ import '../profile/profile_contact_management_view.dart';
 import '../profile/profile_contact_service.dart';
 import '../profile/profile_icon_picker_view.dart';
 import '../profile/profile_photo_policy.dart';
+import 'account_capabilities.dart';
 import '../tdlib/json_helpers.dart';
 import '../tdlib/td_client.dart';
 import '../tdlib/td_models.dart';
@@ -394,10 +395,6 @@ class _EditProfileViewState extends State<EditProfileView> {
   }
 
   Future<void> _changeAvatar() async {
-    if (!_isPremium && !_isBotApi) {
-      await _changeStaticAvatar();
-      return;
-    }
     final kind = await _chooseAvatarKind();
     if (kind == null) return;
     switch (kind) {
@@ -596,14 +593,9 @@ class _EditProfileViewState extends State<EditProfileView> {
         _toast(AppStrings.t(AppStringKeys.editProfileInvalidAvatarFile));
         return;
       }
-      final request = animatedProfilePhotoRequest(
-        isPremium: _isPremium || _isBotApi,
-        path: prepared.path,
-      );
+      final request = animatedProfilePhotoRequest(path: prepared.path);
       if (request == null) {
-        _toast(
-          AppStrings.t(AppStringKeys.editProfileAnimatedAvatarPremiumRequired),
-        );
+        _toast(AppStrings.t(AppStringKeys.editProfileInvalidAvatarFile));
         return;
       }
       await _client.query(request);
@@ -617,13 +609,7 @@ class _EditProfileViewState extends State<EditProfileView> {
     }
   }
 
-  bool _canSetAnimatedAvatar() {
-    if (_isPremium || _isBotApi) return true;
-    _toast(
-      AppStrings.t(AppStringKeys.editProfileAnimatedAvatarPremiumRequired),
-    );
-    return false;
-  }
+  bool _canSetAnimatedAvatar() => AccountCapabilities.unlocked;
 
   Future<void> _finishAvatarUpdate() async {
     if (!mounted) return;

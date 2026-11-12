@@ -124,6 +124,7 @@ extension on QlTdEngine {
   void _announce(_Conv c) {
     if (c.chatId == 0) _assignChatId(c);
     if (c.chatId == 0) return;
+    if (_isSelfConv(c)) return;
     if (!c.announced) {
       c.announced = true;
       if (c.isChannel) {

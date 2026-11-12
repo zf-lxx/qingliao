@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../tdlib/json_helpers.dart';
 import '../tdlib/td_client.dart';
+import 'account_capabilities.dart';
 
 /// Runtime availability for Telegram Business features.
 ///
@@ -17,7 +18,8 @@ class BusinessCapabilities {
   final Set<String> features;
 
   bool supports(String tdType) => features.contains(tdType);
-  bool canUse(String tdType) => isPremium && supports(tdType);
+  bool canUse(String tdType) =>
+      (AccountCapabilities.unlocked || isPremium) && supports(tdType);
 }
 
 /// Business feature constructors implemented by the TDLib runtime bundled with

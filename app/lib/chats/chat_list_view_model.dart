@@ -23,6 +23,7 @@ import '../settings/keyword_blocker.dart';
 import '../tdlib/chat_membership.dart';
 import '../tdlib/json_helpers.dart';
 import '../tdlib/td_client.dart';
+import 'self_chat.dart';
 import '../tdlib/td_models.dart';
 import '../tdlib/td_user_index.dart';
 import 'chat_delete_policy.dart';
@@ -421,7 +422,8 @@ class ChatListViewModel extends ChangeNotifier {
         .where(
           (chat) =>
               _communityByChat[chat.id] == communityId &&
-              (_joinedChatCache[chat.id] ?? true),
+              (_joinedChatCache[chat.id] ?? true) &&
+              !_hidesSelfChat(chat),
         )
         .toList();
     chats.sort(_compare);
@@ -2688,8 +2690,15 @@ class ChatListViewModel extends ChangeNotifier {
     _notifyIfAlive();
   }
 
-  List<ChatSummary> _visibleChats() =>
-      _map.values.where((c) => _joinedChatCache[c.id] ?? true).toList();
+  bool _hidesSelfChat(ChatSummary chat) => isHiddenSelfChat(
+        meId: _meId,
+        peerUserId: chat.peerUserId,
+        isSavedMessages: chat.isSavedMessages,
+      );
+
+  List<ChatSummary> _visibleChats() => _map.values
+      .where((c) => (_joinedChatCache[c.id] ?? true) && !_hidesSelfChat(c))
+      .toList();
 
   /// Recomputes each folder's unread-chat badge from the chat store.
   ///

@@ -14,6 +14,7 @@ import '../tdlib/td_client.dart';
 import '../tdlib/td_models.dart';
 import 'custom_emoji.dart';
 import 'sticker_item.dart';
+import '../settings/account_capabilities.dart';
 
 class CustomEmojiPack {
   CustomEmojiPack({
@@ -32,7 +33,9 @@ class EmojiStore extends ChangeNotifier {
   EmojiStore._();
   static final EmojiStore shared = EmojiStore._();
 
-  bool isPremium = false;
+  bool _serverPremium = false;
+  bool get isPremium => AccountCapabilities.unlocked || _serverPremium;
+  set isPremium(bool value) => _serverPremium = value;
   List<CustomEmojiPack> customPacks = [];
   bool _loaded = false;
 

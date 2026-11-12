@@ -528,13 +528,20 @@ class _PhotoAvatarState extends State<PhotoAvatar> with WidgetsBindingObserver {
         ref.photoId != null &&
         previousPhotoId != null &&
         ref.photoId == previousPhotoId;
-    if (!samePhoto && _file != null) {
-      setState(() => _file = null); // reset to placeholder
-    }
     final cachedPath = TdFileCenter.shared.cachedPath(ref, accountSlot: slot);
     final initialPath = cachedPath ?? ref.localPath;
     if (initialPath != null && initialPath.isNotEmpty) {
-      _file ??= File(initialPath);
+      if (_file?.path != initialPath) {
+        _file = File(initialPath);
+      }
+    } else if (!samePhoto && _file != null) {
+      // Keep the last frame when the id is only being remapped and the
+      // replacement path is not ready yet, so returning to the list does
+      // not flash a monogram.
+      final keepWarm = previousPhotoId != null && ref.photoId == previousPhotoId;
+      if (!keepWarm) {
+        setState(() => _file = null);
+      }
     }
     TdFileCenter.shared.pathFor(ref, accountSlot: slot).then((path) {
       if (!mounted || _loadedId != ref.id || _loadedSlot != slot) return;

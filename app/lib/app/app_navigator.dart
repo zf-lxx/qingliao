@@ -25,7 +25,13 @@ class ChatShellCover {
     if (_covers == 0) return;
     _covers -= 1;
     if (_covers == 0) {
-      chatShellSnapshotController.allowSnapshotting = false;
+      // Wait one frame so the live list can drop selection and apply the
+      // unread/preview mutation before the frozen texture is released.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_covers == 0) {
+          chatShellSnapshotController.allowSnapshotting = false;
+        }
+      });
     }
   }
 

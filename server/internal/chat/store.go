@@ -58,9 +58,10 @@ type User struct {
 	ID       string `json:"id"`
 	Handle   string `json:"handle"`
 	Name     string `json:"display_name"`
-	Avatar   string `json:"avatar_media_id"`
-	LastSeen string `json:"last_seen"`
-	Online   bool   `json:"online"`
+	Avatar     string `json:"avatar_media_id"`
+	AvatarMIME string `json:"avatar_mime,omitempty"`
+	LastSeen   string `json:"last_seen"`
+	Online     bool   `json:"online"`
 }
 type MediaInfo struct {
 	ID          string `json:"id"`

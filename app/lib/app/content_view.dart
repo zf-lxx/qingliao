@@ -11,6 +11,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import '../settings/account_capabilities.dart';
 
 import '../auth/account_store.dart';
 import '../auth/auth_manager.dart';
@@ -282,7 +283,8 @@ class _DesktopPrimaryWindowFrameState extends State<DesktopPrimaryWindowFrame> {
         widget.accountReady && activeAccount?.isBotApi != true;
     // Emoji statuses are a Premium feature; without it the button could only
     // open a picker that fails on every choice.
-    final canSetStatus = canManageProfile && activeAccount?.isPremium == true;
+    final canSetStatus =
+        canManageProfile && AccountCapabilities.unlocked;
     final statusId = activeAccount?.emojiStatusId ?? 0;
     final statusMode = context
         .watch<ThemeController?>()

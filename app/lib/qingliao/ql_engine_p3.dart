@@ -654,7 +654,8 @@ extension _QlP3 on QlTdEngine {
       ..clear()
       ..addAll([
         for (final c in (raw['contacts'] as List? ?? const []))
-          if (c is Map && (c['user_id']?.toString() ?? '').isNotEmpty) c['user_id'].toString(),
+          if (c is Map && (c['user_id']?.toString() ?? '').isNotEmpty && c['user_id'].toString() != _myId)
+            c['user_id'].toString(),
       ]);
     for (final id in _contactIds) {
       try {

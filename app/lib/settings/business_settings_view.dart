@@ -101,16 +101,7 @@ class _BusinessSettingsViewState extends State<BusinessSettingsView> {
       );
       return;
     }
-    if (!capabilities.isPremium) {
-      showToast(
-        context,
-        AppStrings.t(
-          AppStringKeys
-              .businessSettingsTelegramPremiumIsRequiredForBusinessTools,
-        ),
-      );
-      return;
-    }
+    // Membership is not a gate in 轻聊; unsupported features already returned above.
     final changed = await Navigator.of(
       context,
     ).push<bool>(MaterialPageRoute(builder: (_) => view));
