@@ -22,8 +22,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:logger/logger.dart' show Level;
-import 'package:mithka/components/app_text_selection_toolbar.dart';
-import 'package:mithka/l10n/app_localizations.dart';
+import 'package:qingliao/components/app_text_selection_toolbar.dart';
+import 'package:qingliao/l10n/app_localizations.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
@@ -496,6 +496,8 @@ typedef _ComposerVmState = ({
   Object? selectedSender,
   bool canChooseSender,
   bool peerIsBot,
+  int? replyToId,
+  String? replyQuoteText,
 });
 
 /// Incoming chat updates are frequent while a user is typing. Rebuilding the
@@ -648,7 +650,7 @@ class ChatInputBar extends StatefulWidget {
 
 class _ChatInputBarState extends State<ChatInputBar>
     with WidgetsBindingObserver {
-  static const _clipboardChannel = MethodChannel('mithka/clipboard');
+  static const _clipboardChannel = MethodChannel('qingliao/clipboard');
   static const _maximumPendingClipboardAttachments = 10;
   static const _gifTabId = -2;
   static const _stickerSearchTabId = -3;
@@ -1387,6 +1389,10 @@ class _ChatInputBarState extends State<ChatInputBar>
     selectedSender: vm.selectedMessageSender,
     canChooseSender: vm.canChooseMessageSender,
     peerIsBot: vm.peerIsBot,
+    // Reply/quote must be compared while focused: otherwise the banner
+    // freezes mid-typing because revision-only rebuilds are skipped.
+    replyToId: vm.replyTo?.id,
+    replyQuoteText: vm.replyQuote?.text,
   );
 
   void _syncFromVm() {
@@ -1492,6 +1498,9 @@ class _ChatInputBarState extends State<ChatInputBar>
         previousVmState != _syncedVmState ||
         !identical(previousBotCommandQuery, _botCommandQuery) ||
         !identical(previousBotCommandCandidates, _botCommandCandidates);
+    final replyChromeChanged =
+        previousVmState.replyToId != _syncedVmState.replyToId ||
+        previousVmState.replyQuoteText != _syncedVmState.replyQuoteText;
     if (mounted &&
         shouldRebuildComposerForVmUpdate(
           revisionChanged: revisionChanged,
@@ -1499,6 +1508,7 @@ class _ChatInputBarState extends State<ChatInputBar>
           hasFocus: _focus.hasFocus,
         )) {
       setState(() {});
+      if (replyChromeChanged) widget.onPanelGeometryChanged?.call();
     }
   }
 
