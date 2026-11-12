@@ -86,6 +86,7 @@ import 'channel_direct_messages_service.dart';
 import 'channel_direct_messages_view.dart';
 import 'chat_appearance_message_preview.dart';
 import 'chat_auto_scroll_policy.dart';
+import 'chat_back_navigation.dart';
 import 'chat_community_service_card.dart';
 import 'chat_first_contact_card.dart';
 import 'chat_first_contact_info.dart';
@@ -96,6 +97,8 @@ import 'chat_media_drop_region.dart';
 import 'chat_message_merge.dart';
 import 'chat_message_search_bar.dart';
 import 'chat_message_search_controller.dart';
+import 'chat_offline_codec.dart';
+import 'chat_offline_store.dart';
 import 'chat_open_performance.dart';
 import 'chat_picker_view.dart';
 import 'chat_return_to_latest_coordinator.dart';
@@ -1360,6 +1363,7 @@ class _ChatViewState extends State<ChatView> {
   int? _linkedMessageHighlightId;
   bool _linkedMessageHighlightActive = false;
   double _keyboardInset = 0;
+  bool _composerHasFocus = false;
   // Bumped once per ChatView build; the shell LayoutBuilder reuses its subtree
   // whenever the generation and the available width are both unchanged.
   int _shellLayoutGeneration = 0;
@@ -1491,16 +1495,12 @@ class _ChatViewState extends State<ChatView> {
       forumTopicId: widget.forumTopicId,
     );
     _sessionRenderState = widget.initialMessageId == null
-        ? _sessionCache.read(
-            accountSlot: _sessionKey.accountSlot,
-            chatId: _sessionKey.chatId,
-            forumTopicId: _sessionKey.forumTopicId,
-          )
+        ? _readSessionRenderState()
         : null;
     _olderHistoryExhaustedHint =
         _sessionRenderState?.olderHistoryExhausted ?? false;
     _sessionScrollSnapshot = widget.initialMessageId == null
-        ? _sessionScrollSnapshots[_sessionKey]
+        ? _readSessionScrollSnapshot()
         : null;
     final sessionRenderState = _sessionRenderState;
     final hasCachedLatestTranscript =
@@ -2260,7 +2260,8 @@ class _ChatViewState extends State<ChatView> {
   }
 
   void _cacheCurrentTranscript({bool force = false}) {
-    if (!_vm.initialLoaded || !_initialTranscriptReady) return;
+    if (_vm.messages.isEmpty) return;
+    if (!force && (!_vm.initialLoaded || !_initialTranscriptReady)) return;
     final olderHistoryExhausted =
         !_vm.hasOlderHistory || _olderHistoryExhaustedHint;
     if (!_sessionCacheWriteGate.shouldStore(
@@ -2281,9 +2282,131 @@ class _ChatViewState extends State<ChatView> {
       olderHistoryExhausted: olderHistoryExhausted,
       firstContactInfo: _vm.firstContactInfo,
     );
+    _persistSessionSnapshot(force: force);
+  }
+
+  ChatSessionRenderState? _readSessionRenderState() {
+    final memory = _sessionCache.read(
+      accountSlot: _sessionKey.accountSlot,
+      chatId: _sessionKey.chatId,
+      forumTopicId: _sessionKey.forumTopicId,
+    );
+    if (memory != null) return memory;
+    final stored = ChatOfflineStore.instance.transcriptSnapshot(
+      accountSlot: _sessionKey.accountSlot,
+      chatId: _sessionKey.chatId,
+      forumTopicId: _sessionKey.forumTopicId,
+    );
+    if (stored == null || stored.messages.isEmpty) return null;
+    _sessionCache.store(
+      accountSlot: _sessionKey.accountSlot,
+      chatId: _sessionKey.chatId,
+      forumTopicId: _sessionKey.forumTopicId,
+      messages: stored.messages,
+      anchoredHistory: stored.anchoredHistory,
+      olderHistoryExhausted: stored.olderHistoryExhausted,
+      firstContactInfo: stored.firstContactInfo,
+    );
+    return stored;
+  }
+
+  _ChatScrollSnapshot? _readSessionScrollSnapshot() {
+    final memory = _sessionScrollSnapshots[_sessionKey];
+    if (memory != null) return memory;
+    final stored = ChatOfflineStore.instance.scrollSnapshot(
+      accountSlot: _sessionKey.accountSlot,
+      chatId: _sessionKey.chatId,
+      forumTopicId: _sessionKey.forumTopicId,
+    );
+    if (stored == null) return null;
+    final snapshot = _ChatScrollSnapshot(
+      pixels: stored.pixels,
+      wasAtLoadedBottom: stored.wasAtLoadedBottom,
+      knownLatestMessageId: stored.knownLatestMessageId,
+      pivotMessageId: stored.pivotMessageId,
+      anchorMessageId: stored.anchorMessageId,
+      anchorViewportOffset: stored.anchorViewportOffset,
+    );
+    _sessionScrollSnapshots[_sessionKey] = snapshot;
+    return snapshot;
+  }
+
+  void _persistSessionSnapshot({bool force = false}) {
+    if (_vm.messages.isEmpty) return;
+    ChatOfflineStore.instance.rememberTranscript(
+      accountSlot: _sessionKey.accountSlot,
+      chatId: _sessionKey.chatId,
+      forumTopicId: _sessionKey.forumTopicId,
+      state: ChatSessionRenderState(
+        messages: _vm.messages,
+        anchoredHistory: _vm.anchoredHistory,
+        olderHistoryExhausted:
+            !_vm.hasOlderHistory || _olderHistoryExhaustedHint,
+        firstContactInfo: _vm.firstContactInfo,
+      ),
+      scroll: _persistedScrollSnapshot(),
+    );
+    if (force) ChatOfflineStore.instance.flushTranscripts();
+  }
+
+  ChatSessionScrollSnapshot? _persistedScrollSnapshot() {
+    final snapshot = _sessionScrollSnapshots[_sessionKey];
+    if (snapshot == null) return null;
+    return ChatSessionScrollSnapshot(
+      pixels: snapshot.pixels,
+      wasAtLoadedBottom: snapshot.wasAtLoadedBottom,
+      knownLatestMessageId: snapshot.knownLatestMessageId,
+      pivotMessageId: snapshot.pivotMessageId,
+      anchorMessageId: snapshot.anchorMessageId,
+      anchorViewportOffset: snapshot.anchorViewportOffset,
+    );
+  }
+
+  bool get _shouldDismissComposerOnBack =>
+      !chatBackShouldLeave(
+        searchActive: _search.isActive,
+        composerFocused: _composerHasFocus,
+        viewInsetsBottom: _keyboardInset,
+      ) &&
+      nextChatBackAction(
+            searchActive: _search.isActive,
+            composerFocused: _composerHasFocus,
+            viewInsetsBottom: _keyboardInset,
+          ) ==
+          ChatBackAction.dismissComposer;
+
+  bool _consumeBackWithoutLeaving() {
+    switch (nextChatBackAction(
+      searchActive: _search.isActive,
+      composerFocused: _composerHasFocus,
+      viewInsetsBottom: _keyboardInset,
+    )) {
+      case ChatBackAction.closeSearch:
+        _closeSearch();
+        return true;
+      case ChatBackAction.dismissComposer:
+        _dismissComposerIme();
+        return true;
+      case ChatBackAction.leaveChat:
+        return false;
+    }
+  }
+
+  void _dismissComposerIme() {
+    _composerHasFocus = false;
+    FocusManager.instance.primaryFocus?.unfocus();
+    SystemChannels.textInput.invokeMethod('TextInput.hide');
+    if (mounted) setState(() {});
+  }
+
+  void _onComposerFocusChanged(bool focused) {
+    if (_composerHasFocus == focused) return;
+    _composerHasFocus = focused;
+    if (mounted) setState(() {});
   }
 
   void _handleBack() {
+    if (_consumeBackWithoutLeaving()) return;
     _prepareExitState();
     final onBack = widget.onBack;
     if (onBack != null) {
@@ -2295,15 +2418,18 @@ class _ChatViewState extends State<ChatView> {
 
   Widget _withExitState(Widget child) {
     return PopScope(
-      // Back closes search before it closes the chat, so a hit list never
-      // takes the whole conversation with it.
-      canPop: !_search.isActive,
+      // Search closes first, then the composer / IME, and only then the chat.
+      canPop: chatBackShouldLeave(
+        searchActive: _search.isActive,
+        composerFocused: _composerHasFocus,
+        viewInsetsBottom: _keyboardInset,
+      ),
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) {
           _prepareExitState();
           return;
         }
-        if (_search.isActive) _closeSearch();
+        _consumeBackWithoutLeaving();
       },
       child: child,
     );
@@ -2550,9 +2676,14 @@ class _ChatViewState extends State<ChatView> {
 
   void _syncKeyboardInset(double inset) {
     if ((_keyboardInset - inset).abs() < 0.5) return;
+    final wasImeVisible = _keyboardInset > kChatImeVisibleThreshold;
     final wasNearBottom = _isNearBottom(260);
     final opening = inset > _keyboardInset;
     _keyboardInset = inset;
+    final isImeVisible = _keyboardInset > kChatImeVisibleThreshold;
+    if (wasImeVisible != isImeVisible && mounted) {
+      setState(() {});
+    }
     if ((wasNearBottom || opening) &&
         !_autoScrollPolicy.preservesViewport &&
         _scrollTargetId == null) {
@@ -4453,10 +4584,12 @@ class _ChatViewState extends State<ChatView> {
       widget.showBackButton &&
       !_isSelecting &&
       !_search.isActive &&
+      !_shouldDismissComposerOnBack &&
       _actionTarget == null;
 
   Future<void> _popFromBackSwipe() async {
     if (_backSwipePopping || !mounted) return;
+    if (_consumeBackWithoutLeaving()) return;
     _backSwipePopping = true;
     try {
       _prepareExitState();
@@ -8480,6 +8613,7 @@ class _ChatViewState extends State<ChatView> {
       onInputHeightChanged: _onComposerInputHeightChanged,
       onMediaSendTapped: _onComposerMediaSendTapped,
       onBotTopicCreated: _openTopicTranscript,
+      onFocusChanged: _onComposerFocusChanged,
     );
   }
 

@@ -1,7 +1,7 @@
 name: qingliao
 description: "轻聊 — a Flutter messenger talking to the 轻聊 backend."
 publish_to: 'none'
-version: 0.4.8+15
+version: 0.4.9+16
 
 environment:
   sdk: ^3.12.2

@@ -14,6 +14,7 @@ import 'package:qingliao/l10n/app_localizations.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../app/performance_metrics.dart';
+import '../chat/chat_offline_store.dart';
 import '../communities/community_models.dart';
 import '../notifications/notification_settings_payload.dart';
 import '../notifications/scope_notification_settings.dart';
@@ -103,7 +104,9 @@ class ChatListViewModel extends ChangeNotifier {
     @visibleForTesting this._membershipForTesting,
     @visibleForTesting TdClient? clientForTesting,
     this.accountSlot,
-  }) : _client = clientForTesting ?? TdClient.shared;
+  }) : _client = clientForTesting ?? TdClient.shared {
+    _restoreLocalListSnapshot();
+  }
 
   List<ChatSummary> _chats = [];
   List<ChatSummary> _archived = [];
@@ -343,6 +346,34 @@ class ChatListViewModel extends ChangeNotifier {
   /// longer matches stops before its next request, so a newer action (or a
   /// disposed list) can never be overtaken by an older one still in flight.
   int _bulkReadGeneration = 0;
+
+  void _restoreLocalListSnapshot() {
+    if (!ChatOfflineStore.instance.isReady) return;
+    final rows = ChatOfflineStore.instance.listSnapshot(_snapshotSlot);
+    if (rows.isEmpty) return;
+    for (final chat in rows) {
+      _map[chat.id] = chat;
+      final userId = chat.peerUserId;
+      if (userId != null) _indexPeerChat(userId, chat.id);
+    }
+    _archived = rows.where((chat) => chat.archiveOrder > 0).toList()
+      ..sort(
+        (a, b) => a.archiveOrder != b.archiveOrder
+            ? b.archiveOrder.compareTo(a.archiveOrder)
+            : b.date.compareTo(a.date),
+      );
+    _chats = _projectChats(_selectedFilter.folderId, _visibleChats());
+  }
+
+  int get _snapshotSlot => accountSlot ?? _client.activeSlot;
+
+  void _scheduleListSnapshotWrite() {
+    if (_disposed || _map.isEmpty || !ChatOfflineStore.instance.isReady) return;
+    ChatOfflineStore.instance.rememberList(
+      _snapshotSlot,
+      _map.values.toList(growable: false),
+    );
+  }
 
   void onAppear() {
     if (_disposed || _listening) return;
@@ -2646,6 +2677,7 @@ class ChatListViewModel extends ChangeNotifier {
     _chats = _projectChats(_selectedFilter.folderId, visible);
     _refreshFolderUnreadCounts();
     _invalidateEntriesCaches();
+    _scheduleListSnapshotWrite();
     stopwatch.stop();
     AppPerformanceMetrics.chatListResorted(
       elapsed: stopwatch.elapsed,

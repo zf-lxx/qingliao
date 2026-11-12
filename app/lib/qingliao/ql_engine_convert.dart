@@ -715,6 +715,7 @@ extension on QlTdEngine {
     while (c.messages.length > 2000) {
       c.messages.remove(c.messages.firstKey());
     }
+    _schedulePersist();
   }
 
 }

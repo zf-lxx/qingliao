@@ -4029,14 +4029,17 @@ class ChatViewModel extends ChangeNotifier {
       _historyReachesLatest = true;
       _knownLatestMessageId = latestServerMessageId(fetched);
       if (fetched.isEmpty) {
-        _allMessages = [];
-        _applyKeywordFilter();
+        if (_allMessages.isEmpty) {
+          _allMessages = [];
+          _applyKeywordFilter();
+        }
       } else {
         _mergeHistoryWindow(
           fetched,
           messagesAtRequestStart: messagesAtRequestStart,
-          replaceCurrentWindow: true,
-          preserveLiveArrivals: false,
+          replaceCurrentWindow:
+              !(_restoredFromSession && messagesAtRequestStart.isNotEmpty),
+          preserveLiveArrivals: _restoredFromSession,
         );
       }
       _resolveRichMessagesIfNeeded(fetched);

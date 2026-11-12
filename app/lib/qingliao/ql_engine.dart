@@ -423,7 +423,7 @@ class QlTdEngine {
       case 'loadChats':
         return _loadChats(r);
       case 'getChats':
-        await _waitInitialLoad();
+        if (!_hasServableLocalChats) await _waitInitialLoad();
         final list = _sortedConvs(r['chat_list']);
         final limit = _int(r['limit']) ?? 100;
         return {
@@ -813,6 +813,7 @@ class QlTdEngine {
     _userIdByInt[_myInt] = session.userId;
     _emit({'@type': 'updateUser', 'user': _tdUser(session.userId)});
     _setAuth('authorizationStateReady');
+    _announceRestoredChats();
     _initialLoad = _runInitialLoad();
     unawaited(QlForegroundSync.start());
   }
@@ -883,6 +884,12 @@ class QlTdEngine {
 
   // MARK: - Local state persistence (id maps, cursor, media sizes)
 
+  bool get _hasServableLocalChats =>
+      _convs.values.any((c) => c.chatId != 0);
+
+  static const _persistedChatCap = 200;
+  static const _persistedMessageCap = 80;
+
   void _loadState() {
     try {
       final file = File(_statePath);
@@ -910,6 +917,12 @@ class QlTdEngine {
           }
         });
       }
+      final conversations = raw['conversations'];
+      if (conversations is List) {
+        for (final item in conversations) {
+          if (item is Map) _restoreConvSnapshot(Map<String, dynamic>.from(item));
+        }
+      }
     } catch (_) {}
   }
 
@@ -926,11 +939,175 @@ class QlTdEngine {
         jsonEncode({
           'media_dims': _mediaDims,
           'users': _users,
+          'conversations': _conversationSnapshots(),
         }),
       );
       final session = _session;
       if (session != null) _writeSession(session);
     } catch (_) {}
+  }
+
+  List<Map<String, dynamic>> _conversationSnapshots() {
+    final convs = _convs.values.toList()
+      ..sort((a, b) => b.lastActivityMicros.compareTo(a.lastActivityMicros));
+    final limited = convs.take(_persistedChatCap).toList();
+    return [
+      for (var i = 0; i < limited.length; i++)
+        _convSnapshot(limited[i], includeMessages: i < 24),
+    ];
+  }
+
+  Map<String, dynamic> _convSnapshot(_Conv c, {required bool includeMessages}) {
+    final messages = <Map<String, dynamic>>[];
+    if (includeMessages && c.messages.isNotEmpty) {
+      final values = c.messages.values.toList();
+      final start = math.max(0, values.length - _persistedMessageCap);
+      for (final message in values.sublist(start)) {
+        try {
+          messages.add(Map<String, dynamic>.from(jsonDecode(jsonEncode(message))));
+        } catch (_) {}
+      }
+    }
+    return {
+      'id': c.id,
+      'kind': c.kind,
+      'title': c.title,
+      'lastSeq': c.lastSeq,
+      'lastActivityMicros': c.lastActivityMicros,
+      'readSeq': c.readSeq,
+      'role': c.role,
+      'archived': c.archived,
+      'pinnedOrder': c.pinnedOrder,
+      'muteUntil': c.muteUntil,
+      'manualUnread': c.manualUnread,
+      'unread': c.unread,
+      'mentions': c.mentions,
+      'peerId': c.peerId,
+      'peerReadSeq': c.peerReadSeq,
+      'readReceiptsVisible': c.readReceiptsVisible,
+      'lastMessageReadCount': c.lastMessageReadCount,
+      'chatId': c.chatId,
+      'membersLoaded': c.membersLoaded,
+      'avatarMediaId': c.avatarMediaId,
+      if (c.lastMessage != null) 'lastMessage': _jsonSafeMap(c.lastMessage),
+      if (c.members.isNotEmpty) 'members': c.members,
+      if (messages.isNotEmpty) 'messages': messages,
+    };
+  }
+
+  void _restoreConvSnapshot(Map<String, dynamic> raw) {
+    final id = raw['id']?.toString() ?? '';
+    if (id.isEmpty) return;
+    final c = _convs.putIfAbsent(id, () => _Conv(id));
+    c.kind = raw['kind']?.toString() ?? c.kind;
+    c.title = raw['title']?.toString() ?? c.title;
+    c.lastSeq = QlTdEngine._int(raw['lastSeq']) ?? c.lastSeq;
+    c.lastActivityMicros =
+        QlTdEngine._int(raw['lastActivityMicros']) ?? c.lastActivityMicros;
+    c.readSeq = QlTdEngine._int(raw['readSeq']) ?? c.readSeq;
+    c.role = raw['role']?.toString() ?? c.role;
+    c.archived = raw['archived'] == true;
+    c.pinnedOrder = QlTdEngine._int(raw['pinnedOrder']) ?? c.pinnedOrder;
+    c.muteUntil = QlTdEngine._int(raw['muteUntil']) ?? c.muteUntil;
+    c.manualUnread = raw['manualUnread'] == true;
+    c.unread = QlTdEngine._int(raw['unread']) ?? c.unread;
+    c.mentions = QlTdEngine._int(raw['mentions']) ?? c.mentions;
+    c.peerId = raw['peerId']?.toString() ?? c.peerId;
+    c.peerReadSeq = QlTdEngine._int(raw['peerReadSeq']) ?? c.peerReadSeq;
+    c.readReceiptsVisible = raw['readReceiptsVisible'] != false;
+    c.lastMessageReadCount = QlTdEngine._int(raw['lastMessageReadCount']);
+    c.membersLoaded = raw['membersLoaded'] == true;
+    c.avatarMediaId = raw['avatarMediaId']?.toString() ?? c.avatarMediaId;
+    final lastMessage = raw['lastMessage'];
+    if (lastMessage is Map) {
+      c.lastMessage = Map<String, dynamic>.from(lastMessage);
+    }
+    final members = raw['members'];
+    if (members is List) {
+      c.members = [
+        for (final member in members)
+          if (member is Map) Map<String, dynamic>.from(member),
+      ];
+    }
+    final chatId = QlTdEngine._int(raw['chatId']) ?? 0;
+    if (chatId != 0) {
+      c.chatId = chatId;
+      _convByChatId[chatId] = c;
+    } else {
+      _assignChatId(c);
+    }
+    c.announced = false;
+    final messages = raw['messages'];
+    if (messages is List) {
+      for (final item in messages) {
+        if (item is! Map) continue;
+        final td = Map<String, dynamic>.from(item);
+        final messageId = QlTdEngine._int(td['id']) ?? 0;
+        if (messageId == 0) continue;
+        final seq = qlSeqOf(messageId);
+        c.messages[seq] = td;
+        final backendId = td['@ql_id']?.toString() ?? '';
+        if (backendId.isNotEmpty) _messageRef[backendId] = (c.id, seq);
+      }
+    }
+  }
+
+  void _announceRestoredChats() {
+    for (final c in _convs.values) {
+      c.announced = false;
+      _announce(c);
+    }
+  }
+
+  Map<String, dynamic>? _jsonSafeMap(Map<String, dynamic>? value) {
+    if (value == null) return null;
+    try {
+      final encoded = jsonDecode(jsonEncode(value));
+      if (encoded is Map) return Map<String, dynamic>.from(encoded);
+    } catch (_) {}
+    return null;
+  }
+
+  void _publishAnnouncedChat(_Conv c) {
+    if (c.chatId == 0) _assignChatId(c);
+    if (c.chatId == 0) return;
+    if (c.lastMessage != null && c.lastMessage!['chat_id'] != c.chatId) {
+      c.lastMessage!['chat_id'] = c.chatId;
+    }
+    _emit({
+      '@type': 'updateChatTitle',
+      'chat_id': c.chatId,
+      'title': c.isGroup
+          ? c.title
+          : (_users[c.peerId ?? '']?['display_name'] ?? c.title),
+    });
+    _emit({
+      '@type': 'updateChatLastMessage',
+      'chat_id': c.chatId,
+      'last_message': c.lastMessage,
+      'positions': [_position(c)],
+    });
+    _emit({
+      '@type': 'updateChatReadInbox',
+      'chat_id': c.chatId,
+      'last_read_inbox_message_id': _lastReadInboxId(c),
+      'unread_count': c.unread,
+    });
+    _emit({
+      '@type': 'updateChatReadOutbox',
+      'chat_id': c.chatId,
+      'last_read_outbox_message_id': _lastReadOutboxId(c),
+    });
+    _emit({
+      '@type': 'updateChatNotificationSettings',
+      'chat_id': c.chatId,
+      'notification_settings': _notificationSettings(c),
+    });
+    _emit({
+      '@type': 'updateChatIsMarkedAsUnread',
+      'chat_id': c.chatId,
+      'is_marked_as_unread': c.manualUnread,
+    });
   }
 
   // MARK: - Helpers

@@ -536,6 +536,7 @@ class ChatInputBar extends StatefulWidget {
     this.onOutgoingTextFlyIn,
     this.onPanelGeometryChanged,
     this.onInputHeightChanged,
+    this.onFocusChanged,
     this.onMediaSendTapped,
     this.gifPreviewBuilder,
     this.requestInitialFocus = false,
@@ -577,6 +578,9 @@ class ChatInputBar extends StatefulWidget {
 
   /// The text field's own height changed as text wrapped or was removed.
   final VoidCallback? onInputHeightChanged;
+
+  /// Reports whether the composer text field currently holds focus.
+  final ValueChanged<bool>? onFocusChanged;
   final VoidCallback? onMediaSendTapped;
   @visibleForTesting
   final Widget Function(GifItem item)? gifPreviewBuilder;
@@ -867,6 +871,7 @@ class _ChatInputBarState extends State<ChatInputBar>
     _controller.addListener(_onTextChanged);
     _panelSearch.addListener(_queuePanelSearch);
     _focus.addListener(() {
+      widget.onFocusChanged?.call(_focus.hasFocus);
       var needsRebuild = false;
       var panelChanged = false;
       if (_focus.hasFocus && _panel != _Panel.none) {

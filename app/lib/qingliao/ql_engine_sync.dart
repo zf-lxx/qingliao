@@ -74,8 +74,13 @@ extension on QlTdEngine {
 
     await Future.wait([for (var i = 0; i < 6; i++) worker()]);
     for (final c in convs) {
-      _announce(c);
+      if (c.announced) {
+        _publishAnnouncedChat(c);
+      } else {
+        _announce(c);
+      }
     }
+    _schedulePersist();
   }
 
   Future<void> _loadMembers(_Conv c) async {

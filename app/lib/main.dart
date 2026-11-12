@@ -48,6 +48,7 @@ import 'app/video_window_telemetry.dart';
 import 'auth/account_store.dart';
 import 'auth/auth_manager.dart';
 import 'call/call_manager.dart';
+import 'chat/chat_offline_store.dart';
 import 'call/call_overlay_host.dart';
 import 'chat/animated_sticker_view.dart';
 import 'chat/chat_view.dart';
@@ -255,6 +256,7 @@ Future<void> _bootstrapAndRunApp() async {
     appLockReady,
     ThemeController.preloadCachedEmojiFont(prefs),
     videoViewTypeReady,
+    ChatOfflineStore.instance.preload(),
   ]);
   DesktopHotkeyController.initializeShared(prefs, replace: true);
   KeywordBlocker.shared.initialize(prefs);

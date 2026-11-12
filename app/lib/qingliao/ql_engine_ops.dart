@@ -36,7 +36,7 @@ extension on QlTdEngine {
 
   Future<Map<String, dynamic>> _loadChats(Map<String, dynamic> r) async {
     if (_session == null) return _error(401, 'Unauthorized');
-    await _waitInitialLoad();
+    if (!_hasServableLocalChats) await _waitInitialLoad();
     final key = _listKey(r['chat_list']);
     if (key.startsWith('folder:') && !_folders.values.any((f) => 'folder:${qlFolderInt(f['id']?.toString() ?? '')}' == key) && _folderIdByInt[int.tryParse(key.substring(7)) ?? 0] == null) {
       return _error(404, 'Not Found');
