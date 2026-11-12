@@ -352,9 +352,9 @@ func buildBotUpdatePayload(tx *sql.Tx, typ, botID string, m Message) ([]byte, er
 	case "message.deleted":
 		return json.Marshal(map[string]any{
 			"message": map[string]any{
-				"message_id": m.Seq,
-				"date":       unixTime(m.Created),
-				"chat":       msg["chat"],
+				"message_id":          m.Seq,
+				"date":                unixTime(m.Created),
+				"chat":                msg["chat"],
 				"delete_chat_message": true,
 			},
 		})
@@ -454,7 +454,11 @@ func telegramMessage(tx *sql.Tx, botID string, m Message) (map[string]any, error
 		"date":       unixTime(m.Created),
 	}
 	if m.Text != "" && !m.Deleted {
-		out["text"] = m.Text
+		if m.MediaID != "" {
+			out["caption"] = m.Text
+		} else {
+			out["text"] = m.Text
+		}
 	}
 	if m.Deleted {
 		out["text"] = ""
@@ -483,6 +487,18 @@ func telegramMessage(tx *sql.Tx, botID string, m Message) (map[string]any, error
 			if m.Media.MIME != "" {
 				file["mime_type"] = m.Media.MIME
 			}
+			if m.Media.Width > 0 {
+				file["width"] = m.Media.Width
+			}
+			if m.Media.Height > 0 {
+				file["height"] = m.Media.Height
+			}
+			if m.Media.DurationMs > 0 {
+				file["duration"] = m.Media.DurationMs / 1000
+			}
+			if m.Media.ThumbnailID != "" {
+				file["thumbnail"] = map[string]any{"file_id": m.Media.ThumbnailID, "file_unique_id": m.Media.ThumbnailID}
+			}
 		}
 		switch m.Kind {
 		case "image":
@@ -492,7 +508,11 @@ func telegramMessage(tx *sql.Tx, botID string, m Message) (map[string]any, error
 		case "voice":
 			out["voice"] = file
 		default:
-			out["document"] = file
+			if m.Media != nil && strings.HasPrefix(m.Media.MIME, "audio/") {
+				out["audio"] = file
+			} else {
+				out["document"] = file
+			}
 		}
 	}
 	return out, nil
@@ -533,10 +553,10 @@ func (a *App) dispatchCallbackQuery(p Principal, m Message, data string) error {
 		body, _ := json.Marshal(map[string]any{
 			"update_id": updateID,
 			"callback_query": map[string]any{
-				"id":      qid,
-				"from":    from,
-				"message": msg,
-				"data":    data,
+				"id":            qid,
+				"from":          from,
+				"message":       msg,
+				"data":          data,
 				"chat_instance": m.ChatID,
 			},
 		})

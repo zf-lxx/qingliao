@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -266,4 +267,157 @@ func TestBotSendExistingMediaAndLongPollWake(t *testing.T) {
 	case <-time.After(9 * time.Second):
 		t.Fatal("getUpdates did not wake")
 	}
+}
+
+func botMultipart(t *testing.T, s *httptest.Server, token, method string, fields map[string]string, files map[string][]byte, filenames map[string]string, want int) map[string]any {
+	t.Helper()
+	var buf bytes.Buffer
+	w := multipart.NewWriter(&buf)
+	for k, v := range fields {
+		if e := w.WriteField(k, v); e != nil {
+			t.Fatal(e)
+		}
+	}
+	for k, data := range files {
+		name := k + ".bin"
+		if filenames != nil && filenames[k] != "" {
+			name = filenames[k]
+		}
+		part, e := w.CreateFormFile(k, name)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if _, e = part.Write(data); e != nil {
+			t.Fatal(e)
+		}
+	}
+	if e := w.Close(); e != nil {
+		t.Fatal(e)
+	}
+	req, _ := http.NewRequest("POST", s.URL+"/bot"+token+"/"+method, &buf)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	res, e := http.DefaultClient.Do(req)
+	if e != nil {
+		t.Fatal(e)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	if res.StatusCode != want {
+		t.Fatalf("%s got %d wanted %d: %s", method, res.StatusCode, want, b)
+	}
+	if token != "" && strings.Contains(string(b), token) {
+		t.Fatalf("token leaked in response: %s", b)
+	}
+	out := map[string]any{}
+	json.Unmarshal(b, &out)
+	return out
+}
+
+func botFileID(t *testing.T, result map[string]any, field string) string {
+	t.Helper()
+	if field == "photo" {
+		arr, _ := result["photo"].([]any)
+		if len(arr) == 0 {
+			t.Fatalf("missing photo: %v", result)
+		}
+		file, _ := arr[0].(map[string]any)
+		id, _ := file["file_id"].(string)
+		if id == "" {
+			t.Fatalf("missing photo file_id: %v", result)
+		}
+		return id
+	}
+	file, _ := result[field].(map[string]any)
+	id, _ := file["file_id"].(string)
+	if id == "" {
+		t.Fatalf("missing %s file_id: %v", field, result)
+	}
+	return id
+}
+
+func TestBotMultipartUploadAndFileID(t *testing.T) {
+	f := setup(t)
+	created := req(t, f.s, "POST", "/v1/bots", f.bt, map[string]any{"username": "up_bot", "display_name": "Up"}, 201)
+	token := created["token"].(string)
+	botID := created["id"].(string)
+	if _, e := f.a.CreateChat(f.bob, "direct", "", []string{botID}); e != nil {
+		t.Fatal(e)
+	}
+	png := pngHead()
+	sent := botMultipart(t, f.s, token, "sendPhoto", map[string]string{"chat_id": "@bob", "caption": "新图"}, map[string][]byte{"photo": png}, map[string]string{"photo": "shot.png"}, 200)
+	result := sent["result"].(map[string]any)
+	if result["caption"] != "新图" {
+		t.Fatalf("caption: %v", sent)
+	}
+	fileID := botFileID(t, result, "photo")
+	info := botCall(t, f.s, token, "getFile", map[string]any{"file_id": fileID}, 200)
+	path, _ := info["result"].(map[string]any)["file_path"].(string)
+	if !strings.Contains(path, fileID) {
+		t.Fatalf("getFile: %v", info)
+	}
+	dl, e := http.Get(f.s.URL + "/file/bot" + token + "/" + path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	body, _ := io.ReadAll(dl.Body)
+	dl.Body.Close()
+	if dl.StatusCode != 200 || !bytes.Equal(body, png) {
+		t.Fatalf("download %d %d", dl.StatusCode, len(body))
+	}
+	// Existing file_id still works after a fresh upload.
+	again := botCall(t, f.s, token, "sendPhoto", map[string]any{"chat_id": "@bob", "photo": fileID}, 200)
+	if botFileID(t, again["result"].(map[string]any), "photo") != fileID {
+		t.Fatalf("resend file_id: %v", again)
+	}
+	// Multipart form field (not a file part) can also pass an existing file_id.
+	viaForm := botMultipart(t, f.s, token, "sendPhoto", map[string]string{"chat_id": "@bob", "photo": fileID}, nil, nil, 200)
+	if botFileID(t, viaForm["result"].(map[string]any), "photo") != fileID {
+		t.Fatalf("form file_id: %v", viaForm)
+	}
+
+	doc := []byte("%PDF-1.4 test document")
+	docs := botMultipart(t, f.s, token, "sendDocument", map[string]string{"chat_id": "@bob", "document": "attach://filepart", "caption": "文档"}, map[string][]byte{"filepart": doc}, map[string]string{"filepart": "notes.pdf"}, 200)
+	docID := botFileID(t, docs["result"].(map[string]any), "document")
+	if docs["result"].(map[string]any)["document"].(map[string]any)["file_name"] != "notes.pdf" {
+		t.Fatalf("document name: %v", docs)
+	}
+	_ = docID
+
+	ftyp := make([]byte, 32)
+	copy(ftyp[4:8], "ftyp")
+	copy(ftyp[8:12], "isom")
+	vid := botMultipart(t, f.s, token, "sendVideo",
+		map[string]string{"chat_id": "@bob", "video": "attach://clip", "thumbnail": "attach://thumb", "duration": "2", "width": "640", "height": "360"},
+		map[string][]byte{"clip": ftyp, "thumb": png},
+		map[string]string{"clip": "clip.mp4", "thumb": "thumb.png"},
+		200)
+	video := vid["result"].(map[string]any)["video"].(map[string]any)
+	if video["file_id"] == nil || video["thumbnail"] == nil {
+		t.Fatalf("sendVideo: %v", vid)
+	}
+
+	voiceBody := append([]byte("OggS"), bytes.Repeat([]byte{0}, 32)...)
+	voice := botMultipart(t, f.s, token, "sendVoice", map[string]string{"chat_id": "@bob"}, map[string][]byte{"voice": voiceBody}, map[string]string{"voice": "note.ogg"}, 200)
+	_ = botFileID(t, voice["result"].(map[string]any), "voice")
+
+	song := append([]byte("ID3"), bytes.Repeat([]byte{0}, 24)...)
+	audio := botMultipart(t, f.s, token, "sendAudio", map[string]string{"chat_id": "@bob"}, map[string][]byte{"audio": song}, map[string]string{"audio": "song.mp3"}, 200)
+	_ = botFileID(t, audio["result"].(map[string]any), "audio")
+
+	// Auth failure: bad token, no leak.
+	bad := "0:notarealtokenvalueatallxxxx"
+	botMultipart(t, f.s, bad, "sendPhoto", map[string]string{"chat_id": "@bob"}, map[string][]byte{"photo": png}, map[string]string{"photo": "x.png"}, 401)
+
+	// Unsupported types.
+	botMultipart(t, f.s, token, "sendPhoto", map[string]string{"chat_id": "@bob"}, map[string][]byte{"photo": []byte("<html>bad</html>")}, map[string]string{"photo": "x.html"}, 400)
+	botMultipart(t, f.s, token, "sendPhoto", map[string]string{"chat_id": "@bob"}, map[string][]byte{"photo": []byte("plain file content")}, map[string]string{"photo": "x.txt"}, 400)
+
+	// Oversize uses the same MaxFile limit as user uploads.
+	f.a.C.MaxFile = 32
+	big := append(pngHead(), bytes.Repeat([]byte{0}, 64)...)
+	botMultipart(t, f.s, token, "sendDocument", map[string]string{"chat_id": "@bob"}, map[string][]byte{"document": big}, map[string]string{"document": "big.bin"}, 413)
+
+	// Animation / video notes are not message types on this server.
+	botCall(t, f.s, token, "sendAnimation", map[string]any{"chat_id": "@bob", "animation": fileID}, 404)
+	botCall(t, f.s, token, "sendVideoNote", map[string]any{"chat_id": "@bob", "video_note": fileID}, 404)
 }

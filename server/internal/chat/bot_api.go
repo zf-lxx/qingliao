@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
@@ -47,6 +48,12 @@ func botFail(w http.ResponseWriter, e error) {
 		var be botAPIError
 		if errors.As(e, &be) {
 			code, desc = be.Code, be.Desc
+		} else if errors.Is(e, errFileTooLarge) || errors.Is(e, errUploadFailed) {
+			code, desc = 413, "file is too big"
+		} else if errors.Is(e, errMediaQuota) {
+			code, desc = 507, "media quota exceeded"
+		} else if errors.Is(e, errUnsupportedMedia) {
+			code, desc = 400, "unsupported media type"
 		} else if errors.Is(e, ErrInvalid) {
 			code, desc = 400, "Bad Request"
 		} else if e != nil {
@@ -93,8 +100,20 @@ func (a *App) serveBotAPI(w http.ResponseWriter, r *http.Request) {
 		a.botDownloadFile(w, r, bot, filePath)
 		return
 	}
-	params, e := readBotParams(r)
+	if r.Body != nil && (r.Method == http.MethodPost || r.Method == http.MethodPut || r.Method == http.MethodPatch) {
+		limit := a.C.MaxFile + (2 << 20)
+		if limit < (2 << 20) {
+			limit = 2 << 20
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, limit)
+	}
+	params, files, e := readBotParams(r)
 	if e != nil {
+		var mb *http.MaxBytesError
+		if errors.As(e, &mb) || errors.Is(e, errFileTooLarge) || errors.Is(e, errUploadFailed) {
+			botFail(w, botAPIError{413, "file is too big"})
+			return
+		}
 		botFail(w, ErrInvalid)
 		return
 	}
@@ -125,7 +144,7 @@ func (a *App) serveBotAPI(w http.ResponseWriter, r *http.Request) {
 	case "getWebhookInfo":
 		botOK(w, a.botWebhookInfo(bot))
 	case "sendMessage":
-		msg, err := a.botSend(bot, params, "text", "")
+		msg, err := a.botSend(bot, params, files, "text", "")
 		if err != nil {
 			botFail(w, err)
 			return
@@ -147,7 +166,7 @@ func (a *App) serveBotAPI(w http.ResponseWriter, r *http.Request) {
 	case "sendPhoto", "sendDocument", "sendAudio", "sendVideo", "sendVoice":
 		kind := map[string]string{"sendPhoto": "image", "sendDocument": "file", "sendAudio": "file", "sendVideo": "video", "sendVoice": "voice"}[method]
 		field := map[string]string{"sendPhoto": "photo", "sendDocument": "document", "sendAudio": "audio", "sendVideo": "video", "sendVoice": "voice"}[method]
-		msg, err := a.botSend(bot, params, kind, field)
+		msg, err := a.botSend(bot, params, files, kind, field)
 		if err != nil {
 			botFail(w, err)
 			return
@@ -171,8 +190,9 @@ func (a *App) serveBotAPI(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func readBotParams(r *http.Request) (map[string]any, error) {
+func readBotParams(r *http.Request) (map[string]any, map[string]*multipart.FileHeader, error) {
 	out := map[string]any{}
+	files := map[string]*multipart.FileHeader{}
 	for k, vs := range r.URL.Query() {
 		if len(vs) > 0 {
 			out[k] = vs[0]
@@ -180,46 +200,53 @@ func readBotParams(r *http.Request) (map[string]any, error) {
 	}
 	ct := r.Header.Get("Content-Type")
 	if r.Method == http.MethodGet || r.Body == nil {
-		return out, nil
+		return out, files, nil
 	}
 	if strings.HasPrefix(ct, "multipart/form-data") {
 		if e := r.ParseMultipartForm(aBotMaxMultipart); e != nil {
-			return nil, e
+			return nil, nil, e
 		}
-		for k, vs := range r.MultipartForm.Value {
-			if len(vs) > 0 {
-				out[k] = vs[0]
+		if r.MultipartForm != nil {
+			for k, vs := range r.MultipartForm.Value {
+				if len(vs) > 0 {
+					out[k] = vs[0]
+				}
+			}
+			for k, fhs := range r.MultipartForm.File {
+				if len(fhs) > 0 && fhs[0] != nil {
+					files[k] = fhs[0]
+				}
 			}
 		}
-		return out, nil
+		return out, files, nil
 	}
 	if strings.HasPrefix(ct, "application/x-www-form-urlencoded") {
 		if e := r.ParseForm(); e != nil {
-			return nil, e
+			return nil, nil, e
 		}
 		for k, vs := range r.PostForm {
 			if len(vs) > 0 {
 				out[k] = vs[0]
 			}
 		}
-		return out, nil
+		return out, files, nil
 	}
 	defer r.Body.Close()
 	body, e := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if e != nil {
-		return nil, e
+		return nil, nil, e
 	}
 	if len(bytes.TrimSpace(body)) == 0 {
-		return out, nil
+		return out, files, nil
 	}
 	var parsed map[string]any
 	if e = json.Unmarshal(body, &parsed); e != nil {
-		return nil, e
+		return nil, nil, e
 	}
 	for k, v := range parsed {
 		out[k] = v
 	}
-	return out, nil
+	return out, files, nil
 }
 
 const aBotMaxMultipart = 21 << 20
@@ -511,7 +538,7 @@ func (a *App) resolveBotChat(bot botRow, chatID string) (string, error) {
 	return a.CreateChat(Principal{UserID: bot.UserID}, "direct", "", []string{uid})
 }
 
-func (a *App) botSend(bot botRow, p map[string]any, kind, mediaField string) (map[string]any, error) {
+func (a *App) botSend(bot botRow, p map[string]any, files map[string]*multipart.FileHeader, kind, mediaField string) (map[string]any, error) {
 	cid, e := a.resolveBotChat(bot, paramString(p, "chat_id"))
 	if e != nil {
 		return nil, e
@@ -525,13 +552,9 @@ func (a *App) botSend(bot botRow, p map[string]any, kind, mediaField string) (ma
 	}
 	s := Send{ClientID: "bot-" + id(), Kind: kind, Text: text}
 	if mediaField != "" {
-		mediaID := paramString(p, mediaField)
-		if mediaID == "" {
-			return nil, botAPIError{400, "media is required"}
-		}
-		var n int
-		if e := a.DB.QueryRow("SELECT count(*) FROM media WHERE id=?", mediaID).Scan(&n); e != nil || n != 1 {
-			return nil, botAPIError{400, "unknown file_id"}
+		mediaID, e := a.resolveBotInputFile(bot, cid, p, files, mediaField, kind)
+		if e != nil {
+			return nil, e
 		}
 		s.MediaID = mediaID
 		if kind == "text" {
@@ -643,6 +666,142 @@ func (a *App) botAnswerCallback(bot botRow, p map[string]any) error {
 		return ErrInvalid
 	}
 	return nil
+}
+
+func botMediaRequire(kind, field string) string {
+	switch field {
+	case "photo":
+		return "image/"
+	case "video":
+		return "video/"
+	case "voice", "audio":
+		return "audio/"
+	}
+	switch kind {
+	case "image":
+		return "image/"
+	case "video":
+		return "video/"
+	case "voice":
+		return "audio/"
+	}
+	return ""
+}
+
+func botThumbField(p map[string]any, files map[string]*multipart.FileHeader) string {
+	for _, name := range []string{"thumbnail", "thumb"} {
+		if _, ok := files[name]; ok {
+			return name
+		}
+		if paramString(p, name) != "" {
+			return name
+		}
+	}
+	return ""
+}
+
+func (a *App) resolveBotInputFile(bot botRow, cid string, p map[string]any, files map[string]*multipart.FileHeader, field, kind string) (string, error) {
+	if files == nil {
+		files = map[string]*multipart.FileHeader{}
+	}
+	var thumbID string
+	var thumbNew bool
+	if field == "document" || field == "audio" || field == "video" {
+		if tf := botThumbField(p, files); tf != "" {
+			id, created, e := a.lookupOrStoreBotFile(bot, cid, p, files, tf, "image/", "", false)
+			if e != nil {
+				return "", e
+			}
+			thumbID, thumbNew = id, created
+		}
+	}
+	mid, _, e := a.lookupOrStoreBotFile(bot, cid, p, files, field, botMediaRequire(kind, field), thumbID, true)
+	if e != nil {
+		if thumbNew && thumbID != "" {
+			a.removeOrphanMedia(thumbID)
+		}
+		return "", e
+	}
+	return mid, nil
+}
+
+func (a *App) lookupOrStoreBotFile(bot botRow, cid string, p map[string]any, files map[string]*multipart.FileHeader, field, require, thumbID string, applyMeta bool) (string, bool, error) {
+	if fh, ok := files[field]; ok {
+		mid, e := a.storeBotUpload(bot, cid, fh, p, require, thumbID, applyMeta)
+		return mid, true, e
+	}
+	raw := strings.TrimSpace(paramString(p, field))
+	if raw == "" {
+		return "", false, botAPIError{400, "media is required"}
+	}
+	if strings.HasPrefix(raw, "attach://") {
+		name := strings.TrimPrefix(raw, "attach://")
+		if name == "" || strings.ContainsAny(name, "/\\") || strings.Contains(name, "..") {
+			return "", false, botAPIError{400, "attached file not found"}
+		}
+		fh, ok := files[name]
+		if !ok {
+			return "", false, botAPIError{400, "attached file not found"}
+		}
+		mid, e := a.storeBotUpload(bot, cid, fh, p, require, thumbID, applyMeta)
+		return mid, true, e
+	}
+	var mime string
+	if e := a.DB.QueryRow("SELECT mime FROM media WHERE id=?", raw).Scan(&mime); e != nil {
+		return "", false, botAPIError{400, "unknown file_id"}
+	}
+	if require != "" && !strings.HasPrefix(mime, require) {
+		return "", false, errUnsupportedMedia
+	}
+	return raw, false, nil
+}
+
+func (a *App) storeBotUpload(bot botRow, cid string, fh *multipart.FileHeader, p map[string]any, require, thumbID string, applyMeta bool) (string, error) {
+	if fh == nil {
+		return "", ErrInvalid
+	}
+	if e := a.uploadPermission(Principal{UserID: bot.UserID}, cid); e != nil {
+		return "", e
+	}
+	src, e := fh.Open()
+	if e != nil {
+		return "", ErrInvalid
+	}
+	defer src.Close()
+	opts := mediaStoreOpts{
+		Owner: bot.UserID, ChatID: cid, FileName: fh.Filename, Require: require, ThumbnailID: thumbID,
+	}
+	if applyMeta {
+		if w, ok := paramInt(p, "width"); ok && w >= 0 && w <= 65535 {
+			opts.Width = int(w)
+		}
+		if h, ok := paramInt(p, "height"); ok && h >= 0 && h <= 65535 {
+			opts.Height = int(h)
+		}
+		if d, ok := paramInt(p, "duration_ms"); ok && d >= 0 && d <= 86_400_000 {
+			opts.DurationMs = int(d)
+		} else if d, ok := paramInt(p, "duration"); ok && d >= 0 && d <= 86_400 {
+			opts.DurationMs = int(d) * 1000
+		}
+	}
+	info, e := a.storeMedia(context.Background(), src, opts)
+	if e != nil {
+		return "", e
+	}
+	return info.ID, nil
+}
+
+func (a *App) removeOrphanMedia(mid string) {
+	if mid == "" || !keyRE.MatchString(mid) {
+		return
+	}
+	var refs int
+	_ = a.DB.QueryRow("SELECT (SELECT count(*) FROM messages WHERE media_id=? AND deleted=0)+(SELECT count(*) FROM media WHERE thumbnail_id=?)", mid, mid).Scan(&refs)
+	if refs > 0 {
+		return
+	}
+	_ = a.storage.Delete(context.Background(), mid)
+	_, _ = a.DB.Exec("DELETE FROM media WHERE id=?", mid)
 }
 
 func (a *App) botGetFile(bot botRow, p map[string]any) (map[string]any, error) {

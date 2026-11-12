@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -107,6 +108,100 @@ func (s *LocalStorage) Usage(ctx context.Context) (int64, error) {
 func (s *LocalStorage) PresignUpload(context.Context, string, time.Duration) (string, error) {
 	return "", ErrNotSupported
 }
+
+var (
+	errFileTooLarge     = errors.New("file_too_large")
+	errMediaQuota       = errors.New("media_quota_exceeded")
+	errUploadFailed     = errors.New("file_too_large_or_upload_failed")
+	errUnsupportedMedia = errors.New("unsupported media type")
+)
+
+type mediaStoreOpts struct {
+	Owner       string
+	ChatID      string
+	FileName    string
+	Width       int
+	Height      int
+	DurationMs  int
+	Waveform    string
+	ThumbnailID string
+	Require     string
+}
+
+func (a *App) storeMedia(ctx context.Context, r io.Reader, opts mediaStoreOpts) (MediaInfo, error) {
+	var out MediaInfo
+	if r == nil {
+		return out, ErrInvalid
+	}
+	a.mediaMu.Lock()
+	defer a.mediaMu.Unlock()
+	used, e := a.storage.Usage(ctx)
+	if e != nil {
+		return out, e
+	}
+	limit := a.C.MaxFile
+	if remaining := a.C.MediaQuota - used; remaining < limit {
+		limit = remaining
+	}
+	if limit <= 0 {
+		return out, errMediaQuota
+	}
+	sniffSize := int64(512)
+	if limit+1 < sniffSize {
+		sniffSize = limit + 1
+	}
+	head := make([]byte, sniffSize)
+	n, e := io.ReadFull(r, head)
+	if e != nil && e != io.EOF && e != io.ErrUnexpectedEOF {
+		return out, ErrInvalid
+	}
+	head = head[:n]
+	if int64(n) > limit {
+		return out, errFileTooLarge
+	}
+	if n == 0 {
+		return out, ErrInvalid
+	}
+	mime := sniffMedia(head, http.DetectContentType(head))
+	if strings.Contains(mime, "html") || strings.Contains(mime, "xml") || strings.Contains(mime, "svg") {
+		return out, ErrInvalid
+	}
+	if strings.HasPrefix(mime, "text/") {
+		mime = "application/octet-stream"
+	}
+	if opts.Require != "" && !strings.HasPrefix(mime, opts.Require) {
+		return out, errUnsupportedMedia
+	}
+	mid := id()
+	digest := sha256.New()
+	reader := io.TeeReader(io.MultiReader(bytes.NewReader(head), r), digest)
+	n64, e := a.storage.Put(ctx, mid, io.LimitReader(reader, limit+1))
+	if e != nil || n64 > limit {
+		a.storage.Delete(ctx, mid)
+		return out, errUploadFailed
+	}
+	if opts.ChatID != "" && opts.Owner != "" && !a.isMember(opts.ChatID, opts.Owner) {
+		a.storage.Delete(ctx, mid)
+		return out, ErrForbidden
+	}
+	if opts.ThumbnailID != "" {
+		var tmime string
+		e = a.DB.QueryRow("SELECT mime FROM media WHERE id=? AND owner=?", opts.ThumbnailID, opts.Owner).Scan(&tmime)
+		if e != nil || !strings.HasPrefix(tmime, "image/") || opts.ThumbnailID == mid {
+			a.storage.Delete(ctx, mid)
+			return out, ErrInvalid
+		}
+	}
+	fileName := sanitizeFileName(opts.FileName)
+	_, e = a.DB.Exec("INSERT INTO media(id,owner,chat_id,mime,bytes,sha256,created,width,height,duration_ms,waveform,file_name,thumbnail_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", mid, opts.Owner, opts.ChatID, mime, n64, hex.EncodeToString(digest.Sum(nil)), now(), opts.Width, opts.Height, opts.DurationMs, opts.Waveform, fileName, opts.ThumbnailID)
+	if e != nil {
+		a.storage.Delete(ctx, mid)
+		return out, e
+	}
+	out = MediaInfo{ID: mid, MIME: mime, Bytes: n64, Width: opts.Width, Height: opts.Height, DurationMs: opts.DurationMs, Waveform: opts.Waveform, FileName: fileName, ThumbnailID: opts.ThumbnailID}
+	return out, nil
+}
+
 func (a *App) upload(w http.ResponseWriter, r *http.Request, p Principal) {
 	cid := r.Header.Get("X-Conversation-ID")
 	if cid != "" && !a.isMember(cid, p.UserID) {
@@ -119,87 +214,36 @@ func (a *App) upload(w http.ResponseWriter, r *http.Request, p Principal) {
 			return
 		}
 	}
-	a.mediaMu.Lock()
-	defer a.mediaMu.Unlock()
-	used, e := a.storage.Usage(r.Context())
-	if e != nil {
-		fail(w, e)
-		return
-	}
-	limit := a.C.MaxFile
-	if remaining := a.C.MediaQuota - used; remaining < limit {
-		limit = remaining
-	}
-	if limit <= 0 {
-		respond(w, 507, map[string]string{"error": "media_quota_exceeded"})
-		return
-	}
-	// Raw body (not multipart); stream limit+1 directly to disk, never buffer file.
-	r.Body = http.MaxBytesReader(w, r.Body, limit+1)
-	defer r.Body.Close()
-	sniffSize := int64(512)
-	if limit+1 < sniffSize {
-		sniffSize = limit + 1
-	}
-	head := make([]byte, sniffSize)
-	n, e := io.ReadFull(r.Body, head)
-	if e != nil && e != io.EOF && e != io.ErrUnexpectedEOF {
-		fail(w, ErrInvalid)
-		return
-	}
-	head = head[:n]
-	if int64(n) > limit {
-		respond(w, 413, map[string]string{"error": "file_too_large"})
-		return
-	}
-	if n == 0 {
-		fail(w, ErrInvalid)
-		return
-	}
 	meta, e := parseMediaHeaders(r)
 	if e != nil {
 		fail(w, e)
 		return
 	}
-	mime := sniffMedia(head, http.DetectContentType(head))
-	if strings.Contains(mime, "html") || strings.Contains(mime, "xml") || strings.Contains(mime, "svg") {
-		fail(w, ErrInvalid)
-		return
-	}
-	if strings.HasPrefix(mime, "text/") {
-		mime = "application/octet-stream"
-	}
-	mid := id()
-	digest := sha256.New()
-	reader := io.TeeReader(io.MultiReader(strings.NewReader(string(head)), r.Body), digest)
-	n64, e := a.storage.Put(r.Context(), mid, io.LimitReader(reader, limit+1))
-	if e != nil || n64 > limit {
-		a.storage.Delete(r.Context(), mid)
-		respond(w, 413, map[string]string{"error": "file_too_large_or_upload_failed"})
-		return
-	}
-	// Membership can change while upload streams; validate again before publishing metadata.
-	if cid != "" && !a.isMember(cid, p.UserID) {
-		a.storage.Delete(r.Context(), mid)
-		fail(w, ErrForbidden)
-		return
-	}
-	if meta.ThumbnailID != "" {
-		var tmime string
-		e = a.DB.QueryRow("SELECT mime FROM media WHERE id=? AND owner=?", meta.ThumbnailID, p.UserID).Scan(&tmime)
-		if e != nil || !strings.HasPrefix(tmime, "image/") || meta.ThumbnailID == mid {
-			a.storage.Delete(r.Context(), mid)
-			fail(w, ErrInvalid)
-			return
-		}
-	}
-	_, e = a.DB.Exec("INSERT INTO media(id,owner,chat_id,mime,bytes,sha256,created,width,height,duration_ms,waveform,file_name,thumbnail_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", mid, p.UserID, cid, mime, n64, hex.EncodeToString(digest.Sum(nil)), now(), meta.Width, meta.Height, meta.DurationMs, meta.Waveform, meta.FileName, meta.ThumbnailID)
+	// Raw body (not multipart); stream limit+1 directly to disk, never buffer file.
+	r.Body = http.MaxBytesReader(w, r.Body, a.C.MaxFile+1)
+	defer r.Body.Close()
+	info, e := a.storeMedia(r.Context(), r.Body, mediaStoreOpts{
+		Owner: p.UserID, ChatID: cid, FileName: meta.FileName,
+		Width: meta.Width, Height: meta.Height, DurationMs: meta.DurationMs,
+		Waveform: meta.Waveform, ThumbnailID: meta.ThumbnailID,
+	})
 	if e != nil {
-		a.storage.Delete(r.Context(), mid)
-		fail(w, e)
+		switch {
+		case errors.Is(e, errMediaQuota):
+			respond(w, 507, map[string]string{"error": "media_quota_exceeded"})
+		case errors.Is(e, errFileTooLarge):
+			respond(w, 413, map[string]string{"error": "file_too_large"})
+		case errors.Is(e, errUploadFailed):
+			respond(w, 413, map[string]string{"error": "file_too_large_or_upload_failed"})
+		default:
+			fail(w, e)
+		}
 		return
 	}
-	respond(w, 201, map[string]any{"id": mid, "mime": mime, "bytes": n64, "sha256": hex.EncodeToString(digest.Sum(nil)), "storage": "local", "width": meta.Width, "height": meta.Height, "duration_ms": meta.DurationMs, "waveform": meta.Waveform, "file_name": meta.FileName, "thumbnail_id": meta.ThumbnailID})
+	// Recompute digest hash for the response from the stored row.
+	var sha string
+	_ = a.DB.QueryRow("SELECT sha256 FROM media WHERE id=?", info.ID).Scan(&sha)
+	respond(w, 201, map[string]any{"id": info.ID, "mime": info.MIME, "bytes": info.Bytes, "sha256": sha, "storage": "local", "width": info.Width, "height": info.Height, "duration_ms": info.DurationMs, "waveform": info.Waveform, "file_name": info.FileName, "thumbnail_id": info.ThumbnailID})
 }
 func (a *App) download(w http.ResponseWriter, r *http.Request, p Principal) {
 	mid := r.PathValue("id")
