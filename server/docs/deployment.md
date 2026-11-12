@@ -35,6 +35,13 @@
 - 容器移除引导密码并重建后，原账号可登录，会话和两条消息仍存在。测试账号保留明确标签，所有验证会话已注销，没有删除用户数据。
 - 空闲 `docker stats --no-stream` 实测约 6.871MiB / 96MiB（7.16%），启动瞬间曾为 8.129MiB；这不是压测峰值或长期容量承诺。Docker 健康状态 healthy。
 
+## P2 更新（2026-11-12，Asia/Shanghai）
+
+- 部署提交：`faf28a2b7c776d86f53b4278d44f6c259e4f4cc9`（`mithka` 分支服务端）。镜像 `qingliao:20261112-faf28a2`，镜像 ID `sha256:59355c754ff6c91ac77c8cdec025dd3a49a04ace94413ad89b93d08db1a717b2`，约 13MB。上一版 `qingliao:20261110-b07a28b` 仍保留可回滚。
+- 交叉编译二进制 SHA256：`0302cb74a0942f84d4d9065ac45ad0033031a7078f536ca54cbc0fff0840df0f`（box 与香港 `/opt/qingliao/build/new/quietchat` 一致）。
+- 只改了 `/opt/qingliao/.env` 的 `CHAT_IMAGE`（权限仍为 0600），`docker compose up -d --pull never`。未使用 `down -v`，未直接改动数据卷 `qingliao_chat-data`。
+- 公网 `GET https://qingliao.zhufu.de5.net/healthz` 返回 200 `{"ok":true}`；容器 health `healthy`。空闲 `docker stats` 约 7.027MiB / 96MiB。此次未重做双账号 WSS 发信/离线补齐验收。
+
 ## 更新流程
 
 1. 在可信构建机确认 Git 工作区与待部署提交一致，先运行 `go test ./...` 与 `go vet ./...`。不要将其他并行客户端改动混入服务端提交；遵循仓库协作约定。
