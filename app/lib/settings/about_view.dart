@@ -32,9 +32,7 @@ class AboutView extends StatefulWidget {
 }
 
 class _AboutViewState extends State<AboutView> {
-  static const _websiteUrl = 'https://mithka.ieb.app';
-  static const _channelUrl = 'https://t.me/mithka';
-  static const _githubUrl = 'https://github.com/iebb/mithka';
+  static const _githubUrl = 'https://github.com/zf-lxx/qingliao';
   late final Future<AppVersion> _versionFuture = AppVersion.load();
   int _versionTapCount = 0;
   DateTime? _lastVersionTapAt;
@@ -182,23 +180,9 @@ class _AboutViewState extends State<AboutView> {
                 ),
               ],
               SettingsRow(
-                leading: const SettingsLeadingIcon(icon: HeroAppIcons.globe),
-                title: AppStrings.t(AppStringKeys.aboutWebsite),
-                value: 'mithka.ieb.app',
-                onTap: () => openLink(context, _websiteUrl),
-              ),
-              SettingsRow(
-                leading: const SettingsLeadingIcon(
-                  icon: HeroAppIcons.solidPaperPlane,
-                ),
-                title: AppStrings.t(AppStringKeys.aboutTelegramChannel),
-                value: 't.me/mithka',
-                onTap: () => openLink(context, _channelUrl),
-              ),
-              SettingsRow(
                 leading: const SettingsLeadingIcon(icon: HeroAppIcons.code),
                 title: 'GitHub',
-                value: 'github.com/iebb/mithka',
+                value: 'github.com/zf-lxx/qingliao',
                 onTap: () => openLink(context, _githubUrl),
               ),
             ],

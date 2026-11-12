@@ -157,9 +157,16 @@ class QlApi {
     String mediaId,
     String destination, {
     void Function(int received, int total)? onProgress,
+  }) => downloadPath('/media/$mediaId', destination, onProgress: onProgress);
+
+  /// Streams a GET under /v1[path] into [destination]. Returns the byte count.
+  Future<int> downloadPath(
+    String path,
+    String destination, {
+    void Function(int received, int total)? onProgress,
   }) async {
     final request = await _http
-        .getUrl(endpoint('/media/$mediaId'))
+        .getUrl(endpoint(path))
         .timeout(const Duration(seconds: 15));
     request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
     final response = await request.close().timeout(

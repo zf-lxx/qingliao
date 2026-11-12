@@ -1618,7 +1618,8 @@ class TdClient {
     for (final slot in slots) {
       final dbDir = Directory(_databaseDirectory(slot));
       final sessionFile = File('${dbDir.path}/td.binlog');
-      if (slot != 0 && !await sessionFile.exists()) {
+      final qingliaoSession = File('${dbDir.path}/qingliao_session.json');
+      if (slot != 0 && !await sessionFile.exists() && !await qingliaoSession.exists()) {
         changed = true;
         debugPrint('🔑 [Mithka] removing incomplete account slot $slot');
         await _deleteDirectoryIfPresent(dbDir);

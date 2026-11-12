@@ -28,6 +28,7 @@ extension on QlTdEngine {
       _ackedCursor = hw;
       await _loadConversations();
       await _refreshBlocks();
+      await _loadP3Extras();
     } on QlApiException catch (e) {
       if (e.statusCode == 401) {
         _sessionExpired();
@@ -505,6 +506,13 @@ extension on QlTdEngine {
         if (cleared != null) {
           _applyCleared(cleared, throughSeq: QlTdEngine._int(data['through_seq']) ?? cleared.lastSeq);
         }
+      case 'story.created':
+      case 'story.updated':
+      case 'story.deleted':
+        _onStoryEvent(type, data);
+      case 'folder.updated':
+      case 'folder.deleted':
+        unawaited(_refreshFolders());
       case 'block.updated':
         final uid = data['user_id']?.toString() ?? '';
         if (uid.isNotEmpty) {

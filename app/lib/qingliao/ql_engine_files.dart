@@ -8,6 +8,8 @@ class _QlFile {
   String localPath = '';
   String kind = 'file';
   String fileName = '';
+  String stickerId = '';
+  String stickerFileId = '';
   int size = 0;
   int downloaded = 0;
   bool downloading = false;
@@ -79,7 +81,7 @@ extension on QlTdEngine {
       'local': {
         '@type': 'localFile',
         'path': complete ? f.localPath : '',
-        'can_be_downloaded': f.mediaId.isNotEmpty,
+        'can_be_downloaded': f.mediaId.isNotEmpty || f.stickerFileId.isNotEmpty,
         'can_be_deleted': complete && f.mediaId.isNotEmpty,
         'is_downloading_active': f.downloading,
         'is_downloading_completed': complete,
@@ -89,8 +91,8 @@ extension on QlTdEngine {
       },
       'remote': {
         '@type': 'remoteFile',
-        'id': f.mediaId,
-        'unique_id': f.mediaId,
+        'id': f.stickerId.isNotEmpty ? f.stickerId : f.mediaId,
+        'unique_id': f.stickerId.isNotEmpty ? f.stickerId : f.mediaId,
         'is_uploading_active': f.uploading,
         'is_uploading_completed': f.mediaId.isNotEmpty && !f.uploading,
         'uploaded_size': f.mediaId.isNotEmpty ? f.size : f.uploaded,
@@ -108,6 +110,12 @@ extension on QlTdEngine {
 
   Map<String, dynamic> _getRemoteFile(String remoteId) {
     if (remoteId.isEmpty) return _error(400, 'remote_file_id required');
+    for (final f in _files.values) {
+      if (f.stickerId == remoteId || f.mediaId == remoteId) return _tdFile(f);
+    }
+    if (remoteId.startsWith('st-') || !remoteId.contains('-') && remoteId.length < 16) {
+      return _fileForSticker(stickerId: remoteId, fileId: remoteId);
+    }
     return _fileForMedia(remoteId, kind: 'file');
   }
 
@@ -116,7 +124,7 @@ extension on QlTdEngine {
     final f = _files[id];
     if (f == null) return _error(404, 'File not found');
     if (f.localPath.isNotEmpty && !f.downloading) return _tdFile(f);
-    if (f.mediaId.isEmpty) return _error(400, 'File can not be downloaded');
+    if (f.mediaId.isEmpty && f.stickerFileId.isEmpty) return _error(400, 'File can not be downloaded');
     f.download ??= _runDownload(f);
     if (r['synchronous'] == true) {
       await f.download;
@@ -133,11 +141,13 @@ extension on QlTdEngine {
     }
     f.downloading = true;
     _emitFile(f);
-    final path = _mediaPath(f.mediaId, f.kind, f.fileName);
+    final path = f.mediaId.isNotEmpty
+        ? _mediaPath(f.mediaId, f.kind, f.fileName)
+        : '$_filesDir/qingliao/stickers/${f.stickerFileId}.png';
     var lastEmit = DateTime.now();
     try {
-      final bytes = await api.downloadMedia(
-        f.mediaId,
+      final bytes = await api.downloadPath(
+        f.mediaId.isNotEmpty ? '/media/${f.mediaId}' : '/sticker-files/${f.stickerFileId}',
         path,
         onProgress: (received, total) {
           f.downloaded = received;

@@ -4756,12 +4756,25 @@ class _ChatInputBarState extends State<ChatInputBar>
               ),
             ),
             const SizedBox(width: 8),
-            GestureDetector(
-              onTap: () => vm.setReply(null),
-              child: AppIcon(
-                HeroAppIcons.xmark,
-                size: 18,
-                color: c.textTertiary,
+            // Pointer-down, not onTap: when the keyboard is open the bar can
+            // shift under the finger (IME / viewInsets), which cancels a
+            // GestureDetector tap. Clearing on down matches Telegram.
+            Listener(
+              behavior: HitTestBehavior.opaque,
+              onPointerDown: (_) => vm.setReply(null),
+              child: AppInteractiveSurface(
+                key: const ValueKey('composerReplyCancel'),
+                semanticLabel: AppStringKeys.countryPickerCancel.l10n(context),
+                onTap: () => vm.setReply(null),
+                borderRadius: BorderRadius.circular(AppRadius.md),
+                child: Padding(
+                  padding: const EdgeInsets.all(7),
+                  child: AppIcon(
+                    HeroAppIcons.xmark,
+                    size: 17,
+                    color: c.textTertiary,
+                  ),
+                ),
               ),
             ),
           ],

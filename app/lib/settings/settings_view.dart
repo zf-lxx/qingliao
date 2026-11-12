@@ -754,7 +754,7 @@ class _SettingsViewState extends State<SettingsView> {
           'accounts',
           'telegram account',
         ],
-        comingSoon: true,
+        comingSoon: false,
       ),
       _SettingsDestination(
         id: 'telegram-privacy',
@@ -775,7 +775,7 @@ class _SettingsViewState extends State<SettingsView> {
           'passkeys',
           'delete account',
         ],
-        comingSoon: true,
+        comingSoon: false
       ),
       _SettingsDestination(
         id: 'telegram-blocked-users',
@@ -799,7 +799,7 @@ class _SettingsViewState extends State<SettingsView> {
         color: const Color(0xFF34A2DF),
         destination: () => const ChatFolderManagementView(),
         searchTerms: const ['folders', 'tabs', 'chat lists', 'organize'],
-        comingSoon: true,
+        comingSoon: false
       ),
       _SettingsDestination(
         id: 'telegram-sticker-finder',
@@ -817,7 +817,7 @@ class _SettingsViewState extends State<SettingsView> {
           'sticker packs',
           'add stickers',
         ],
-        comingSoon: true,
+        comingSoon: false
       ),
       _SettingsDestination(
         id: 'telegram-language',
@@ -996,7 +996,7 @@ class _SettingsViewState extends State<SettingsView> {
         color: const Color(0xFF7467F0),
         destination: () => const AccountBackupView(),
         searchTerms: const ['backup', 'restore', 'session', 'export', 'import'],
-        comingSoon: true,
+        comingSoon: false
       ),
       _SettingsDestination(
         id: 'mithka-features',

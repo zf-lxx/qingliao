@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../platform/ohos_support.dart';
@@ -78,15 +79,78 @@ class AccountBackupService {
   /// absent instead: every surface already owns a not-supported branch
   /// (empty backup list, disabled buttons, login consent row hidden).
   Future<bool> _probeSupport(String method) async {
-    if (!_platformEligible) return false;
+    if (_platformEligible) {
+      try {
+        return await _channel.invokeMethod<bool>(method) ?? false;
+      } on MissingPluginException {
+        // No native iCloud/Keychain plugin in the 轻聊 build.
+      } on PlatformException {
+        // Fall through to the on-device file store.
+      }
+    }
+    // Local file backups work on this device even without the native plugin.
+    return method == 'isLocalStorageSupported';
+  }
+
+  Future<Directory> _dartBackupDir(AccountSessionBackupStorage storage) async {
+    final root = await getApplicationSupportDirectory();
+    final dir = Directory('${root.path}/qingliao_backups/${storage.name}');
+    await dir.create(recursive: true);
+    return dir;
+  }
+
+  Future<void> _dartSave(AccountSessionBackupStorage storage, String id, List<int> data) async {
+    final file = File('${(await _dartBackupDir(storage)).path}/$id.bin');
+    await file.writeAsBytes(data, flush: true);
+  }
+
+  Future<List<Object?>> _dartList(AccountSessionBackupStorage storage) async {
+    final dir = await _dartBackupDir(storage);
+    if (!await dir.exists()) return const [];
+    final out = <Object?>[];
+    await for (final entity in dir.list()) {
+      if (entity is File && entity.path.endsWith('.bin')) {
+        out.add(await entity.readAsBytes());
+      }
+    }
+    return out;
+  }
+
+  Future<void> _dartDelete(AccountSessionBackupStorage storage, String id) async {
+    final file = File('${(await _dartBackupDir(storage)).path}/$id.bin');
+    if (await file.exists()) await file.delete();
+  }
+
+  Future<void> _dartDeleteAll(AccountSessionBackupStorage storage) async {
+    final dir = await _dartBackupDir(storage);
+    if (await dir.exists()) await dir.delete(recursive: true);
+  }
+
+  Future<void> _deleteSessionOn(AccountSessionBackupStorage storage, String id) async {
     try {
-      return await _channel.invokeMethod<bool>(method) ?? false;
+      await _channel.invokeMethod<void>('deleteSession', {
+        'id': id,
+        'storage': storage.name,
+      });
     } on MissingPluginException {
-      return false;
+      await _dartDelete(storage, id);
     } on PlatformException {
-      return false;
+      await _dartDelete(storage, id);
     }
   }
+
+  Future<void> _deleteAllOn(AccountSessionBackupStorage storage) async {
+    try {
+      await _channel.invokeMethod<void>('deleteAllSessions', {
+        'storage': storage.name,
+      });
+    } on MissingPluginException {
+      await _dartDeleteAll(storage);
+    } on PlatformException {
+      await _dartDeleteAll(storage);
+    }
+  }
+
 
   Future<Set<String>> consentedAccountIds() async {
     await _ensureExplicitConsentMigration();
@@ -254,10 +318,17 @@ class AccountBackupService {
   Future<List<AccountSessionBackup>> _listBackupsFrom(
     AccountSessionBackupStorage storage,
   ) async {
-    final rawItems = await _channel.invokeListMethod<Object?>(
-      'getAllSessions',
-      {'storage': storage.name},
-    );
+    List<Object?>? rawItems;
+    try {
+      rawItems = await _channel.invokeListMethod<Object?>(
+        'getAllSessions',
+        {'storage': storage.name},
+      );
+    } on MissingPluginException {
+      rawItems = await _dartList(storage);
+    } on PlatformException {
+      rawItems = await _dartList(storage);
+    }
     final backupsById = <String, AccountSessionBackup>{};
     for (final raw in rawItems ?? const []) {
       final data = raw is Uint8List ? raw : null;
@@ -313,11 +384,18 @@ class AccountBackupService {
       );
     }
     final exported = await _exportActiveAccountSession();
-    await _channel.invokeMethod<void>('saveSession', {
-      'id': exported.backup.id,
-      'data': _encode(exported.backup, slot: exported.slot, storage: storage),
-      'storage': storage.name,
-    });
+    final data = _encode(exported.backup, slot: exported.slot, storage: storage);
+    try {
+      await _channel.invokeMethod<void>('saveSession', {
+        'id': exported.backup.id,
+        'data': data,
+        'storage': storage.name,
+      });
+    } on MissingPluginException {
+      await _dartSave(storage, exported.backup.id, data);
+    } on PlatformException {
+      await _dartSave(storage, exported.backup.id, data);
+    }
     return AccountSessionBackup(
       id: exported.backup.id,
       name: exported.backup.name,
@@ -425,18 +503,12 @@ class AccountBackupService {
     }
     if (storage == null || storage == AccountSessionBackupStorage.synced) {
       if (await isSupported) {
-        await _channel.invokeMethod<void>('deleteSession', {
-          'id': id,
-          'storage': AccountSessionBackupStorage.synced.name,
-        });
+        await _deleteSessionOn(AccountSessionBackupStorage.synced, id);
       }
     }
     if (storage == null || storage == AccountSessionBackupStorage.local) {
       if (await isLocalStorageSupported) {
-        await _channel.invokeMethod<void>('deleteSession', {
-          'id': id,
-          'storage': AccountSessionBackupStorage.local.name,
-        });
+        await _deleteSessionOn(AccountSessionBackupStorage.local, id);
       }
     }
   }
@@ -453,14 +525,10 @@ class AccountBackupService {
     }
     _pendingConsentBySlot.clear();
     if (await isSupported) {
-      await _channel.invokeMethod<void>('deleteAllSessions', {
-        'storage': AccountSessionBackupStorage.synced.name,
-      });
+      await _deleteAllOn(AccountSessionBackupStorage.synced);
     }
     if (await isLocalStorageSupported) {
-      await _channel.invokeMethod<void>('deleteAllSessions', {
-        'storage': AccountSessionBackupStorage.local.name,
-      });
+      await _deleteAllOn(AccountSessionBackupStorage.local);
     }
   }
 

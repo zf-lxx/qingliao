@@ -4,9 +4,9 @@ The `mithka` branch vendors [Mithka](https://github.com/iebb/mithka) under `app/
 
 The previous 0.2 Flutter tree remains in `client/` for reference and is not the app this branch builds. Build the new client from `app/` with `source ~/sdk/env.sh` and `flutter build apk --release --target-platform android-arm64`. Release signing falls back to the debug keystore at `~/.android/debug.keystore` when `android/key.properties` is absent, matching earlier 轻聊 0.x builds.
 
-The arm64 release APK is packaged without `libtdjson`, without FVP/FFmpeg, and without extra CPU ABIs or alternate Mithka launcher icons, so it stays under the ~50 MB budget (P2 artifact: `/workspace/qingliao-mithka-p2-arm64.apk`, version 0.3.2+6).
+The arm64 release APK is packaged without `libtdjson`, without FVP/FFmpeg, and without extra CPU ABIs or alternate Mithka launcher icons, so it stays under the ~50 MB budget (P3 artifact: `/workspace/qingliao-mithka-p3-arm64.apk`, version 0.4.0+7).
 
-TDLib’s native `libtdjson` is not shipped. `TdBindings` is a pure-Dart implementation that routes each request through `QlTdEngine`, which talks to the 轻聊 backend (`REST` + `WS /v1/ws` with seq/ack and difference sync). Unsupported methods return a TDLib `error` object (`QL_UNSUPPORTED: <method>`) — never a crash and never a fake success. A small allow-list (`qlEmptyResultMethods`) returns a truthful empty collection for sticker / story / session list queries the UI issues at startup.
+TDLib’s native `libtdjson` is not shipped. `TdBindings` is a pure-Dart implementation that routes each request through `QlTdEngine`, which talks to the 轻聊 backend (`REST` + `WS /v1/ws` with seq/ack and difference sync). Unsupported methods return a TDLib `error` object (`QL_UNSUPPORTED: <method>`) — never a crash and never a fake success. A small allow-list (`qlEmptyResultMethods`) returns a truthful empty collection for list queries the backend genuinely does not have (sessions/passkeys, custom emoji packs, live story albums, communities, …).
 
 ## Settings
 
@@ -16,19 +16,21 @@ Mithka’s Settings layout is kept (search + the same groups). Client-local page
 
 Server-backed pages that still have no real 轻聊 endpoint stay in the list with a trailing **暂未开放 / Not yet** label and open a placeholder:
 
-- Notifications (per-chat mute already works via `setChatNotificationSettings`), Privacy & Security (2FA / sessions / passkeys), Account backup, Chat folders, Stickers & emoji, Proxy.
+- Proxy. Calls and vendor push stay hidden / 暂未开放 (they need coturn/SFU and Mi Push/FCM credentials). Inside Privacy & Security, 2FA / active sessions / passkeys / account deletion are still not implemented; the visibility rules themselves are real.
 
-**Blocked users** is wired in P2 (`GET /v1/me/blocks`, `PUT /v1/users/{id}/block`) and is no longer marked 暂未开放.
+**P3 first wave** wires stickers (built-in 「轻聊」 PNG pack + user packs, not Telegram assets; `.tgs`/`.webm` deferred), polls, checklists, link previews, contacts, chat folders, notification scopes, privacy rules, read-receipt privacy, moments/stories (24h photo/video, views, reactions, reports; no live RTMP stories), richer text entities, local account session backup/restore, and multi-account slots (a `td.binlog` marker is written so extra slots are not quarantined). The in-app updater only reads `zf-lxx/qingliao` releases and parses versions from tags like `mithka-p2-0.3.2`. The composer reply-bar X now dismisses the reply target.
 
-P2 also wires media (voice waveform + duration, video, files, albums, thumbnails), shared-media + in-chat FTS search, forward, pin, reactions, report, clear history, group title/avatar, and basic channels through the existing adapter. Calls, stories / moments, stickers, polls, and communities stay hidden or 暂未开放.
+**Blocked users** was already wired in P2 and is not marked 暂未开放.
 
 ## Coverage summary
 
-The Mithka UI calls **457** distinct TDLib methods (static inventory of `TdClient` / UI query sites). P2 status among those (counts refreshed after the table updates below):
+The Mithka UI calls **457** distinct TDLib methods (static inventory of `TdClient` / UI query sites). P3 status among those:
 
-- implemented: **77**
-- empty (truthful empty result): **18**
-- unsupported (`QL_UNSUPPORTED`): **362**
+- implemented: **~120** (P2's 77 plus stickers, polls, checklists, folders, contacts, privacy, notification scopes, link previews, stories, and related mutators)
+- empty (truthful empty result): **~20** (sessions, custom emoji packs, story albums, communities, …)
+- unsupported (`QL_UNSUPPORTED`): **~317**
+
+Live stories, calls, Bot API, and vendor push remain unsupported or hidden.
 
 Qingliao-only methods (`qlLogin`, `qlRegister`, `qlGetServer`) are also implemented and used by the login screen; they are listed first.
 

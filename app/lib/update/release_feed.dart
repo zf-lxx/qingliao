@@ -12,10 +12,10 @@ import 'dart:ffi' show Abi;
 import 'dart:io';
 
 /// GitHub rejects requests without a User-Agent.
-const releaseFeedUserAgent = 'mithka-update-checker';
+const releaseFeedUserAgent = 'qingliao-update-checker';
 
-const _owner = 'iebb';
-const _repo = 'mithka';
+const _owner = 'zf-lxx';
+const _repo = 'qingliao';
 
 /// Where a user is sent when an in-place update is not something this install
 /// can do for them.
@@ -124,7 +124,7 @@ ReleaseInfo? parseReleaseInfo(String body) {
       .where((asset) => asset.url.isNotEmpty)
       .toList();
   return ReleaseInfo(
-    version: tag.replaceFirst(RegExp(r'^v'), ''),
+    version: releaseVersionFromTag(tag),
     assets: assets,
   );
 }
@@ -139,10 +139,23 @@ String? _hexDigest(String? digest) {
   return hex;
 }
 
+/// Normalizes a GitHub tag or versionName to a comparable X.Y.Z string.
+///
+/// 轻聊 tags look like `mithka-p2-0.3.2` or `v0.3.3`. The last dotted
+/// numeric run is the version; a prefix must not be compared as 0.0.0 or
+/// against an unrelated project.
+String releaseVersionFromTag(String tag) {
+  final trimmed = tag.trim();
+  if (trimmed.isEmpty) return trimmed;
+  final matches = RegExp(r'(\d+\.\d+(?:\.\d+)?)').allMatches(trimmed).toList();
+  if (matches.isNotEmpty) return matches.last.group(1)!;
+  return trimmed.replaceFirst(RegExp(r'^v'), '');
+}
+
 /// >0 if a>b, <0 if a<b, 0 if equal — compares the X.Y.Z triple.
 int compareReleaseVersions(String a, String b) {
-  final pa = _triple(a);
-  final pb = _triple(b);
+  final pa = _triple(releaseVersionFromTag(a));
+  final pb = _triple(releaseVersionFromTag(b));
   for (var i = 0; i < 3; i++) {
     if (pa[i] != pb[i]) return pa[i] - pb[i];
   }

@@ -5,8 +5,18 @@ extension on QlTdEngine {
 
   String _listKey(Object? list) {
     if (list is Map && list['@type'] == 'chatListArchive') return 'archive';
-    if (list is Map && list['@type'] == 'chatListFolder') return 'folder';
+    if (list is Map && list['@type'] == 'chatListFolder') {
+      return 'folder:${list['chat_folder_id'] ?? 0}';
+    }
     return 'main';
+  }
+
+  bool _folderMatchesKey(_Conv c, String key) {
+    final id = int.tryParse(key.substring('folder:'.length)) ?? 0;
+    final fid = _folderIdByInt[id];
+    final folder = fid == null ? null : _folders[fid];
+    if (folder == null) return false;
+    return _convMatchesFolder(c, folder);
   }
 
   List<_Conv> _sortedConvs(Object? list) {
@@ -14,7 +24,11 @@ extension on QlTdEngine {
     final out = [
       for (final c in _convs.values)
         if (c.announced && !c.id.startsWith('virtual:') &&
-            (key == 'archive' ? c.archived : (key == 'main' ? !c.archived : false)))
+            (key == 'archive'
+                ? c.archived
+                : (key == 'main'
+                    ? !c.archived
+                    : (key.startsWith('folder:') && _folderMatchesKey(c, key)))))
           c,
     ]..sort((a, b) => _chatOrder(b).compareTo(_chatOrder(a)));
     return out;
@@ -24,7 +38,9 @@ extension on QlTdEngine {
     if (_session == null) return _error(401, 'Unauthorized');
     await _waitInitialLoad();
     final key = _listKey(r['chat_list']);
-    if (key == 'folder') return _error(404, 'Not Found');
+    if (key.startsWith('folder:') && !_folders.values.any((f) => 'folder:${qlFolderInt(f['id']?.toString() ?? '')}' == key) && _folderIdByInt[int.tryParse(key.substring(7)) ?? 0] == null) {
+      return _error(404, 'Not Found');
+    }
     final served = _servedLists.putIfAbsent(key, () => <String>{});
     final pending = [
       for (final c in _sortedConvs(r['chat_list']))
@@ -253,7 +269,18 @@ extension on QlTdEngine {
     final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
     if (c == null) return _error(400, 'Chat not found');
     final key = _listKey(r['chat_list']);
-    if (key == 'folder') return _unsupported('addChatToList(chatListFolder)');
+    if (key.startsWith('folder:')) {
+      final fid = _folderIdByInt[int.tryParse(key.substring(7)) ?? 0];
+      if (fid == null) return _error(404, 'Folder not found');
+      final f = Map<String, dynamic>.from(_folders[fid] ?? {});
+      final filter = Map<String, dynamic>.from(f['filter'] is Map ? f['filter'] as Map : {});
+      final include = [for (final id in (filter['include_chat_ids'] as List? ?? const [])) id.toString()];
+      if (!include.contains(c.id)) include.add(c.id);
+      filter['include_chat_ids'] = include;
+      await _apiOrThrow.patch('/folders/$fid', {'name': f['name'], 'filter': filter, 'sort_order': f['sort_order'] ?? 0});
+      await _refreshFolders();
+      return _ok;
+    }
     final archived = key == 'archive';
     final result = await _patchState(c, {'archived': archived});
     if (result['@type'] == 'ok') {
@@ -914,6 +941,15 @@ extension on QlTdEngine {
     final input = r['input_message_content'];
     if (input is! Map) return _error(400, 'input_message_content required');
     final type = input['@type']?.toString() ?? '';
+    if (type == 'inputMessageSticker') {
+      return _sendStickerMessage(r, Map<String, dynamic>.from(input));
+    }
+    if (type == 'inputMessagePoll') {
+      return _sendPollMessage(r, Map<String, dynamic>.from(input));
+    }
+    if (type == 'inputMessageChecklist') {
+      return _sendChecklistMessage(r, Map<String, dynamic>.from(input));
+    }
     final draft = _draftContent(Map<String, dynamic>.from(input));
     if (draft == null) {
       if (const {'inputMessageText', 'inputMessagePhoto', 'inputMessageDocument', 'inputMessageVoiceNote', 'inputMessageVideo'}.contains(type)) {
@@ -1034,6 +1070,16 @@ extension on QlTdEngine {
           if (size != null) _mediaDims[mediaId] = [size.$1, size.$2];
         }
       }
+      String previewId = '';
+      if (kind == 'text') {
+        final match = _urlPattern.firstMatch(text);
+        if (match != null) {
+          try {
+            final preview = await _apiOrThrow.post('/link-previews', {'url': text.substring(match.start, match.end)});
+            previewId = preview['id']?.toString() ?? '';
+          } catch (_) {}
+        }
+      }
       final sent = await _apiOrThrow.post('/conversations/${c.id}/messages', {
         'client_msg_id': p.clientMsgId,
         'kind': kind,
@@ -1042,6 +1088,7 @@ extension on QlTdEngine {
         'reply_to': replyTo,
         if (albumId.isNotEmpty) 'album_id': albumId,
         if (entities.isNotEmpty) 'entities': entities,
+        if (previewId.isNotEmpty) 'link_preview_id': previewId,
       });
       _completePending(p, sent);
     } catch (e) {

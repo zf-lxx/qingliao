@@ -25,6 +25,7 @@ part 'ql_engine_files.dart';
 part 'ql_engine_ops.dart';
 part 'ql_engine_sync.dart';
 part 'ql_engine_p2.dart';
+part 'ql_engine_p3.dart';
 
 typedef QlEmit = void Function(Map<String, dynamic> event);
 
@@ -56,27 +57,18 @@ Map<String, dynamic> _unsupported(String method) =>
 /// installed, no stories, no saved animations...). They are documented in the
 /// coverage table as "empty".
 const Set<String> qlEmptyResultMethods = {
-  'getInstalledStickerSets',
   'getTrendingStickerSets',
-  'getRecentStickers',
-  'getFavoriteStickers',
   'getSavedAnimations',
   'getArchivedStickerSets',
-  'getChatFolderChatsToLeave',
-  'getActiveStoriesList',
-  'loadActiveStories',
   'getStoryNotificationSettingsExceptions',
   'getChatNotificationSettingsExceptions',
   'getRecentlyVisitedTMeUrls',
   'getRecentInlineBots',
   'getAttachmentMenuBot',
   'getTopChats',
-  'getChatsToPostStories',
   'getGroupsInCommon',
   'getSavedMessagesTopics',
   'loadSavedMessagesTopics',
-  'getStickers',
-  'searchStickers',
   'getCustomEmojiStickers',
   'getAvailableEffects',
   'getChatSimilarChats',
@@ -177,7 +169,7 @@ class _Pending {
     required this.message,
   });
 
-  final _Conv conv;
+  _Conv conv;
   final int tempId;
   final String clientMsgId;
   Map<String, dynamic> message;
@@ -217,6 +209,12 @@ class QlTdEngine {
   Timer? _persistTimer;
   final Map<String, List<int>> _mediaDims = {};
   final Map<int, _QlFile> _files = {};
+  final Map<String, Map<String, dynamic>> _folders = {};
+  final Map<int, String> _folderIdByInt = {};
+  final Set<String> _contactIds = {};
+  final Map<String, Map<String, dynamic>> _scopeNotifs = {};
+  bool _activeStoriesLoaded = false;
+  int _mainChatListPosition = 0;
 
   // ---- realtime socket
   WebSocket? _socket;
@@ -387,12 +385,7 @@ class QlTdEngine {
       case 'searchPublicChat':
         return _searchPublicChat(r['username']?.toString() ?? '');
       case 'getContacts':
-        await _waitInitialLoad();
-        final ids = <int>{
-          for (final c in _convs.values)
-            if (!c.isGroup && c.peerId != null) qlUserInt(c.peerId!),
-        };
-        return {'@type': 'users', 'total_count': ids.length, 'user_ids': ids.toList()};
+        return _getContactsTd();
       case 'toggleChatIsPinned':
         return _togglePinned(r);
       case 'toggleChatIsMarkedAsUnread':
@@ -431,9 +424,7 @@ class QlTdEngine {
       case 'setChatMemberStatus':
         return _setChatMemberStatus(r);
       case 'getScopeNotificationSettings':
-        return _scopeNotificationSettings();
-      case 'getChatFolder':
-        return _unsupported(type);
+        return _getScopeNotifications(r);
       case 'getChatListsToAddChat':
         return {'@type': 'chatLists', 'chat_lists': const [{'@type': 'chatListMain'}, {'@type': 'chatListArchive'}]};
       // --- messages
@@ -537,6 +528,8 @@ class QlTdEngine {
       case 'parseTextEntities':
         return _formatted(r['text']?.toString() ?? '');
       default:
+        final p3 = await _dispatchP3(type, r);
+        if (p3 != null) return p3;
         if (qlEmptyResultMethods.contains(type)) return _emptyResult(type);
         return _unsupported(type);
     }
@@ -612,6 +605,14 @@ class QlTdEngine {
         return {'@type': 'optionValueInteger', 'value': 16000};
       case 'message_caption_length_max':
         return {'@type': 'optionValueInteger', 'value': 4000};
+      case 'poll_answer_count_max':
+        return {'@type': 'optionValueInteger', 'value': 10};
+      case 'poll_question_length_max':
+        return {'@type': 'optionValueInteger', 'value': 1000};
+      case 'poll_option_length_max':
+        return {'@type': 'optionValueInteger', 'value': 300};
+      case 'checklist_task_count_max':
+        return {'@type': 'optionValueInteger', 'value': 30};
       default:
         return {'@type': 'optionValueEmpty'};
     }
@@ -696,6 +697,11 @@ class QlTdEngine {
   void _writeSession(QlSession session) {
     final file = File(_sessionPath);
     file.writeAsStringSync(jsonEncode(session.toJson()), flush: true);
+    // Mithka's multi-account quarantine deletes slots that lack td.binlog.
+    final marker = File('$_databaseDir/td.binlog');
+    if (!marker.existsSync()) {
+      marker.writeAsBytesSync(utf8.encode('QLSESS01'), flush: true);
+    }
     if (!Platform.isWindows) {
       try {
         Process.runSync('chmod', ['600', file.path]);
@@ -790,6 +796,7 @@ class QlTdEngine {
       if (id != _myId) {'@type': 'updateUser', 'user': _tdUser(id)},
     for (final c in _convs.values)
       if (c.announced) {'@type': 'updateNewChat', 'chat': _tdChat(c)},
+    if (_folders.isNotEmpty) _chatFoldersUpdate(),
   ];
 
   // MARK: - Local state persistence (id maps, cursor, media sizes)

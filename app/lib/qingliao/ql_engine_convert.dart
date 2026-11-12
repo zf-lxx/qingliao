@@ -108,6 +108,18 @@ extension on QlTdEngine {
           'url' => {'@type': 'textEntityTypeUrl'},
           'mention' => {'@type': 'textEntityTypeMention'},
           'hashtag' => {'@type': 'textEntityTypeHashtag'},
+          'cashtag' => {'@type': 'textEntityTypeCashtag'},
+          'email' => {'@type': 'textEntityTypeEmailAddress'},
+          'phone' => {'@type': 'textEntityTypePhoneNumber'},
+          'bot_command' => {'@type': 'textEntityTypeBotCommand'},
+          'text_mention' => {
+            '@type': 'textEntityTypeMentionName',
+            'user_id': qlUserInt(e['user_id']?.toString() ?? ''),
+          },
+          'custom_emoji' => {
+            '@type': 'textEntityTypeCustomEmoji',
+            'custom_emoji_id': QlTdEngine._int(e['custom_emoji_id']) ?? 0,
+          },
           _ => null,
         };
         if (type == null || length <= 0) continue;
@@ -167,6 +179,21 @@ extension on QlTdEngine {
         'textEntityTypeExpandableBlockQuote' => {'type': 'blockquote'},
         'textEntityTypeSpoiler' => {'type': 'spoiler'},
         'textEntityTypeTextUrl' => {'type': 'text_link', 'url': type['url'] ?? ''},
+        'textEntityTypeUrl' => {'type': 'url'},
+        'textEntityTypeMention' => {'type': 'mention'},
+        'textEntityTypeHashtag' => {'type': 'hashtag'},
+        'textEntityTypeCashtag' => {'type': 'cashtag'},
+        'textEntityTypeEmailAddress' => {'type': 'email'},
+        'textEntityTypePhoneNumber' => {'type': 'phone'},
+        'textEntityTypeBotCommand' => {'type': 'bot_command'},
+        'textEntityTypeMentionName' => {
+          'type': 'text_mention',
+          'user_id': _userIdByInt[QlTdEngine._int(type['user_id']) ?? 0] ?? '',
+        },
+        'textEntityTypeCustomEmoji' => {
+          'type': 'custom_emoji',
+          'custom_emoji_id': '${type['custom_emoji_id'] ?? ''}',
+        },
         _ => null,
       };
       if (mapped == null) continue;
@@ -404,9 +431,9 @@ extension on QlTdEngine {
       'can_send_videos': !c.isChannel || admin,
       'can_send_video_notes': false,
       'can_send_voice_notes': !c.isChannel || admin,
-      'can_send_polls': false,
-      'can_send_other_messages': false,
-      'can_add_link_previews': false,
+      'can_send_polls': !c.isChannel || admin,
+      'can_send_other_messages': !c.isChannel || admin,
+      'can_add_link_previews': !c.isChannel || admin,
       'can_change_info': c.isGroup && admin,
       'can_invite_users': c.isGroup && admin,
       'can_pin_messages': !c.isGroup || admin,
@@ -627,12 +654,33 @@ extension on QlTdEngine {
           'caption': caption,
         };
       case 'text':
+        final preview = m['link_preview'] is Map ? _tdLinkPreview(Map<String, dynamic>.from(m['link_preview'] as Map)) : null;
         return {
           '@type': 'messageText',
           'text': caption,
-          'link_preview': null,
+          'link_preview': preview,
           'link_preview_options': null,
         };
+      case 'sticker':
+        final sid = (meta['file_name']?.toString() ?? '').isNotEmpty ? meta['file_name'].toString() : (m['sticker_id']?.toString() ?? '');
+        return {
+          '@type': 'messageSticker',
+          'sticker': _tdSticker({
+            'id': sid,
+            'emoji': text,
+            'media_id': mediaId,
+            'file_id': sid,
+          }),
+          'is_premium': false,
+        };
+      case 'poll':
+        final poll = m['poll'] is Map ? Map<String, dynamic>.from(m['poll'] as Map) : <String, dynamic>{};
+        final content = _pollContent(poll);
+        (content)['@ql_poll_id'] = poll['id'];
+        return content;
+      case 'checklist':
+        final list = m['checklist'] is Map ? Map<String, dynamic>.from(m['checklist'] as Map) : <String, dynamic>{};
+        return _checklistContent(list);
       default:
         // Unknown future kinds stay visible as their text instead of crashing.
         return {
@@ -670,16 +718,4 @@ extension on QlTdEngine {
     }
   }
 
-  Map<String, dynamic> _scopeNotificationSettings() => {
-    '@type': 'scopeNotificationSettings',
-    'mute_for': 0,
-    'sound_id': -1,
-    'show_preview': true,
-    'use_default_mute_stories': true,
-    'mute_stories': false,
-    'story_sound_id': -1,
-    'show_story_poster': true,
-    'disable_pinned_message_notifications': false,
-    'disable_mention_notifications': false,
-  };
 }

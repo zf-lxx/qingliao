@@ -250,14 +250,39 @@ class UpdateChecker {
   }
 
   /// The release's APK for the device's preferred ABI, first match wins.
+  ///
+  /// Qingliao artifacts are named like `qingliao-mithka-p3-arm64.apk`, which
+  /// does not contain the Android ABI token `arm64-v8a`. Only 轻聊 packages
+  /// are eligible — an upstream mithka APK must never be offered.
   static String? _apkFor(ReleaseInfo release, List<String> abis) {
     for (final abi in abis) {
-      for (final asset in release.assets) {
-        if (asset.name.endsWith('.apk') && asset.name.contains(abi)) {
-          return asset.url;
-        }
-      }
+      final matches = [
+        for (final asset in release.assets)
+          if (_apkMatchesDevice(asset.name, abi)) asset,
+      ];
+      if (matches.isEmpty) continue;
+      matches.sort((a, b) {
+        final aq = a.name.toLowerCase().contains('qingliao') ? 0 : 1;
+        final bq = b.name.toLowerCase().contains('qingliao') ? 0 : 1;
+        return aq - bq;
+      });
+      return matches.first.url;
     }
     return null;
+  }
+
+  static bool _apkMatchesDevice(String name, String abi) {
+    final lower = name.toLowerCase();
+    if (!lower.endsWith('.apk')) return false;
+    if (lower.contains('mithka') && !lower.contains('qingliao')) return false;
+    return switch (abi) {
+      'arm64-v8a' => lower.contains('arm64') && !lower.contains('armeabi'),
+      'armeabi-v7a' =>
+        lower.contains('armeabi') ||
+            lower.contains('armv7') ||
+            (lower.contains('arm') && !lower.contains('arm64')),
+      'x86_64' => lower.contains('x86_64') || (lower.contains('x64') && !lower.contains('arm')),
+      _ => lower.contains(abi.toLowerCase()),
+    };
   }
 }

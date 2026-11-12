@@ -15,8 +15,11 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
 import '../qingliao/ql_engine.dart';
+import 'td_session_string.dart';
 
 class TdBindings {
   TdBindings._();
@@ -43,7 +46,7 @@ class TdBindings {
     }
   }
 
-  bool get supportsSessionStringBackup => false;
+  bool get supportsSessionStringBackup => true;
   bool get supportsTransferBoost => false;
 
   int createClientId() {
@@ -134,7 +137,42 @@ class TdBindings {
     required bool testMode,
     required int userId,
   }) {
-    throw UnsupportedError('Session strings are not supported by 轻聊');
+    final source = File(sourcePath);
+    final dir = source.parent;
+    final sessionFile = File('${dir.path}/qingliao_session.json');
+    if (!sessionFile.existsSync()) {
+      throw StateError('No 轻聊 session found to export');
+    }
+    final raw = jsonDecode(sessionFile.readAsStringSync());
+    if (raw is! Map) {
+      throw StateError('轻聊 session file is invalid');
+    }
+    final payload = utf8.encode(jsonEncode({
+      'v': 1,
+      'server': raw['server'],
+      'token': raw['token'],
+      'user_id': raw['user_id'],
+      'handle': raw['handle'],
+      'device_id': raw['device_id'],
+    }));
+    if (payload.length > 247) {
+      throw StateError('轻聊 session is too large to pack');
+    }
+    final authKey = Uint8List(256);
+    final magic = utf8.encode('QLSESS01');
+    authKey.setAll(0, magic);
+    authKey[8] = payload.length;
+    authKey.setAll(9, payload);
+    return TdSessionString.encode(
+      TdSessionStringData(
+        dcId: 1,
+        apiId: apiId,
+        testMode: testMode,
+        authKey: authKey,
+        userId: userId,
+        isBot: false,
+      ),
+    );
   }
 
   void configureTransferBoost({
@@ -145,6 +183,34 @@ class TdBindings {
   }) {}
 
   void importSessionString(String sessionString, String destinationPath) {
-    throw UnsupportedError('Session strings are not supported by 轻聊');
+    final data = TdSessionString.decode(sessionString);
+    final key = data.authKey;
+    final magic = utf8.encode('QLSESS01');
+    var magicOk = key.length >= 8;
+    for (var i = 0; magicOk && i < magic.length; i++) {
+      if (key[i] != magic[i]) magicOk = false;
+    }
+    if (!magicOk) {
+      throw const FormatException('Not a 轻聊 session string');
+    }
+    final n = key[8];
+    if (n <= 0 || 9 + n > key.length) {
+      throw const FormatException('轻聊 session string is truncated');
+    }
+    final raw = jsonDecode(utf8.decode(key.sublist(9, 9 + n)));
+    if (raw is! Map || (raw['token']?.toString() ?? '').isEmpty || (raw['user_id']?.toString() ?? '').isEmpty) {
+      throw const FormatException('轻聊 session string is missing fields');
+    }
+    final dest = File(destinationPath);
+    dest.parent.createSync(recursive: true);
+    File('${dest.parent.path}/qingliao_session.json').writeAsStringSync(jsonEncode({
+      'server': raw['server'] ?? '',
+      'token': raw['token'],
+      'user_id': raw['user_id'],
+      'handle': raw['handle'] ?? '',
+      'device_id': raw['device_id'] ?? '',
+      'event_cursor': 0,
+    }), flush: true);
+    dest.writeAsBytesSync(utf8.encode('QLSESS01'), flush: true);
   }
 }
