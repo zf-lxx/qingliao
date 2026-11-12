@@ -1264,12 +1264,14 @@ extension on QlTdEngine {
     }
     final wanted = switch (filter) {
       'searchMessagesFilterEmpty' => null,
-      'searchMessagesFilterPhoto' || 'searchMessagesFilterPhotoAndVideo' => 'messagePhoto',
-      'searchMessagesFilterDocument' => 'messageDocument',
-      'searchMessagesFilterVoiceNote' || 'searchMessagesFilterVoiceAndVideoNote' => 'messageVoiceNote',
-      _ => '-',
+      'searchMessagesFilterPhoto' => const {'messagePhoto'},
+      'searchMessagesFilterVideo' => const {'messageVideo'},
+      'searchMessagesFilterPhotoAndVideo' => const {'messagePhoto', 'messageVideo'},
+      'searchMessagesFilterDocument' => const {'messageDocument'},
+      'searchMessagesFilterVoiceNote' || 'searchMessagesFilterVoiceAndVideoNote' => const {'messageVoiceNote'},
+      _ => const <String>{'-'},
     };
-    if (wanted == '-') {
+    if (wanted != null && wanted.contains('-')) {
       return {'@type': 'foundChatMessages', 'total_count': 0, 'messages': const <Object>[], 'next_from_message_id': 0};
     }
     final from = QlTdEngine._int(r['from_message_id']) ?? 0;
@@ -1278,7 +1280,7 @@ extension on QlTdEngine {
     for (final m in c.messages.values.toList().reversed) {
       if (from != 0 && (m['id'] as int) >= from) continue;
       final content = m['content'] as Map;
-      if (wanted != null && content['@type'] != wanted) continue;
+      if (wanted != null && !wanted.contains(content['@type'])) continue;
       if (q.isNotEmpty) {
         final text = ((content['text'] ?? content['caption']) as Map?)?['text']?.toString().toLowerCase() ?? '';
         if (!text.contains(q)) continue;

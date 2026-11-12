@@ -11,6 +11,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -19,20 +20,27 @@ import '../platform/adaptive_platform.dart';
 import '../render/ql_curves.dart';
 import '../theme/app_theme.dart';
 
-/// Travel at which letting go commits the reply.
-const double messageSwipeReplyTrigger = 50;
+/// Start distance in centimetres, converted at 160 logical pixels per inch.
+const double messageSwipeReplyStartCm = 1.2;
+
+/// Start distance in logical pixels (~75.6). Independent of devicePixelRatio.
+double messageSwipeReplyStartDistance({double devicePixelRatio = 1}) =>
+    (messageSwipeReplyStartCm / 2.54) * 160;
+
+/// Horizontal must be at least this many times the vertical movement.
+const double messageSwipeReplyMinDominance = 2;
+
+/// Travel at which letting go commits the reply, in logical pixels.
+const double messageSwipeReplyTrigger = 96;
 
 /// Travel that follows the finger 1:1 before resistance starts.
-const double messageSwipeReplyRestingLimit = 80;
+const double messageSwipeReplyRestingLimit = 120;
 
 /// Travel the row never passes, however hard the finger pulls.
-const double messageSwipeReplyHardLimit = 80;
-
-/// Leftward flick speed in px/s that commits without reaching the trigger.
-const double messageSwipeReplyFlickVelocity = -650;
+const double messageSwipeReplyHardLimit = 120;
 
 /// Travel over which the trailing glyph fades from invisible to opaque.
-const double messageSwipeReplyGlyphFade = 50;
+const double messageSwipeReplyGlyphFade = 96;
 
 /// Inset of the glyph from the row's trailing edge.
 const double messageSwipeReplyGlyphInset = 16;
@@ -52,7 +60,34 @@ const double messageSwipeReplyResistance = 0.34;
 /// stream, which damps progressively) or the raw travel from the touch origin
 /// (a pointer path that knows the whole gesture). Both read the same.
 double messageSwipeReplyStartPx(BuildContext context) =>
-    qlEdgeStartPx(MediaQuery.devicePixelRatioOf(context));
+    messageSwipeReplyStartDistance();
+
+/// True when a leftward drag has gone far enough, with horizontal clearly
+/// greater than vertical, to start following as a reply swipe.
+bool messageSwipeReplyAcceptsDirection({
+  required double dx,
+  required double dy,
+  double? startPx,
+  double dominance = messageSwipeReplyMinDominance,
+}) {
+  final start = startPx ?? messageSwipeReplyStartDistance();
+  return dx <= -start && dx.abs() >= dy.abs() * dominance;
+}
+
+/// True when the pointer has moved far enough to be a scroll (or a rightward
+/// drag) rather than a reply swipe.
+bool messageSwipeReplyRejectsAsScroll({
+  required double dx,
+  required double dy,
+  double? startPx,
+  double dominance = messageSwipeReplyMinDominance,
+}) {
+  final start = startPx ?? messageSwipeReplyStartDistance();
+  final distance = Offset(dx, dy).distance;
+  if (distance < start) return false;
+  if (dx >= 0) return true;
+  return dy.abs() * dominance > dx.abs();
+}
 
 double messageSwipeReplyOffset(double travel) {
   if (travel >= -messageSwipeReplyRestingLimit) {
@@ -64,14 +99,12 @@ double messageSwipeReplyOffset(double travel) {
   return -damped.clamp(0, messageSwipeReplyHardLimit).toDouble();
 }
 
-/// Whether a released drag commits, given its travel and flick speed.
+/// Whether a released drag commits. Only crossing the trigger counts; a flick
+/// that never reached it springs home without opening a reply.
 bool messageSwipeReplyCommits({
   required double offset,
   double? primaryVelocity,
-}) =>
-    offset <= -messageSwipeReplyTrigger ||
-    (primaryVelocity != null &&
-        primaryVelocity <= messageSwipeReplyFlickVelocity);
+}) => offset <= -messageSwipeReplyTrigger;
 
 /// One row's swipe travel.
 ///
@@ -126,9 +159,17 @@ class MessageSwipeReplyController {
     if (!_gated) {
       _gateX += delta;
       _gateY += dy;
-      if (_gateX <= -_startPx && _gateX.abs() / 3 > _gateY.abs()) {
+      if (messageSwipeReplyAcceptsDirection(
+        dx: _gateX,
+        dy: _gateY,
+        startPx: _startPx,
+      )) {
         _gated = true;
-      } else if (_gateX.abs() > 24 && _gateY.abs() > _gateX.abs() / 3) {
+      } else if (messageSwipeReplyRejectsAsScroll(
+        dx: _gateX,
+        dy: _gateY,
+        startPx: _startPx,
+      )) {
         _rejected = true;
       }
       return;
@@ -141,9 +182,17 @@ class MessageSwipeReplyController {
     if (_disposed || _rejected) return;
     final threshold = startPx > 0 ? startPx : _startPx;
     if (!_gated && threshold > 0) {
-      if (travel <= -threshold && travel.abs() / 3 > dy.abs()) {
+      if (messageSwipeReplyAcceptsDirection(
+        dx: travel,
+        dy: dy,
+        startPx: threshold,
+      )) {
         _gated = true;
-      } else if (travel.abs() > 24 && dy.abs() > travel.abs() / 3) {
+      } else if (messageSwipeReplyRejectsAsScroll(
+        dx: travel,
+        dy: dy,
+        startPx: threshold,
+      )) {
         _rejected = true;
         return;
       } else {
@@ -235,17 +284,30 @@ Widget buildMessageSwipeReply({
     WidgetsBinding.instance.addPostFrameCallback((_) => controller.cancel());
   }
   final row = interactive
-      ? GestureDetector(
+      ? RawGestureDetector(
           behavior: HitTestBehavior.opaque,
-          onHorizontalDragStart: (_) =>
-              controller.beginDrag(startPx: messageSwipeReplyStartPx(context)),
-          onHorizontalDragUpdate: (details) =>
-              controller.dragBy(details.delta.dx, dy: details.delta.dy),
-          onHorizontalDragEnd: (details) => controller.finish(
-            onReply: onReply,
-            primaryVelocity: details.primaryVelocity,
-          ),
-          onHorizontalDragCancel: controller.cancel,
+          gestures: <Type, GestureRecognizerFactory>{
+            MessageSwipeReplyGestureRecognizer:
+                GestureRecognizerFactoryWithHandlers<
+                  MessageSwipeReplyGestureRecognizer
+                >(
+                  () => MessageSwipeReplyGestureRecognizer(
+                    startPx: messageSwipeReplyStartPx(context),
+                  ),
+                  (instance) {
+                    instance.onStart = (_) => controller.beginDrag();
+                    instance.onUpdate = (details) => controller.dragBy(
+                      details.delta.dx,
+                      dy: details.delta.dy,
+                    );
+                    instance.onEnd = (details) => controller.finish(
+                      onReply: onReply,
+                      primaryVelocity: details.primaryVelocity,
+                    );
+                    instance.onCancel = controller.cancel;
+                  },
+                ),
+          },
           child: child,
         )
       : child;
@@ -346,4 +408,129 @@ class _MessageSwipeReplyRowState extends State<MessageSwipeReplyRow>
     swipeEnabled: widget.swipeEnabled,
     child: widget.child,
   );
+}
+
+/// Claims a leftward reply swipe only after [startPx] and a clearly horizontal
+/// path, so a vertical transcript scroll keeps the arena.
+class MessageSwipeReplyGestureRecognizer extends OneSequenceGestureRecognizer {
+  MessageSwipeReplyGestureRecognizer({
+    required this.startPx,
+    this.dominance = messageSwipeReplyMinDominance,
+    super.debugOwner,
+    super.supportedDevices,
+  });
+
+  final double startPx;
+  final double dominance;
+  GestureDragStartCallback? onStart;
+  GestureDragUpdateCallback? onUpdate;
+  GestureDragEndCallback? onEnd;
+  GestureDragCancelCallback? onCancel;
+
+  Offset _origin = Offset.zero;
+  int? _pointer;
+  bool _accepted = false;
+  VelocityTracker? _velocity;
+
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    startTrackingPointer(event.pointer, event.transform);
+    _origin = event.position;
+    _pointer = event.pointer;
+    _accepted = false;
+    _velocity = VelocityTracker.withKind(event.kind)
+      ..addPosition(event.timeStamp, event.position);
+  }
+
+  @override
+  void handleEvent(PointerEvent event) {
+    if (event.pointer != _pointer) return;
+    if (event is PointerMoveEvent) {
+      _velocity?.addPosition(event.timeStamp, event.position);
+      final travel = event.position - _origin;
+      if (!_accepted) {
+        if (messageSwipeReplyRejectsAsScroll(
+          dx: travel.dx,
+          dy: travel.dy,
+          startPx: startPx,
+          dominance: dominance,
+        )) {
+          resolve(GestureDisposition.rejected);
+          stopTrackingPointer(event.pointer);
+          _reset();
+          return;
+        }
+        if (messageSwipeReplyAcceptsDirection(
+          dx: travel.dx,
+          dy: travel.dy,
+          startPx: startPx,
+          dominance: dominance,
+        )) {
+          _accepted = true;
+          resolve(GestureDisposition.accepted);
+          onStart?.call(
+            DragStartDetails(globalPosition: _origin, kind: event.kind),
+          );
+          onUpdate?.call(
+            DragUpdateDetails(
+              globalPosition: event.position,
+              delta: Offset(travel.dx, travel.dy),
+              primaryDelta: travel.dx,
+            ),
+          );
+        }
+        return;
+      }
+      onUpdate?.call(
+        DragUpdateDetails(
+          globalPosition: event.position,
+          delta: event.delta,
+          primaryDelta: event.delta.dx,
+        ),
+      );
+    } else if (event is PointerUpEvent) {
+      stopTrackingPointer(event.pointer);
+      if (_accepted) {
+        final velocity = _velocity?.getVelocity() ?? Velocity.zero;
+        onEnd?.call(
+          DragEndDetails(
+            velocity: velocity,
+            primaryVelocity: velocity.pixelsPerSecond.dx,
+          ),
+        );
+      } else {
+        resolve(GestureDisposition.rejected);
+      }
+      _reset();
+    } else if (event is PointerCancelEvent) {
+      stopTrackingPointer(event.pointer);
+      if (_accepted) {
+        onCancel?.call();
+      } else {
+        resolve(GestureDisposition.rejected);
+      }
+      _reset();
+    }
+  }
+
+  void _reset() {
+    _pointer = null;
+    _accepted = false;
+    _velocity = null;
+  }
+
+  @override
+  void acceptGesture(int pointer) {}
+
+  @override
+  void rejectGesture(int pointer) {
+    if (_accepted) onCancel?.call();
+    _reset();
+  }
+
+  @override
+  String get debugDescription => 'messageSwipeReply';
+
+  @override
+  void didStopTrackingLastPointer(int pointer) {}
 }

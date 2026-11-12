@@ -57,18 +57,20 @@ void main() {
   test(
     'swipe-to-reply clamp, trigger and snap follow the documented values',
     () {
-      expect(messageSwipeReplyTrigger, 50);
-      expect(messageSwipeReplyHardLimit, 80);
-      expect(messageSwipeReplyOffset(-80), -80);
-      expect(messageSwipeReplyOffset(-200), -80);
+      expect(messageSwipeReplyTrigger, 96);
+      expect(messageSwipeReplyHardLimit, 120);
+      expect(messageSwipeReplyOffset(-120), -120);
+      expect(messageSwipeReplyOffset(-200), -120);
       expect(messageSwipeReplyOffset(20), 0);
-      expect(messageSwipeReplyCommits(offset: -50), isTrue);
+      expect(messageSwipeReplyCommits(offset: -96), isTrue);
       expect(messageSwipeReplyCommits(offset: -20), isFalse);
       expect(QlDuration.swipeSnap, const Duration(milliseconds: 180));
     },
   );
 
-  testWidgets('swipe-reply start threshold uses 0.4cm', (tester) async {
+  testWidgets('swipe-reply start threshold uses 1.2cm in logical pixels', (
+    tester,
+  ) async {
     await tester.pumpWidget(
       const MediaQuery(
         data: MediaQueryData(devicePixelRatio: 2, size: Size(400, 800)),
@@ -78,7 +80,11 @@ void main() {
     final context = tester.element(find.byType(SizedBox));
     expect(
       messageSwipeReplyStartPx(context),
-      closeTo(qlEdgeStartPx(MediaQuery.devicePixelRatioOf(context)), 0.0001),
+      closeTo(messageSwipeReplyStartDistance(), 0.0001),
+    );
+    expect(
+      messageSwipeReplyStartPx(context),
+      closeTo((1.2 / 2.54) * 160, 0.0001),
     );
   });
 }

@@ -22,12 +22,14 @@ import '../components/photo_avatar.dart';
 import '../components/toast.dart';
 import '../components/ui_components.dart';
 import '../l10n/app_localizations.dart';
+import '../media/media_metadata.dart';
 import '../platform/keyboard_modifiers.dart';
 import '../tdlib/td_models.dart';
 import '../theme/app_motion.dart';
 import '../theme/app_theme.dart';
 import '../theme/date_text.dart';
 import 'chat_message_search_controller.dart';
+import 'chat_search_result_presentation.dart';
 
 /// The chat header while search is on: back out of search, type, and — where
 /// there is room for them — step between hits without leaving the field.
@@ -344,7 +346,7 @@ class _ChatSearchField extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors;
-    final counter = controller.hasResults
+    final counter = controller.hasResults && controller.matchPosition > 0
         ? AppStrings.t(AppStringKeys.chatSearchMatchCounter, {
             'value1': '${controller.matchPosition}',
             'value2': '${controller.matchCount}',
@@ -731,21 +733,27 @@ class ChatSearchResultsPane extends StatelessWidget {
         }
         return false;
       },
-      child: ListView.builder(
-        key: const ValueKey('chatSearchResultsList'),
-        padding: const EdgeInsets.only(bottom: AppSpacing.lg),
-        itemCount: results.length,
-        itemBuilder: (context, index) {
-          final message = results[index];
-          return ChatSearchResultRow(
-            message: message,
-            query: controller.query,
-            peerTitle: peerTitle,
-            selected: index == controller.activeIndex,
-            onTap: () => onSelect(message),
-          );
-        },
-      ),
+      child: controller.filter == ChatSearchFilter.media
+          ? ChatSearchMediaGrid(
+              messages: results,
+              selectedId: controller.activeResult?.id,
+              onSelect: onSelect,
+            )
+          : ListView.builder(
+              key: const ValueKey('chatSearchResultsList'),
+              padding: const EdgeInsets.only(bottom: AppSpacing.lg),
+              itemCount: results.length,
+              itemBuilder: (context, index) {
+                final message = results[index];
+                return ChatSearchResultRow(
+                  message: message,
+                  query: controller.query,
+                  peerTitle: peerTitle,
+                  selected: index == controller.activeIndex,
+                  onTap: () => onSelect(message),
+                );
+              },
+            ),
     );
   }
 }
@@ -771,9 +779,8 @@ class ChatSearchResultRow extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.colors;
     final name = message.senderName ?? message.senderTitle ?? peerTitle;
-    final snippet = message.text.trim().isEmpty
-        ? AppStringKeys.chatSearchMessageResultLabel.l10n(context)
-        : message.text.replaceAll('\n', ' ');
+    final snippet = chatSearchResultSnippet(message);
+    final leading = _searchResultLeading(message, name);
     return AppInteractiveSurface(
       key: ValueKey('chatSearchResult-${message.id}'),
       onTap: onTap,
@@ -791,12 +798,7 @@ class ChatSearchResultRow extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            PhotoAvatar(
-              title: name,
-              photo: message.senderPhoto,
-              size: 32,
-              allowAnimation: false,
-            ),
+            leading,
             const SizedBox(width: AppSpacing.lg),
             Expanded(
               child: Column(
@@ -912,4 +914,147 @@ Future<void> showChatSearchResultsSheet({
       ),
     ),
   );
+}
+
+Widget _searchResultLeading(ChatMessage message, String name) {
+  final thumb = message.previewImage ?? message.image;
+  if (thumb != null) {
+    return SizedBox(
+      width: 40,
+      height: 40,
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          ClipRRect(
+            borderRadius: BorderRadius.circular(AppRadius.sm),
+            child: TDImage(
+              photo: thumb.thumbnail ?? thumb,
+              cornerRadius: 0,
+              fit: BoxFit.cover,
+            ),
+          ),
+          if (message.video != null)
+            const Center(
+              child: AppIcon(HeroAppIcons.play, size: 16, color: Colors.white),
+            ),
+        ],
+      ),
+    );
+  }
+  final icon = message.document != null
+      ? HeroAppIcons.solidFile
+      : message.voice != null
+      ? HeroAppIcons.microphone
+      : message.music != null
+      ? HeroAppIcons.music
+      : message.linkPreview != null
+      ? HeroAppIcons.link
+      : HeroAppIcons.message;
+  if (icon == HeroAppIcons.message) {
+    return PhotoAvatar(
+      title: name,
+      photo: message.senderPhoto,
+      size: 32,
+      allowAnimation: false,
+    );
+  }
+  return SizedBox(
+    width: 40,
+    height: 40,
+    child: DecoratedBox(
+      decoration: BoxDecoration(
+        color: const Color(0xFF111111).withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(AppRadius.sm),
+      ),
+      child: Center(child: AppIcon(icon, size: 18)),
+    ),
+  );
+}
+
+/// Thumbnail grid for the in-chat media filter.
+class ChatSearchMediaGrid extends StatelessWidget {
+  const ChatSearchMediaGrid({
+    super.key,
+    required this.messages,
+    required this.onSelect,
+    this.selectedId,
+  });
+
+  final List<ChatMessage> messages;
+  final ValueChanged<ChatMessage> onSelect;
+  final int? selectedId;
+
+  @override
+  Widget build(BuildContext context) {
+    final media = messages
+        .where((message) => message.image != null || message.video != null)
+        .toList(growable: false);
+    return GridView.builder(
+      key: const ValueKey('chatSearchMediaGrid'),
+      padding: const EdgeInsets.all(2),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: _columns(context),
+        mainAxisSpacing: 2,
+        crossAxisSpacing: 2,
+      ),
+      itemCount: media.length,
+      itemBuilder: (context, index) {
+        final message = media[index];
+        final selected = message.id == selectedId;
+        final thumb = message.previewImage ?? message.image;
+        return GestureDetector(
+          onTap: () => onSelect(message),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              border: selected
+                  ? Border.all(color: AppTheme.brand, width: 2)
+                  : null,
+            ),
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                ColoredBox(
+                  color: const Color(0xFF111111),
+                  child: thumb == null
+                      ? const SizedBox.expand()
+                      : TDImage(
+                          photo: thumb.thumbnail ?? thumb,
+                          cornerRadius: 0,
+                          fit: BoxFit.cover,
+                        ),
+                ),
+                if (message.video != null) ...[
+                  Container(color: Colors.black.withValues(alpha: 0.16)),
+                  const Center(
+                    child: AppIcon(
+                      HeroAppIcons.play,
+                      size: 22,
+                      color: Colors.white,
+                    ),
+                  ),
+                  if ((message.videoDuration ?? 0) > 0)
+                    Positioned(
+                      right: 5,
+                      bottom: 5,
+                      child: Text(
+                        formatMediaDuration(message.videoDuration!),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  int _columns(BuildContext context) {
+    final width = MediaQuery.sizeOf(context).width;
+    return (width / 110).floor().clamp(3, 6).toInt();
+  }
 }

@@ -1506,9 +1506,6 @@ class _ChatInputBarState extends State<ChatInputBar>
         previousVmState != _syncedVmState ||
         !identical(previousBotCommandQuery, _botCommandQuery) ||
         !identical(previousBotCommandCandidates, _botCommandCandidates);
-    final replyChromeChanged =
-        previousVmState.replyToId != _syncedVmState.replyToId ||
-        previousVmState.replyQuoteText != _syncedVmState.replyQuoteText;
     if (mounted &&
         shouldRebuildComposerForVmUpdate(
           revisionChanged: revisionChanged,
@@ -1516,7 +1513,8 @@ class _ChatInputBarState extends State<ChatInputBar>
           hasFocus: _focus.hasFocus,
         )) {
       setState(() {});
-      if (replyChromeChanged) widget.onPanelGeometryChanged?.call();
+      // Reply chrome animates its own height. Scrolling the transcript here
+      // jumps the list, especially while the keyboard is already open.
     }
   }
 
@@ -3948,8 +3946,8 @@ class _ChatInputBarState extends State<ChatInputBar>
               children: [
                 if (editingMessage != null)
                   _editBanner(editingMessage)
-                else if (vm.replyTo != null)
-                  _replyBanner(vm.replyTo!),
+                else
+                  _animatedReplyBanner(vm.replyTo),
                 if (editingMessage == null)
                   if (_inlineBotResults != null)
                     _inlineBotResultMenu()
@@ -4752,6 +4750,10 @@ class _ChatInputBarState extends State<ChatInputBar>
         ),
       ),
     );
+  }
+
+  Widget _animatedReplyBanner(ChatMessage? message) {
+    return _ComposerReplyBannerSlot(message: message, builder: _replyBanner);
   }
 
   Widget _replyBanner(ChatMessage m) {
@@ -11216,5 +11218,76 @@ class _ComposerLinkDialogState extends State<_ComposerLinkDialog> {
     final url = value.trim();
     if (url.isEmpty) return;
     Navigator.of(context).pop(url);
+  }
+}
+
+/// Animates the reply chrome in and out by height only, on its own layer, so
+/// opening a reply does not fade or rebuild the rest of the composer.
+class _ComposerReplyBannerSlot extends StatefulWidget {
+  const _ComposerReplyBannerSlot({
+    required this.message,
+    required this.builder,
+  });
+
+  final ChatMessage? message;
+  final Widget Function(ChatMessage message) builder;
+
+  @override
+  State<_ComposerReplyBannerSlot> createState() =>
+      _ComposerReplyBannerSlotState();
+}
+
+class _ComposerReplyBannerSlotState extends State<_ComposerReplyBannerSlot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  ChatMessage? _visible;
+
+  @override
+  void initState() {
+    super.initState();
+    _visible = widget.message;
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 180),
+      value: widget.message == null ? 0 : 1,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _ComposerReplyBannerSlot oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.message != null) {
+      _visible = widget.message;
+      _controller.forward();
+    } else if (_visible != null) {
+      _controller.reverse().whenComplete(() {
+        if (mounted && widget.message == null) {
+          setState(() => _visible = null);
+        }
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final message = _visible;
+    if (message == null) return const SizedBox.shrink();
+    return ClipRect(
+      child: SizeTransition(
+        sizeFactor: CurvedAnimation(
+          parent: _controller,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        ),
+        alignment: Alignment.topCenter,
+        child: RepaintBoundary(child: widget.builder(message)),
+      ),
+    );
   }
 }

@@ -21,6 +21,7 @@ import '../tdlib/json_helpers.dart';
 import '../tdlib/td_client.dart';
 import '../tdlib/td_models.dart';
 import 'chat_search_query.dart';
+import 'chat_search_result_presentation.dart';
 import 'telegram_link.dart';
 
 /// Width of the trailing results pane in a wide chat.
@@ -286,8 +287,12 @@ class ChatMessageSearchController extends ChangeNotifier {
   /// loaded; a short or exhausted response can still exceed it.
   int get matchCount => math.max(_totalCount, _results.length);
 
-  /// The cursor's 1-based position, or 0 before anything is selected.
-  int get matchPosition => _activeIndex < 0 ? 0 : _activeIndex + 1;
+  /// The cursor's 1-based position, or 0 when there are no hits.
+  /// An unselected list still reports 1 so the header never shows "第 0".
+  int get matchPosition => chatSearchMatchPosition(
+    activeIndex: _activeIndex,
+    resultCount: _results.length,
+  );
 
   bool get canStepOlder =>
       _activeIndex + 1 < _results.length || (hasMore && hasResults);
@@ -811,8 +816,13 @@ class ChatMessageSearchController extends ChangeNotifier {
     unawaited(_hydrateSenders(page.messages, runId));
     // Typing lands on the newest hit so the transcript follows the query
     // without a second gesture; later pages never move the cursor.
-    if (activateFirst && autoActivateFirstResult && _results.isNotEmpty) {
-      selectIndex(0, automatic: true);
+    if (activateFirst && _results.isNotEmpty && _activeIndex < 0) {
+      if (autoActivateFirstResult) {
+        selectIndex(0, automatic: true);
+      } else {
+        _activeIndex = 0;
+        notifyListeners();
+      }
     }
   }
 

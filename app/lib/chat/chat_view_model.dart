@@ -1118,6 +1118,14 @@ class ChatViewModel extends ChangeNotifier {
     super.notifyListeners();
   }
 
+  /// Rebuilds the composer without bumping [fullViewRevision], so the
+  /// transcript is not walked or rebuilt when a reply target is set or cleared.
+  void _notifyComposerOnly() {
+    if (_isDisposed) return;
+    _composerRevision++;
+    super.notifyListeners();
+  }
+
   /// Rebuilds only materialized bubbles for [messageIds]. The regular model
   /// notification is deliberately retained: ChatInputBar uses it to invalidate
   /// AI context and preserves its focused revision-rebuild policy.
@@ -2313,14 +2321,21 @@ class ChatViewModel extends ChangeNotifier {
   /// The reply metadata already addresses the sender. Mentions remain an
   /// explicit action so replying cannot accidentally invoke inline-bot search.
   void setReply(ChatMessage? message, {MessageTextQuote? quote}) {
-    if (editingMessage != null) {
+    final leftEditing = editingMessage != null;
+    if (leftEditing) {
       _restoreComposerAfterMessageEdit(notify: false);
     }
     replyTo = message;
-    if (message != null && !isSecretChat && quote != null) {
+    if (message == null) {
+      _replyQuote = null;
+    } else if (!isSecretChat && quote != null) {
       _replyQuote = quote;
     }
-    notifyListeners();
+    if (leftEditing) {
+      notifyListeners();
+    } else {
+      _notifyComposerOnly();
+    }
   }
 
   bool get canQuoteText =>

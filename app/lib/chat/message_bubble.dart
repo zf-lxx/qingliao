@@ -40,7 +40,6 @@ import '../render/bubble_shape.dart';
 import '../render/bubble_stamp.dart';
 import '../render/chat_image.dart';
 import '../render/message_layout.dart';
-import '../render/ql_curves.dart';
 import '../theme/app_theme.dart';
 import '../theme/content_size.dart';
 import '../theme/date_text.dart';
@@ -439,22 +438,29 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
       }
       _desktopTouchLongPressTimer?.cancel();
       _desktopTouchLongPressTimer = null;
-      if (travel.dx.abs() / 3 <= travel.dy.abs()) {
+      final startPx = messageSwipeReplyStartPx(context);
+      if (messageSwipeReplyRejectsAsScroll(
+        dx: travel.dx,
+        dy: travel.dy,
+        startPx: startPx,
+      )) {
         _cancelDesktopTouchGesture();
         return;
       }
-      if (travel.dx > -qlEdgeStartPx(MediaQuery.devicePixelRatioOf(context))) {
+      if (!messageSwipeReplyAcceptsDirection(
+        dx: travel.dx,
+        dy: travel.dy,
+        startPx: startPx,
+      )) {
         return;
       }
       _desktopTouchHorizontal = true;
-      _swipe.beginDrag(
-        startPx: qlEdgeStartPx(MediaQuery.devicePixelRatioOf(context)),
-      );
+      _swipe.beginDrag(startPx: startPx);
     }
     _swipe.dragTo(
       math.min(0, travel.dx),
       dy: travel.dy,
-      startPx: qlEdgeStartPx(MediaQuery.devicePixelRatioOf(context)),
+      startPx: messageSwipeReplyStartPx(context),
     );
     _clearDesktopTouchSelection();
   }

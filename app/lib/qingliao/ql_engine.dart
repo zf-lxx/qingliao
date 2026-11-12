@@ -17,6 +17,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'media_search_merge.dart';
 import 'ql_api.dart';
 import 'ql_ids.dart';
 import 'ql_image_size.dart';
