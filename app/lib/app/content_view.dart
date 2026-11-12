@@ -14,7 +14,7 @@ import 'package:provider/provider.dart';
 
 import '../auth/account_store.dart';
 import '../auth/auth_manager.dart';
-import '../auth/login_view.dart';
+import '../qingliao/ql_login_view.dart';
 import '../chat/custom_emoji.dart';
 import '../chat/link_handler.dart';
 import '../chats/search_view.dart';
@@ -49,7 +49,7 @@ class ContentView extends StatelessWidget {
       // re-read of an already-running client — account switch or add account —
       // and the login surface is what the user asked for, so it stays on screen.
       AuthInitializing() || AuthLoggingOut() => const SplashView(),
-      _ => const LoginView(),
+      _ => const QlLoginView(),
     };
     // Entering MainTabView is the one edge where the crossfade lands on the
     // frames that inflate the tab stack and the first chat rows; wrapping that

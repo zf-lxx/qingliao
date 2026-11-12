@@ -1526,8 +1526,7 @@ class _ProfileDetailViewState extends State<ProfileDetailView> {
 
   Widget _bottomBar() {
     final c = context.colors;
-    final showLeadingAction =
-        !_isContact || Theme.of(context).platform != TargetPlatform.macOS;
+    // 轻聊: no calls, contact-add, or secret chats yet; only "send message".
     return Container(
       decoration: BoxDecoration(
         color: c.navBar,
@@ -1539,30 +1538,11 @@ class _ProfileDetailViewState extends State<ProfileDetailView> {
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
           child: Row(
             children: [
-              if (showLeadingAction) ...[
-                Expanded(
-                  child: _barButton(
-                    AppStrings.t(
-                      _isContact
-                          ? AppStringKeys.profileDetailAudioVideoCall
-                          : AppStringKeys.profileDetailAddFriend,
-                    ),
-                    primary: false,
-                    onTap: _isContact
-                        ? _callMenu
-                        : () => unawaited(_addToContacts()),
-                  ),
-                ),
-                const SizedBox(width: 12),
-              ],
               Expanded(
                 child: _barButton(
                   AppStrings.t(AppStringKeys.profileDetailSendMessage),
                   primary: true,
                   onTap: _openChat,
-                  onLongPress: _hasLoadedUser && !_isMe && !_isBot
-                      ? _startSecretChat
-                      : null,
                 ),
               ),
             ],

@@ -5073,7 +5073,7 @@ class _ChatViewState extends State<ChatView> {
     final action = await showSharedContactActions(
       context,
       contact,
-      showCallAction: Theme.of(context).platform != TargetPlatform.macOS,
+      showCallAction: false, // 轻聊: no calls backend
     );
     if (action == null || !mounted) return;
     switch (action) {
@@ -8291,7 +8291,7 @@ class _ChatViewState extends State<ChatView> {
     final requestInitialFocus = widget.requestComposerFocusOnReady;
     final enterToSend = themeController.enterToSend;
     final quickRepliesEnabled = themeController.quickRepliesEnabled;
-    final showCallAction = !_usesWideGroupHeader;
+    const showCallAction = false; // 轻聊: no calls backend
     final simpleMode = themeController.simpleMode;
     final cached = _composerBarCache;
     if (cached != null &&
@@ -8690,8 +8690,7 @@ class _ChatViewState extends State<ChatView> {
                   if (wideGroupHeader)
                     WideGroupChatHeaderActions(
                       onStartCall: (isVideo) => unawaited(_startCall(isVideo)),
-                      showCallActions:
-                          Theme.of(context).platform != TargetPlatform.macOS,
+                      showCallActions: false, // 轻聊: no calls backend
                       onToggleContext: widget.onInfoPressed == null
                           ? null
                           : _handleInfoPressed,

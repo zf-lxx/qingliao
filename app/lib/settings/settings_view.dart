@@ -31,6 +31,7 @@ import '../theme/app_motion.dart';
 import '../theme/app_theme.dart';
 import 'about_view.dart';
 import 'account_backup_view.dart';
+import '../qingliao/ql_not_yet_view.dart';
 import 'advanced_settings_view.dart';
 import 'ai_settings_view.dart';
 import 'appearance_view.dart';
@@ -677,7 +678,7 @@ class _SettingsViewState extends State<SettingsView> {
       child: Navigator(
         onGenerateRoute: (_) => MaterialPageRoute<void>(
           builder: (_) => SettingsSplitPaneScope(
-            child: (chosen.splitDestination ?? chosen.destination)(),
+            child: chosen.page(split: true),
           ),
         ),
       ),
@@ -753,6 +754,7 @@ class _SettingsViewState extends State<SettingsView> {
           'accounts',
           'telegram account',
         ],
+        comingSoon: true,
       ),
       _SettingsDestination(
         id: 'telegram-privacy',
@@ -773,6 +775,7 @@ class _SettingsViewState extends State<SettingsView> {
           'passkeys',
           'delete account',
         ],
+        comingSoon: true,
       ),
       _SettingsDestination(
         id: 'telegram-blocked-users',
@@ -784,6 +787,7 @@ class _SettingsViewState extends State<SettingsView> {
         color: const Color(0xFFDA405B),
         destination: () => const BlockedUsersView(),
         searchTerms: const ['blocked users', 'blocklist', 'unblock'],
+        comingSoon: true,
       ),
       _SettingsDestination(
         id: 'telegram-chat-folders',
@@ -795,6 +799,7 @@ class _SettingsViewState extends State<SettingsView> {
         color: const Color(0xFF34A2DF),
         destination: () => const ChatFolderManagementView(),
         searchTerms: const ['folders', 'tabs', 'chat lists', 'organize'],
+        comingSoon: true,
       ),
       _SettingsDestination(
         id: 'telegram-sticker-finder',
@@ -812,6 +817,7 @@ class _SettingsViewState extends State<SettingsView> {
           'sticker packs',
           'add stickers',
         ],
+        comingSoon: true,
       ),
       _SettingsDestination(
         id: 'telegram-language',
@@ -990,6 +996,7 @@ class _SettingsViewState extends State<SettingsView> {
         color: const Color(0xFF7467F0),
         destination: () => const AccountBackupView(),
         searchTerms: const ['backup', 'restore', 'session', 'export', 'import'],
+        comingSoon: true,
       ),
       _SettingsDestination(
         id: 'mithka-features',
@@ -1036,6 +1043,7 @@ class _SettingsViewState extends State<SettingsView> {
         color: const Color(0xFF34A2DF),
         destination: () => const ProxyView(),
         searchTerms: const ['proxy', 'socks5', 'http', 'mtproto', 'connection'],
+        comingSoon: true,
       ),
       _SettingsDestination(
         id: 'mithka-advanced',
@@ -1229,6 +1237,8 @@ class _SettingsViewState extends State<SettingsView> {
       title: destination.titleKey,
       value: showOwner
           ? destination.owner?.titleKey ?? ''
+          : destination.comingSoon
+          ? AppStringKeys.settingsNotYet
           : destination.trailingKey ?? version ?? '',
       leading: SettingsIconTile(
         icon: destination.icon,
@@ -1255,12 +1265,13 @@ class _SettingsViewState extends State<SettingsView> {
     _SettingsDestination destination, {
     BuildContext? context,
   }) {
+    final page = destination.page();
     Navigator.of(context ?? this.context).push(
       destination.platformNeutralRoute
           ? AppPageRoute<void>(
-              pageBuilder: (_, _, _) => destination.destination(),
+              pageBuilder: (_, _, _) => page,
             )
-          : MaterialPageRoute<void>(builder: (_) => destination.destination()),
+          : MaterialPageRoute<void>(builder: (_) => page),
     );
   }
 
@@ -1442,6 +1453,7 @@ class _SettingsDestination {
     this.trailingKey,
     this.platformNeutralRoute = false,
     this.showsVersion = false,
+    this.comingSoon = false,
     this.searchTerms = const [],
   });
 
@@ -1457,7 +1469,18 @@ class _SettingsDestination {
   final String? trailingKey;
   final bool platformNeutralRoute;
   final bool showsVersion;
+  /// Server-backed (or not-yet-implemented) items stay in the list with a
+  /// clear "not yet" label. Opening them shows [QlNotYetView] — never a fake
+  /// success or a TDLib error screen.
+  final bool comingSoon;
   final List<String> searchTerms;
+
+  Widget page({bool split = false}) {
+    if (comingSoon) {
+      return QlNotYetView(titleKey: titleKey, showBackButton: !split);
+    }
+    return (split ? (splitDestination ?? destination) : destination)();
+  }
 
   bool matches(BuildContext context, String query) {
     final haystack = <String>[

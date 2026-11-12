@@ -46,7 +46,9 @@ android {
     }
 
     defaultConfig {
-        applicationId = "ad.neko.mithka"
+        // 轻聊 keeps the 0.x applicationId so it upgrades in place; the Kotlin
+        // namespace stays ad.neko.mithka (source package only).
+        applicationId = "xyz.qingliao.app"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         // The prebuilt TDLib (tdjson) artifacts target API 23. The manifest-aware
@@ -59,6 +61,10 @@ android {
         versionName = flutter.versionName
         manifestPlaceholders["sentryDsn"] = sentryDsn
         manifestPlaceholders["sentryEnvironment"] = sentryEnvironment
+        // arm64-only APK: plugin AARs otherwise merge every ABI's .so.
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     sourceSets {
@@ -75,6 +81,18 @@ android {
             // compressed so the arm64 APK is small enough for Telegram upload;
             // Android will extract them at install time.
             useLegacyPackaging = true
+            // FVP/MDK/FFmpeg is not used on Android (ExoPlayer is). Shipping
+            // those .so files blew the arm64 APK past the 50 MB budget.
+            excludes += listOf(
+                "**/libffmpeg.so",
+                "**/libmdk.so",
+                "**/libass.so",
+                "**/libfvp.so",
+                "lib/armeabi/**",
+                "lib/armeabi-v7a/**",
+                "lib/x86/**",
+                "lib/x86_64/**",
+            )
         }
     }
 
@@ -135,12 +153,8 @@ dependencies {
     implementation("androidx.credentials:credentials-play-services-auth:1.6.0")
     // Mithka Pro subscriptions. Product prices and billing periods are owned by
     // Play Console; the client always displays the localized ProductDetails.
-    implementation("com.android.billingclient:billing:9.1.0")
     // ntgcalls — a from-scratch C++ Telegram-calls engine (WebRTC + opus + libvpx
     // statically bundled inside a self-contained libntgcalls.so per ABI). This is
     // the real media transport behind the CallMediaEngine seam; CallMediaPlugin
     // drives its 1:1 P2P API from the TDLib callStateReady payload.
-    implementation("io.github.pytgcalls:ntgcalls:2.2.5")
-    implementation("com.google.mlkit:language-id:17.0.6")
-    implementation("com.google.mlkit:translate:17.0.3")
 }

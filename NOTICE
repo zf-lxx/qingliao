@@ -1,0 +1,18 @@
+轻聊 (Qingliao)
+==============
+
+This branch of 轻聊 vendors and adapts Mithka, a Flutter client originally
+written to speak TDLib. Mithka's own source and assets remain under the
+BSD 3-Clause License; see app/LICENSE (and the copyright holders named
+there).
+
+  Mithka: https://github.com/iebb/mithka
+
+The 轻聊 contributors replaced Mithka's TDLib / Telegram network stack
+with a pure-Dart adapter for the 轻聊 backend, renamed the Android
+application to 轻聊 (applicationId xyz.qingliao.app), and dropped
+Telegram branding. Alternative Mithka launcher icons that shipped
+upstream are retained as optional Mithka artwork.
+
+Do not assume Telegram, TDLib, or the Mithka authors endorse or are
+responsible for 轻聊.

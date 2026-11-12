@@ -154,12 +154,24 @@ class MethodChannelMithkaProGateway
   }
 
   @override
-  Future<Map<Object?, Object?>?> getState() =>
-      _channel.invokeMapMethod<Object?, Object?>('getState');
+  Future<Map<Object?, Object?>?> getState() async {
+    // 轻聊 ships without Play Billing; the native channel is absent.
+    try {
+      return await _channel.invokeMapMethod<Object?, Object?>('getState');
+    } on MissingPluginException {
+      return null;
+    }
+  }
 
   @override
-  Future<List<Object?>> getProducts() async =>
-      await _channel.invokeListMethod<Object?>('getProducts') ?? const [];
+  Future<List<Object?>> getProducts() async {
+    try {
+      return await _channel.invokeListMethod<Object?>('getProducts') ??
+          const [];
+    } on MissingPluginException {
+      return const [];
+    }
+  }
 
   @override
   Future<void> purchase(String productId) async {
@@ -190,8 +202,8 @@ bool supporterIconsAvailableForPlatform(
   TargetPlatform platform, {
   bool isWeb = kIsWeb,
 }) =>
-    !isWeb &&
-    (platform == TargetPlatform.iOS || platform == TargetPlatform.android);
+    // 轻聊: no paid icons (no billing integration).
+    false;
 
 class MithkaProService extends ChangeNotifier {
   MithkaProService({MithkaProGateway? gateway, TargetPlatform? platform})

@@ -702,6 +702,15 @@ class TdClient {
   }
 
   void _spawnReceiveIsolate() {
+    // 轻聊: the pure-Dart engine delivers events straight to the router on
+    // the main isolate; there is no native td_receive loop to pump.
+    _bindings.listener = _route;
+    _receiveIsolateDead = false;
+    if (_bindings.supportsSessionStringBackup == false) return;
+    _spawnNativeReceiveIsolate();
+  }
+
+  void _spawnNativeReceiveIsolate() {
     final generation = ++_receiveIsolateGeneration;
     _receiveIsolate?.kill(priority: Isolate.immediate);
     _receiveIsolate = null;
@@ -782,6 +791,7 @@ class TdClient {
     for (final backend in _botApiBackendForClient.values) {
       unawaited(backend.resume());
     }
+    _bindings.resumeAll();
     if (kDebugMode) return;
     if (!_receiveIsolateDead) return;
 
@@ -913,6 +923,7 @@ class TdClient {
   }
 
   Future<bool> _stopReceivePump() async {
+    _bindings.listener = null;
     _debugReceiveTimer?.cancel();
     _debugReceiveTimer = null;
 
@@ -2088,6 +2099,12 @@ class TdClient {
   }
 
   void _startDebugReceivePump() {
+    _bindings.listener = _route;
+    return;
+  }
+
+  // ignore: unused_element
+  void _startNativeDebugReceivePump() {
     _debugReceiveTimer?.cancel();
     _debugReceiveTimer = Timer.periodic(const Duration(milliseconds: 33), (_) {
       for (var i = 0; i < 40; i++) {

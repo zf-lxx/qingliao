@@ -3025,7 +3025,7 @@
     <string name="sensitiveContentUnblockFailed">18+ Inhalte konnten nicht aktiviert werden: {value1}</string>
     <string name="sensitiveContentUnblockMessage">Dies aktiviert Telegrams kontoweite Einstellung für 18+ Inhalte. Du kannst sie später unter Datenschutz und Sicherheit ausschalten.</string>
     <string name="sensitiveContentUnblockTitle">18+ Inhalte anzeigen?</string>
-    <string name="settingsAboutMithka">Über Mithka</string>
+    <string name="settingsAboutMithka">Über 轻聊</string>
     <string name="settingsChatBehavior">Chatverhalten</string>
     <string name="settingsChooseSection">Wähle links einen Bereich</string>
     <string name="settingsContentFilters">Inhaltsfilter</string>
@@ -3952,4 +3952,6 @@
     <string name="storageDownloadLocationFailed">Auf den Download-Speicherort konnte nicht zugegriffen werden</string>
     <string name="storageDownloadFolderNotSelected">Ordner auswählen</string>
     <string name="storageDownloadCurrent">Aktueller Speicherort: {value1}</string>
+    <string name="settingsNotYet">Noch nicht</string>
+    <string name="settingsNotYetMessage">Diese Funktion braucht eine Server-API und kommt in einer späteren Version. Es wird noch nichts gespeichert oder synchronisiert.</string>
 </resources>

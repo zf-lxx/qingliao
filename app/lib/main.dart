@@ -314,7 +314,8 @@ bool _shouldUseFvp() {
 void _initializeVideoBackend({bool installGlobalLogHandler = true}) {
   try {
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
-      FVideoFvpBackend.ensureAndroidAlphaWebmDecoderInitialized();
+      // 轻聊 P1: skip FVP's alpha-WebM (video sticker) decoder so the APK
+      // does not ship libffmpeg/libmdk. Ordinary video uses ExoPlayer.
       return;
     }
     if (!_shouldUseFvp()) return;

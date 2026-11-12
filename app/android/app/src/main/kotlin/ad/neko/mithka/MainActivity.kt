@@ -28,13 +28,6 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import com.iebb.f_videoplayer_pip.FVideoPictureInPicturePlugin
-import com.google.mlkit.common.model.DownloadConditions
-import com.google.mlkit.nl.languageid.LanguageIdentification
-import com.google.mlkit.nl.languageid.LanguageIdentifier
-import com.google.mlkit.nl.translate.TranslateLanguage
-import com.google.mlkit.nl.translate.Translation
-import com.google.mlkit.nl.translate.Translator
-import com.google.mlkit.nl.translate.TranslatorOptions
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -51,22 +44,15 @@ import org.xmlpull.v1.XmlPullParserFactory
 
 class MainActivity : FlutterFragmentActivity() {
     private var webProxyBridge: WebProxyBridge? = null
-    private var callMedia: CallMediaPlugin? = null
     private var telegramPasskeys: TelegramPasskeyPlugin? = null
     private var accountBackup: AccountBackupPlugin? = null
     private var downloadStorage: DownloadStoragePlugin? = null
-    private var mithkaPro: MithkaProPlugin? = null
     private var nowPlaying: NowPlayingPlugin? = null
     private var mediaDropChannel: MethodChannel? = null
     private var shareIntentChannel: MethodChannel? = null
     private var pendingSharePayload: Map<String, Any?>? = null
     private var acceptingImageDrop = false
     private var fullscreenSystemUi = false
-    private val translators = mutableMapOf<String, Translator>()
-    private val languageIdentifierDelegate = lazy<LanguageIdentifier> {
-        LanguageIdentification.getClient()
-    }
-    private val languageIdentifier by languageIdentifierDelegate
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Let Flutter paint under the status bar and gesture/nav bar.
@@ -113,7 +99,6 @@ class MainActivity : FlutterFragmentActivity() {
 
     override fun onResume() {
         super.onResume()
-        mithkaPro?.onActivityResumed()
         FVideoPictureInPicturePlugin.onActivityResumed(this)
         if (fullscreenSystemUi) applyFullscreenSystemUi()
     }
@@ -135,7 +120,6 @@ class MainActivity : FlutterFragmentActivity() {
     }
 
     override fun onPause() {
-        mithkaPro?.onActivityPaused()
         FVideoPictureInPicturePlugin.onActivityPaused(this)
         super.onPause()
     }
@@ -193,23 +177,10 @@ class MainActivity : FlutterFragmentActivity() {
             applicationContext,
             flutterEngine.dartExecutor.binaryMessenger,
         )
-        mithkaPro = MithkaProPlugin(
-            this,
-            flutterEngine.dartExecutor.binaryMessenger,
-        )
         nowPlaying = NowPlayingPlugin(
             applicationContext,
             flutterEngine.dartExecutor.binaryMessenger,
         )
-        val plugin = CallMediaPlugin(
-            applicationContext,
-            flutterEngine.dartExecutor.binaryMessenger,
-        )
-        callMedia = plugin
-        // Embed call video surfaces (TextureViewRenderer) into the widget tree.
-        flutterEngine.platformViewsController.registry
-            .registerViewFactory("mithka/video_view", VideoViewFactory(plugin))
-
         // App info for the GitHub-release update checker: the device's supported
         // ABIs (preference-ordered, so we can match the right per-ABI APK asset)
         // and the installed version name (the semver compared to the latest tag).
@@ -334,34 +305,7 @@ class MainActivity : FlutterFragmentActivity() {
                         when (name) {
                             in freeIcons -> applyIcon()
                             dailyPenguin -> applyIcon()
-                            in paidIcons -> {
-                                val pro = mithkaPro
-                                if (pro == null) {
-                                    denyPaidIcon()
-                                } else {
-                                    // Query Play for each paid selection; never trust
-                                    // cached Dart/native state or alter an existing icon
-                                    // merely because the subscription has expired.
-                                    pro.querySupporterEvidence { evidence ->
-                                        runOnUiThread {
-                                            try {
-                                                // Final epoch/lifecycle check surrounds
-                                                // the setter itself, not an earlier hop.
-                                                if (pro.applyIfCurrent(evidence) {
-                                                        setLauncherIcon(name)
-                                                    }
-                                                ) {
-                                                    result.success(null)
-                                                } else {
-                                                    denyPaidIcon()
-                                                }
-                                            } catch (e: Exception) {
-                                                result.error("app_icon_failed", e.localizedMessage, null)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
+                            in paidIcons -> denyPaidIcon()
                             else -> result.error("invalid_icon", "Unknown app icon", null)
                         }
                     }
@@ -369,25 +313,13 @@ class MainActivity : FlutterFragmentActivity() {
                 }
             }
 
+        // 轻聊: on-device ML Kit translation removed to keep the APK small.
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "mithka/native_translation")
             .setMethodCallHandler { call, result ->
                 when (call.method) {
-                    "capabilities" -> {
-                        result.success(listOf("android_mlkit"))
-                        return@setMethodCallHandler
-                    }
-                    "translate" -> {
-                        translateOnDevice(call.arguments as? Map<*, *>, result)
-                        return@setMethodCallHandler
-                    }
-                    "identifyLanguage" -> {
-                        identifyLanguage(call.arguments as? Map<*, *>, result)
-                        return@setMethodCallHandler
-                    }
-                    else -> {
-                        result.notImplemented()
-                        return@setMethodCallHandler
-                    }
+                    "capabilities" -> result.success(emptyList<String>())
+                    "identifyLanguage" -> result.success(null)
+                    else -> result.notImplemented()
                 }
             }
 
@@ -1245,115 +1177,6 @@ class MainActivity : FlutterFragmentActivity() {
         }
     }
 
-    private fun translateOnDevice(args: Map<*, *>?, result: MethodChannel.Result) {
-        val text = args?.get("text") as? String
-        val targetLanguageCode = args?.get("targetLanguageCode") as? String
-        val requestedSourceLanguageCode = args?.get("sourceLanguageCode") as? String
-        if (text.isNullOrBlank() || targetLanguageCode.isNullOrBlank()) {
-            result.error("invalid_arguments", "缺少翻译文本或目标语言", null)
-            return
-        }
-
-        val target = mlKitLanguage(targetLanguageCode)
-        if (target == null) {
-            result.error("unsupported_language", "不支持目标语言 $targetLanguageCode", null)
-            return
-        }
-
-        val requestedSource = mlKitLanguageOrNull(requestedSourceLanguageCode)
-        if (requestedSource != null) {
-            translateWithLanguages(text, requestedSource, target, result)
-            return
-        }
-
-        result.error("source_language_required", "ML Kit 本地翻译需要明确原文语言", null)
-    }
-
-    private fun identifyLanguage(args: Map<*, *>?, result: MethodChannel.Result) {
-        val text = args?.get("text") as? String
-        if (text.isNullOrBlank()) {
-            result.success(null)
-            return
-        }
-        languageIdentifier.identifyPossibleLanguages(text.take(200))
-            .addOnSuccessListener { languages ->
-                val identified = languages
-                    .filter { it.languageTag != "und" && it.confidence >= 0.5f }
-                    .maxByOrNull { it.confidence }
-                result.success(
-                    identified?.let {
-                        mapOf(
-                            "languageCode" to it.languageTag,
-                            "confidence" to it.confidence.toDouble(),
-                        )
-                    },
-                )
-            }
-            .addOnFailureListener { error ->
-                result.error("language_identification_failed", error.localizedMessage, null)
-            }
-    }
-
-    private fun translateWithLanguages(
-        text: String,
-        source: String,
-        target: String,
-        result: MethodChannel.Result,
-    ) {
-        if (source == target) {
-            result.success(text)
-            return
-        }
-
-        val translator = translatorFor(source, target)
-        translator.downloadModelIfNeeded(DownloadConditions.Builder().build())
-            .addOnSuccessListener {
-                translator.translate(text)
-                    .addOnSuccessListener { translated -> result.success(translated) }
-                    .addOnFailureListener { e ->
-                        result.error("translation_failed", e.localizedMessage, null)
-                    }
-            }
-            .addOnFailureListener { e ->
-                result.error("model_download_failed", e.localizedMessage, null)
-            }
-    }
-
-    private fun translatorFor(source: String, target: String): Translator {
-        val key = "$source|$target"
-        return translators.getOrPut(key) {
-            Translation.getClient(
-                TranslatorOptions.Builder()
-                    .setSourceLanguage(source)
-                    .setTargetLanguage(target)
-                    .build(),
-            )
-        }
-    }
-
-    private fun mlKitLanguageOrNull(code: String?): String? {
-        val normalized = normalizeLanguageTag(code) ?: return null
-        return TranslateLanguage.fromLanguageTag(normalized)
-    }
-
-    private fun mlKitLanguage(code: String?): String? {
-        val normalized = normalizeLanguageTag(code) ?: return null
-        return TranslateLanguage.fromLanguageTag(normalized)
-    }
-
-    private fun normalizeLanguageTag(code: String?): String? {
-        val lower = code
-            ?.trim()
-            ?.replace('_', '-')
-            ?.lowercase()
-            ?: return null
-        if (lower.isEmpty() || lower == "auto" || lower == "autodetect" || lower == "und") {
-            return null
-        }
-        if (lower.startsWith("zh")) return "zh"
-        return lower.substringBefore('-')
-    }
-
     private fun systemMediaVolumeState(audioManager: AudioManager): Map<String, Any> {
         val maximum = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
         val minimum = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
@@ -1374,21 +1197,12 @@ class MainActivity : FlutterFragmentActivity() {
         downloadStorage = null
         webProxyBridge?.dispose()
         webProxyBridge = null
-        translators.values.forEach { it.close() }
-        translators.clear()
-        if (languageIdentifierDelegate.isInitialized()) {
-            languageIdentifier.close()
-        }
         telegramPasskeys?.dispose()
         telegramPasskeys = null
         accountBackup?.dispose()
         accountBackup = null
-        mithkaPro?.dispose()
-        mithkaPro = null
         nowPlaying?.dispose()
         nowPlaying = null
-        callMedia?.dispose()
-        callMedia = null
         super.cleanUpFlutterEngine(flutterEngine)
     }
 

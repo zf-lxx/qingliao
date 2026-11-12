@@ -5298,6 +5298,8 @@ abstract final class AppStringKeys {
       'storyAuthoringAreaUpgradedGift';
   static const profilePhotoBadgeCurrent = 'profilePhotoBadgeCurrent';
   static const profilePhotoBadgePublic = 'profilePhotoBadgePublic';
+  static const settingsNotYet = 'settingsNotYet';
+  static const settingsNotYetMessage = 'settingsNotYetMessage';
 }
 
 abstract final class AppStrings {

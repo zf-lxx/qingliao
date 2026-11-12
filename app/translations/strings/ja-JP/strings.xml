@@ -3015,7 +3015,7 @@
     <string name="sensitiveContentUnblockFailed">18+ コンテンツを有効にできません：{value1}</string>
     <string name="sensitiveContentUnblockMessage">Telegram アカウント全体の 18+ コンテンツ設定を有効にします。後でプライバシーとセキュリティからオフにできます。</string>
     <string name="sensitiveContentUnblockTitle">18+ コンテンツを表示しますか？</string>
-    <string name="settingsAboutMithka">Mithka について</string>
+    <string name="settingsAboutMithka">軽聊について</string>
     <string name="settingsChatBehavior">チャットの動作</string>
     <string name="settingsChooseSection">左側から項目を選択してください</string>
     <string name="settingsContentFilters">コンテンツフィルター</string>
@@ -3935,4 +3935,6 @@
     <string name="storageDownloadLocationFailed">ダウンロード先にアクセスできませんでした</string>
     <string name="storageDownloadFolderNotSelected">フォルダを選択</string>
     <string name="storageDownloadCurrent">現在の保存先：{value1}</string>
+    <string name="settingsNotYet">未対応</string>
+    <string name="settingsNotYetMessage">この機能はサーバー側の対応が必要で、今後のバージョンで提供します。現時点では保存も同期も行いません。</string>
 </resources>

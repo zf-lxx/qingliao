@@ -55,7 +55,7 @@ app.*.map.json
 
 # App secrets (TDLib api_id/api_hash) — copy secrets_example.dart to set up,
 # or generate from .env via scripts/gen-secrets.sh
-lib/config/secrets.dart
+# 轻聊: lib/config/secrets.dart is a committed placeholder (no Telegram API keys)
 
 # Raw local secrets consumed by scripts/gen-secrets.sh: Telegram api_id/api_hash
 # + base64 signing keystore & passwords. Never commit.

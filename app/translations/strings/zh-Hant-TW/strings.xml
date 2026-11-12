@@ -3015,7 +3015,7 @@
     <string name="sensitiveContentUnblockFailed">無法啟用 18+ 內容：{value1}</string>
     <string name="sensitiveContentUnblockMessage">這會啟用 Telegram 帳號層級的 18+ 內容設定。之後可在「隱私與安全」中關閉。</string>
     <string name="sensitiveContentUnblockTitle">顯示 18+ 內容？</string>
-    <string name="settingsAboutMithka">關於 Mithka</string>
+    <string name="settingsAboutMithka">關於輕聊</string>
     <string name="settingsChatBehavior">聊天行為</string>
     <string name="settingsChooseSection">在左側選擇一個項目</string>
     <string name="settingsContentFilters">內容篩選</string>
@@ -3935,4 +3935,6 @@
     <string name="storageDownloadLocationFailed">無法存取下載位置</string>
     <string name="storageDownloadFolderNotSelected">選擇資料夾</string>
     <string name="storageDownloadCurrent">目前位置：{value1}</string>
+    <string name="settingsNotYet">暫未開放</string>
+    <string name="settingsNotYetMessage">此功能需要伺服器配套，將在後續版本開放。目前不會儲存或同步任何變更。</string>
 </resources>
