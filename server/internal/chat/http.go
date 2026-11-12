@@ -76,6 +76,7 @@ func (a *App) Handler() http.Handler {
 	a.storyRoutes(mux)
 	a.securityRoutes(mux)
 	a.albumRoutes(mux)
+	a.botManageRoutes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if e := a.Ping(r.Context()); e != nil {
 			respond(w, 503, map[string]bool{"ok": false})
@@ -260,6 +261,10 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/media/{id}", a.auth(a.download))
 	mux.HandleFunc("DELETE /v1/media/{id}", a.auth(a.deleteMedia))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/bot") || strings.HasPrefix(r.URL.Path, "/file/bot") {
+			a.serveBotAPI(w, r)
+			return
+		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Referrer-Policy", "no-referrer")

@@ -4,7 +4,7 @@
 
 此前的 0.2 Flutter 树仍在 `client/`，仅作对照，不是本分支的构建入口。在 `app/` 下执行 `source ~/sdk/env.sh` 与 `flutter build apk --release --target-platform android-arm64`。没有 `android/key.properties` 时，发行签名回退到 `~/.android/debug.keystore`，与既有内测包一致。
 
-arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控制在约 50 MB 以内（当前制品：`/workspace/qingliao-0.4.2-arm64.apk`，版本 0.4.2+9）。
+arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控制在约 50 MB 以内（当前制品：`/workspace/qingliao-0.4.3-arm64.apk`，版本 0.4.3+10）。
 
 原生 `libtdjson` 不再随包提供。`TdBindings` 是纯 Dart 实现，把请求交给 `QlTdEngine`，由它对接轻聊后端（`REST` + `WS /v1/ws`，带 seq/ack 与增量同步）。尚未支持的方法返回 TDLib 风格的 `error`（`QL_UNSUPPORTED: <method>`），不会崩溃，也不会假装成功。一小份白名单（`qlEmptyResultMethods`）对后端确实没有的列表查询返回真实的空集合（通行密钥、社区等尚未提供的能力）。
 
@@ -14,7 +14,7 @@ arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控�
 
 仍没有真实轻聊接口的服务端页面会留在列表里，带「暂未开放 / Not yet」标签并打开占位页：通行密钥、更换手机号、恢复邮箱、长时间未登录自动注销、自动删除消息，以及 MTProto/Web 代理。通话、直播动态、Bot API 和厂商推送保持隐藏或暂未开放（需要 coturn/SFU、RTMP 以及厂商推送凭证）。
 
-已接通：两步验证（登录密码 + TOTP，恢复码只展示一次；恢复邮箱暂未开放）、登录设备列表与远程登出、账号注销、HTTP/SOCKS5 代理（应用于 REST 与 WebSocket）、用户自建 PNG/WebP 贴纸包、动态专辑（专辑内动态在 24 小时后仍可查看；没有直播）、全局「文件」页跨会话媒体（图片/文件/链接/语音/视频/音乐，音乐使用真实音频）、文字与图片回复引用跳转。另有贴纸（内置「轻聊」PNG 包与用户包包，非外部素材；`.tgs` / `.webm` 因体积暂缓）、投票、清单、链接预览、联系人、聊天文件夹、通知范围、隐私规则、已读回执开关、动态（24 小时图片/视频，查看、回应、举报）、更完整的富文本实体、本机会话备份与恢复，以及多账号槽位。应用内更新只读取 `zf-lxx/qingliao` 的发行，并能从历史标签或 `v0.4.2` 这类版本号解析出版本。输入栏回复引用的 X 在键盘保持打开时也可以取消回复。
+已接通：机器人（创建/令牌只显示一次、兼容 getMe/sendMessage/getUpdates/webhook）、Android 前台服务消息通知（非常厂商推送）、两步验证（登录密码 + TOTP，恢复码只展示一次；恢复邮箱暂未开放）、登录设备列表与远程登出、账号注销、HTTP/SOCKS5 代理（应用于 REST 与 WebSocket）、用户自建 PNG/WebP 贴纸包、动态专辑（专辑内动态在 24 小时后仍可查看；没有直播）、全局「文件」页跨会话媒体（图片/文件/链接/语音/视频/音乐，音乐使用真实音频）、文字与图片回复引用跳转。另有贴纸（内置「轻聊」PNG 包与用户包包，非外部素材；`.tgs` / `.webm` 因体积暂缓）、投票、清单、链接预览、联系人、聊天文件夹、通知范围、隐私规则、已读回执开关、动态（24 小时图片/视频，查看、回应、举报）、更完整的富文本实体、本机会话备份与恢复，以及多账号槽位。应用内更新只读取 `zf-lxx/qingliao` 的发行，并能从历史标签或 `v0.4.2` 这类版本号解析出版本。输入栏回复引用的 X 在键盘保持打开时也可以取消回复。
 
 「已屏蔽用户」此前已经接通，不会标成暂未开放。
 
@@ -26,7 +26,7 @@ arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控�
 - 空结果（真实空集合）：约 **16**（通行密钥、社区等尚未提供的能力）
 - 未支持（`QL_UNSUPPORTED`）：约 **300**
 
-直播动态、通话、Bot API 和厂商推送仍未支持或已隐藏。
+直播动态、通话和厂商推送仍未支持或已隐藏。Bot API 已在轻聊服务器实现（兼容常见 HTTP 接口）；消息推送先用 Android 前台服务保持 WebSocket，不是厂商推送。
 
 轻聊自有方法（`qlLogin`、`qlLoginTotp`、`qlRegister`、`qlGetServer`、`qlStartTotp`、`qlConfirmTotp`、`qlDisableTotp`）已实现，供登录页与安全设置使用，并排在方法表最前。
 

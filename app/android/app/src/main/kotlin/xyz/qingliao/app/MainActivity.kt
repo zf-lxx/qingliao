@@ -184,6 +184,30 @@ class MainActivity : FlutterFragmentActivity() {
         // App info for the GitHub-release update checker: the device's supported
         // ABIs (preference-ordered, so we can match the right per-ABI APK asset)
         // and the installed version name (the semver compared to the latest tag).
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qingliao/foreground_sync")
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "start" -> {
+                        MessageSyncService.start(this)
+                        result.success(true)
+                    }
+                    "stop" -> {
+                        MessageSyncService.stop(this)
+                        result.success(null)
+                    }
+                    "isRunning" -> result.success(MessageSyncService.running)
+                    "openBatterySettings" -> {
+                        MessageSyncService.openBatterySettings(this)
+                        result.success(null)
+                    }
+                    "openNotificationSettings" -> {
+                        MessageSyncService.openNotificationSettings(this)
+                        result.success(null)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "qingliao/app_info")
             .setMethodCallHandler { call, result ->
                 if (call.method == "info") {

@@ -17,6 +17,7 @@ import '../components/app_interactive_surface.dart';
 import '../components/ui_components.dart';
 import '../l10n/app_localizations.dart';
 import '../notifications/notification_preferences.dart';
+import '../qingliao/ql_foreground_sync.dart';
 import '../notifications/notification_settings_payload.dart';
 import '../notifications/scope_notification_settings.dart';
 import '../platform/adaptive_platform.dart';
@@ -52,6 +53,7 @@ class _NotificationSettingsViewState extends State<NotificationSettingsView> {
   StreamSubscription<Map<String, dynamic>>? _updates;
   bool _loading = true;
   bool _loadInProgress = false;
+  bool _foregroundEnabled = true;
 
   @override
   void initState() {
@@ -59,6 +61,7 @@ class _NotificationSettingsViewState extends State<NotificationSettingsView> {
     _preferences.addListener(_preferencesChanged);
     _updates = _client.subscribe().listen(_handleUpdate);
     unawaited(_load());
+    unawaited(_loadForeground());
   }
 
   @override
@@ -66,6 +69,16 @@ class _NotificationSettingsViewState extends State<NotificationSettingsView> {
     _preferences.removeListener(_preferencesChanged);
     unawaited(_updates?.cancel());
     super.dispose();
+  }
+
+  Future<void> _loadForeground() async {
+    final enabled = await QlForegroundSync.isEnabled();
+    if (mounted) setState(() => _foregroundEnabled = enabled);
+  }
+
+  Future<void> _setForeground(bool value) async {
+    await QlForegroundSync.setEnabled(value);
+    if (mounted) setState(() => _foregroundEnabled = value);
   }
 
   void _preferencesChanged() {
@@ -349,6 +362,34 @@ class _NotificationSettingsViewState extends State<NotificationSettingsView> {
           : null,
       child: SettingsListView(
         children: [
+          if (QlForegroundSync.isAndroid) ...[
+            SettingsSection(
+              key: const ValueKey('notification-section-foreground'),
+              title: '后台消息通知',
+              rows: [
+                SettingsSwitchRow(
+                  key: const ValueKey('qingliao-foreground-sync'),
+                  title: '前台服务保持连接',
+                  value: _foregroundEnabled,
+                  leading: const SettingsLeadingIcon(icon: HeroAppIcons.bell),
+                  onChanged: (value) => unawaited(_setForeground(value)),
+                ),
+                SettingsRow(
+                  title: '通知权限与系统设置',
+                  leading: const SettingsLeadingIcon(icon: HeroAppIcons.gear),
+                  onTap: () => unawaited(QlForegroundSync.openNotificationSettings()),
+                ),
+                SettingsRow(
+                  title: '电池与后台限制',
+                  leading: const SettingsLeadingIcon(icon: HeroAppIcons.flash),
+                  onTap: () => unawaited(QlForegroundSync.openBatterySettings()),
+                ),
+              ],
+            ),
+            const SettingsNote(
+              text: '通过常驻通知保持连接，锁屏或切到后台时仍可弹出系统通知。这不是厂商推送，也不保证在强行停止或极端省电下可达。小米建议：允许通知、将电池设为无限制，并在最近任务中锁定轻聊。',
+            ),
+          ],
           if (_loading)
             const Column(
               key: ValueKey('notification-section-telegram'),

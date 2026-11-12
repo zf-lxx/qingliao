@@ -76,8 +76,8 @@ func (a *App) touchDevice(deviceID string) {
 	_, _ = a.DB.Exec("UPDATE devices SET last_seen=? WHERE id=? AND revoked=0", now(), deviceID)
 }
 
-func (a *App) userLoginRow(handle string) (uid, pass, totp string, deleted int, err error) {
-	err = a.DB.QueryRow("SELECT id,password,IFNULL(totp_secret,''),IFNULL(deleted,0) FROM users WHERE handle=?", strings.ToLower(handle)).Scan(&uid, &pass, &totp, &deleted)
+func (a *App) userLoginRow(handle string) (uid, pass, totp string, deleted, isBot int, err error) {
+	err = a.DB.QueryRow("SELECT id,password,IFNULL(totp_secret,''),IFNULL(deleted,0),IFNULL(is_bot,0) FROM users WHERE handle=?", strings.ToLower(handle)).Scan(&uid, &pass, &totp, &deleted, &isBot)
 	return
 }
 
@@ -152,13 +152,13 @@ func (a *App) login(w http.ResponseWriter, r *http.Request) {
 		fail(w, ErrInvalid)
 		return
 	}
-	uid, pass, totp, deleted, e := a.userLoginRow(b.Handle)
+	uid, pass, totp, deleted, isBot, e := a.userLoginRow(b.Handle)
 	dummy := "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
 	if e != nil {
 		pass = dummy
 	}
 	check := bcrypt.CompareHashAndPassword([]byte(pass), []byte(b.Password))
-	if e != nil || check != nil || deleted == 1 {
+	if e != nil || check != nil || deleted == 1 || isBot == 1 {
 		respond(w, 401, map[string]string{"error": "invalid_credentials"})
 		return
 	}

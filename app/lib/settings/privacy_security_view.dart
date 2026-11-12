@@ -22,6 +22,7 @@ import '../tdlib/json_helpers.dart';
 import '../tdlib/td_client.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_controller.dart';
+import '../qingliao/ql_bots_view.dart';
 import '../qingliao/ql_not_yet_view.dart';
 import 'account_security_views.dart';
 import 'ghost_mode_settings_view.dart';
@@ -281,6 +282,12 @@ class _PrivacySecurityViewState extends State<PrivacySecurityView> {
               AppStrings.t(AppStringKeys.privacyLoggedInDevices),
               '',
               () => _open(const ActiveSessionsView()),
+            ),
+            _Row(
+              HeroAppIcons.cpuChip,
+              '机器人',
+              '',
+              () => _open(const QlBotsView()),
             ),
             _Row(
               HeroAppIcons.key,

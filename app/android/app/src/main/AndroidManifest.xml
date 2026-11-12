@@ -34,11 +34,11 @@
     <!-- light_compressor_v2 declares these for its optional BackgroundConfig.
          the app never opts into background compression, so keep them out of the
          release manifest and the Google Play foreground-service declaration. -->
-    <uses-permission
-        android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"
-        tools:node="remove" />
-    <!-- Keeps music playback alive while the app is backgrounded. -->
+    <!-- Keeps the 轻聊 WebSocket alive in the background via a user-visible
+         foreground service. This is not vendor / FCM / Mi Push. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Keeps music playback alive while the app is backgrounded. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
 
     <application
@@ -65,6 +65,11 @@
             android:name=".MediaPlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+        <service
+            android:name=".MessageSyncService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
         <meta-data
             android:name="io.sentry.dsn"
             android:value="${sentryDsn}" />

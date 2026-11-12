@@ -74,6 +74,7 @@ func (a *App) pushWorker() {
 		case <-tick.C:
 			a.expireNotificationMutes()
 			a.processPush()
+			a.processBotWebhooks()
 		}
 	}
 }

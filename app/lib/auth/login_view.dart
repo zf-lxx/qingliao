@@ -143,7 +143,7 @@ class _LoginViewState extends State<LoginView> {
   final _firstName = TextEditingController();
   final _lastName = TextEditingController();
   final _botToken = ObscuringController();
-  final _botEndpoint = TextEditingController(text: 'https://api.telegram.org');
+  final _botEndpoint = TextEditingController(text: 'https://qingliao.zhufu.de5.net');
   Timer? _resendTimer;
   DateTime? _resendAvailableAt;
   int _resendRemainingSeconds = 0;
@@ -207,7 +207,7 @@ class _LoginViewState extends State<LoginView> {
       preferences,
       legacyFallback: TdClient.shared.botApiEndpoint,
     );
-    if (!mounted || _botEndpoint.text != 'https://api.telegram.org') return;
+    if (!mounted || (_botEndpoint.text != 'https://api.telegram.org' && _botEndpoint.text != 'https://qingliao.zhufu.de5.net' && _botEndpoint.text.trim().isNotEmpty && _botEndpoint.text != endpoint.toString())) return;
     _botEndpoint.text = endpoint.toString();
   }
 

@@ -11,7 +11,7 @@ func (a *App) migrateExtensions() error {
 		"messages": {"media_meta_json": "TEXT NOT NULL DEFAULT ''", "album_id": "TEXT NOT NULL DEFAULT ''", "entities_json": "TEXT NOT NULL DEFAULT '[]'", "preview_json": "TEXT NOT NULL DEFAULT ''", "reply_markup_json": "TEXT NOT NULL DEFAULT ''", "via_bot_id": "TEXT NOT NULL DEFAULT ''", "forward_origin_json": "TEXT NOT NULL DEFAULT ''"},
 		"media":    {"width": "INTEGER NOT NULL DEFAULT 0", "height": "INTEGER NOT NULL DEFAULT 0", "duration_ms": "INTEGER NOT NULL DEFAULT 0", "waveform": "TEXT NOT NULL DEFAULT ''", "file_name": "TEXT NOT NULL DEFAULT ''", "thumbnail_id": "TEXT NOT NULL DEFAULT ''"},
 		"chats":    {"last_activity": "INTEGER NOT NULL DEFAULT 0", "avatar": "TEXT NOT NULL DEFAULT ''"},
-		"users":    {"read_receipts_enabled": "INTEGER NOT NULL DEFAULT 1", "password_hint": "TEXT NOT NULL DEFAULT ''", "totp_secret": "TEXT NOT NULL DEFAULT ''", "totp_pending": "TEXT NOT NULL DEFAULT ''", "totp_recovery": "TEXT NOT NULL DEFAULT ''", "deleted": "INTEGER NOT NULL DEFAULT 0"},
+		"users":    {"read_receipts_enabled": "INTEGER NOT NULL DEFAULT 1", "password_hint": "TEXT NOT NULL DEFAULT ''", "totp_secret": "TEXT NOT NULL DEFAULT ''", "totp_pending": "TEXT NOT NULL DEFAULT ''", "totp_recovery": "TEXT NOT NULL DEFAULT ''", "deleted": "INTEGER NOT NULL DEFAULT 0", "is_bot": "INTEGER NOT NULL DEFAULT 0"},
 		"devices":  {"created": "TEXT NOT NULL DEFAULT ''", "last_seen": "TEXT NOT NULL DEFAULT ''", "app_name": "TEXT NOT NULL DEFAULT ''", "app_version": "TEXT NOT NULL DEFAULT ''", "device_model": "TEXT NOT NULL DEFAULT ''", "last_ip": "TEXT NOT NULL DEFAULT ''"},
 		"members":  {"manual_unread": "INTEGER NOT NULL DEFAULT 0", "archived": "INTEGER NOT NULL DEFAULT 0", "pin_order": "INTEGER NOT NULL DEFAULT 0", "notification_mute_until": "INTEGER NOT NULL DEFAULT 0", "draft_json": "TEXT NOT NULL DEFAULT ''", "joined_at": "INTEGER NOT NULL DEFAULT 0", "muted_until": "INTEGER NOT NULL DEFAULT 0"},
 	} {
@@ -39,7 +39,7 @@ func (a *App) migrateExtensions() error {
 			}
 		}
 	}
-	_, e := a.DB.Exec(extensionSchema+discoverySchema+p2Schema+p3Schema+p4Schema+p5Schema)
+	_, e := a.DB.Exec(extensionSchema+discoverySchema+p2Schema+p3Schema+p4Schema+p5Schema+p6Schema)
 	return e
 }
 
@@ -126,4 +126,13 @@ CREATE INDEX IF NOT EXISTS story_album_items_story ON story_album_items(story_no
 CREATE INDEX IF NOT EXISTS login_challenges_expiry ON login_challenges(expires);
 CREATE INDEX IF NOT EXISTS users_deleted ON users(deleted);
 PRAGMA user_version=8;
+`
+
+const p6Schema = `
+CREATE TABLE IF NOT EXISTS bots(user_id TEXT PRIMARY KEY REFERENCES users(id),owner_id TEXT NOT NULL REFERENCES users(id),token_hash TEXT NOT NULL UNIQUE,api_id INTEGER NOT NULL UNIQUE,webhook_url TEXT NOT NULL DEFAULT '',webhook_secret TEXT NOT NULL DEFAULT '',created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS bot_updates(bot_id TEXT NOT NULL REFERENCES bots(user_id) ON DELETE CASCADE,update_id INTEGER NOT NULL,payload TEXT NOT NULL,delivered INTEGER NOT NULL DEFAULT 0,created TEXT NOT NULL,PRIMARY KEY(bot_id,update_id));
+CREATE INDEX IF NOT EXISTS bot_updates_pending ON bot_updates(bot_id,update_id) WHERE delivered=0;
+CREATE TABLE IF NOT EXISTS api_ids(kind TEXT NOT NULL,id TEXT NOT NULL,api_id INTEGER NOT NULL UNIQUE,PRIMARY KEY(kind,id));
+CREATE TABLE IF NOT EXISTS bot_callbacks(id TEXT PRIMARY KEY,bot_id TEXT NOT NULL REFERENCES bots(user_id),chat_id TEXT NOT NULL,message_id TEXT NOT NULL,from_user TEXT NOT NULL,data TEXT NOT NULL,created TEXT NOT NULL,answered INTEGER NOT NULL DEFAULT 0);
+PRAGMA user_version=9;
 `

@@ -27,6 +27,7 @@ type Config struct {
 	MediaQuota, MaxFile                                      int64
 	SessionTTL                                               time.Duration
 	XiaomiSecret, XiaomiPackage, XiaomiURL                   string
+	AllowHTTPWebhook                                         bool
 }
 
 func DefaultConfig() Config {
@@ -273,7 +274,7 @@ func emit(tx *sql.Tx, users []string, typ, chat string, data any) error {
 			return e
 		}
 	}
-	return nil
+	return enqueueBotUpdates(tx, users, typ, chat, b)
 }
 func (a *App) Difference(user string, after int64, limit int) (map[string]any, error) {
 	if after < 0 {

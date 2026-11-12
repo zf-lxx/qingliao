@@ -240,7 +240,7 @@ func (a *App) SendMessage(p Principal, cid string, s Send) (Message, error) {
 		}
 		if s.MediaID != "" {
 			var mime string
-			e = tx.QueryRow("SELECT mime FROM media WHERE id=? AND owner=? AND chat_id=?", s.MediaID, p.UserID, cid).Scan(&mime)
+			e = tx.QueryRow(`SELECT mime FROM media WHERE id=? AND (owner=? OR chat_id=? OR EXISTS(SELECT 1 FROM messages m JOIN members b ON b.chat_id=m.chat_id WHERE m.media_id=? AND b.user_id=? AND m.deleted=0))`, s.MediaID, p.UserID, cid, s.MediaID, p.UserID).Scan(&mime)
 			if e != nil {
 				return ErrInvalid
 			}

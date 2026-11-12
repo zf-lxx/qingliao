@@ -20,6 +20,7 @@ import 'dart:math' as math;
 import 'ql_api.dart';
 import 'ql_ids.dart';
 import 'ql_image_size.dart';
+import 'ql_foreground_sync.dart';
 import 'ql_proxy.dart';
 
 part 'ql_engine_account.dart';
@@ -372,6 +373,14 @@ class QlTdEngine {
         return _mutateStoryAlbumStories(r, 'remove');
       case 'reorderStoryAlbumStories':
         return _mutateStoryAlbumStories(r, 'reorder');
+      case 'qlListBots':
+        return _listBots();
+      case 'qlCreateBot':
+        return _createBot(r);
+      case 'qlRevokeBotToken':
+        return _revokeBotToken(r);
+      case 'qlDeleteBot':
+        return _deleteBot(r);
       case 'qlGetServer':
         return {
           '@type': 'qlServer',
@@ -804,6 +813,7 @@ class QlTdEngine {
     _emit({'@type': 'updateUser', 'user': _tdUser(session.userId)});
     _setAuth('authorizationStateReady');
     _initialLoad = _runInitialLoad();
+    unawaited(QlForegroundSync.start());
   }
 
   Future<Map<String, dynamic>> _logOut() async {
@@ -814,6 +824,7 @@ class QlTdEngine {
         await api.post('/auth/logout');
       } catch (_) {}
     }
+    await QlForegroundSync.stop();
     _teardown();
     try {
       File(_sessionPath).deleteSync();

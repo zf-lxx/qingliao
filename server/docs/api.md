@@ -156,7 +156,7 @@ Storage 接口含 Put/Open/Delete/Usage/PresignUpload，local 实现可用；`CH
 - 配置 `XIAOMI_APP_SECRET / XIAOMI_PACKAGE`；默认接口 `https://api.xmpush.xiaomi.com/v3/message/regid`。无配置时作业保留，5 分钟后再检查，不发送假推送；token 无效/渠道失败指数重试，最多 6 次后 dead-letter `done=-1`。当前每作业多设备失败会整体重试，jobkey 尽量去重。
 - 通知只含“你有一条新消息”及 conversation/message id，不发正文。MiPush 私信模板、开发者主体、包名签名、SDK 通知权限和当前政策仍需真接入核对；当前只做本地 mock HTTP 合约测试，**未连接真实小米账号/设备、未测锁屏推送**。
 - 参考官方： https://dev.mi.com/xiaomihyperos/documentation/detail?pId=1559 。Android 前台常驻 fallback 是客户端后续任务，服务端此处没有伪装实现。
-- Bot：`internal/chat/bot.go` 仅接口定义（AuthenticateBot/GetUpdates/SetWebhook/SendMessage），用户事件游标与 client_msg_id 可复用；没有公开 Bot 路由、bot token 表或 webhook 任务。正式做时单独 token/hash/scopes、限制会话权限、防 webhook SSRF、签名、重试/幂等、long polling；机器人代码可运行外部机器。
+- Bot API（与常见 HTTP Bot API 兼容）：人类账号 `GET/POST /v1/bots`、`POST /v1/bots/{id}/revoke`、`DELETE /v1/bots/{id}` 创建/列出/重置/删除机器人（邀请制只约束人类注册；令牌只返回一次，服务器只存 SHA-256）。机器人调用：`https://qingliao.zhufu.de5.net/bot<token>/<method>`，文件 `.../file/bot<token>/media/<id>`。已实现 getMe、sendMessage、editMessageText、deleteMessage、getUpdates（长轮询，timeout≤30s）、setWebhook/deleteWebhook/getWebhookInfo、sendPhoto/Document/Audio/Video/Voice（已有 file_id）、answerCallbackQuery、getFile。Webhook 仅允许 HTTPS 公网地址（防 SSRF）；长轮询在未设置 webhook 时可用，无需额外基础设施。人类点击 inline_keyboard 会生成 callback_query。
 
 ## 8. 上线前必须补齐
 

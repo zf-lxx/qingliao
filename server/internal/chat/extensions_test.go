@@ -28,7 +28,7 @@ func TestEntitiesUTF16OverlapAndURL(t *testing.T) {
 		t.Fatal(e)
 	}
 }
-func TestRichTextMarkupPersistenceAndCallbackStub(t *testing.T) {
+func TestRichTextMarkupPersistenceAndCallbackWithoutBot(t *testing.T) {
 	f := setup(t)
 	cid := direct(t, f)
 	s := Send{ClientID: "rich", Text: "hello 😀", Entities: []Entity{{Type: "bold", Offset: 0, Length: 5}, {Type: "custom_emoji", Offset: 6, Length: 2, CustomEmojiID: "reserved"}}, ReplyMarkup: &ReplyMarkup{[][]InlineButton{{{Text: "网页", URL: "https://example.com"}, {Text: "回调", CallbackData: "go"}}}}}
@@ -40,7 +40,7 @@ func TestRichTextMarkupPersistenceAndCallbackStub(t *testing.T) {
 	if e != nil || len(h[0].Entities) != 2 || h[0].ReplyMarkup == nil {
 		t.Fatal(h, e)
 	}
-	req(t, f.s, "POST", "/v1/messages/"+m.ID+"/callback", f.bt, map[string]any{"callback_data": "go"}, 501)
+	req(t, f.s, "POST", "/v1/messages/"+m.ID+"/callback", f.bt, map[string]any{"callback_data": "go"}, 400)
 	req(t, f.s, "POST", "/v1/messages/"+m.ID+"/callback", f.et, map[string]any{"callback_data": "go"}, 403)
 	bad := &ReplyMarkup{[][]InlineButton{{{Text: "both", URL: "https://example.com", CallbackData: "x"}}}}
 	if validateMarkup(bad) == nil {
@@ -368,7 +368,7 @@ func TestStateMigrationFromV1(t *testing.T) {
 	defer a.Close()
 	var version int
 	a.DB.QueryRow("PRAGMA user_version").Scan(&version)
-	if version != 8 {
+	if version != 9 {
 		t.Fatal(version)
 	}
 }

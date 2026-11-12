@@ -177,5 +177,9 @@ func (a *App) callbackStub(w http.ResponseWriter, r *http.Request, p Principal) 
 		fail(w, ErrInvalid)
 		return
 	}
-	respond(w, 501, map[string]string{"error": "bot_callbacks_phase2"})
+	if e := a.dispatchCallbackQuery(p, m, b.Data); e != nil {
+		fail(w, e)
+		return
+	}
+	respond(w, 200, map[string]bool{"ok": true})
 }

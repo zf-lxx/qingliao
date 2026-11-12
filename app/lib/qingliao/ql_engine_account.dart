@@ -587,4 +587,29 @@ extension _QlAccount on QlTdEngine {
     });
     return _ok;
   }
+
+  Future<Map<String, dynamic>> _listBots() async {
+    final raw = await _apiOrThrow.get('/bots');
+    return {'@type': 'qlBots', 'bots': raw['bots'] ?? []};
+  }
+
+  Future<Map<String, dynamic>> _createBot(Map<String, dynamic> r) async {
+    final raw = await _apiOrThrow.post('/bots', {
+      'username': (r['username'] ?? '').toString(),
+      'display_name': (r['display_name'] ?? '').toString(),
+    });
+    return {'@type': 'qlBotCreated', ...Map<String, dynamic>.from(raw)};
+  }
+
+  Future<Map<String, dynamic>> _revokeBotToken(Map<String, dynamic> r) async {
+    final id = (r['bot_id'] ?? r['id'] ?? '').toString();
+    final raw = await _apiOrThrow.post('/bots/$id/revoke');
+    return {'@type': 'qlBotToken', 'token': raw['token']};
+  }
+
+  Future<Map<String, dynamic>> _deleteBot(Map<String, dynamic> r) async {
+    final id = (r['bot_id'] ?? r['id'] ?? '').toString();
+    await _apiOrThrow.delete('/bots/$id');
+    return _ok;
+  }
 }
