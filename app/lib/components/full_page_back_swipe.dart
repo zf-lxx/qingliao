@@ -3,6 +3,7 @@ import 'package:flutter/material.dart' show Theme;
 import 'package:flutter/widgets.dart';
 
 import '../platform/adaptive_platform.dart';
+import '../render/ql_curves.dart';
 
 /// A route-owned animation driver for [FullPageBackSwipe].
 ///
@@ -45,14 +46,9 @@ class FullPageBackSwipe extends StatefulWidget {
 }
 
 class _FullPageBackSwipeState extends State<FullPageBackSwipe> {
-  // Keep a small horizontal drift from taking over the page. The back
-  // gesture is available across the conversation surface, so the intent and
-  // commit thresholds need to be high enough that ordinary diagonal/short
-  // drags remain with the control under the finger.
-  static const _intentDistance = 18.0;
-  static const _commitDistance = 96.0;
-  static const _longCommitDistance = 128.0;
-  static const _fastCommitVelocity = 760.0;
+  // Start after 0.4cm with |dx|/3 > dy; commit past a third of the width
+  // or a 3500 px/s flick. Documented in the chat motion playbook.
+  static const _fastCommitVelocity = 3500.0;
 
   int? _pointer;
   double _dx = 0;
@@ -93,8 +89,8 @@ class _FullPageBackSwipeState extends State<FullPageBackSwipe> {
     _dy += event.delta.dy;
     tracker.addPosition(event.timeStamp, event.position);
     if (!_horizontalIntent &&
-        _dx > _intentDistance &&
-        _dx.abs() > _dy.abs() * 1.45) {
+        _dx > qlEdgeStartPx(MediaQuery.devicePixelRatioOf(context)) &&
+        _dx.abs() / 3 > _dy.abs()) {
       _horizontalIntent = true;
       final route = ModalRoute.of(context);
       final driver = route is FullPageBackSwipeDriver
@@ -117,12 +113,11 @@ class _FullPageBackSwipeState extends State<FullPageBackSwipe> {
     final tracker = _velocity;
     if (tracker == null || event.pointer != _pointer) return;
     final velocity = tracker.getVelocity().pixelsPerSecond.dx;
-    final horizontal = _dx.abs() > _dy.abs() * 1.65;
+    final width = MediaQuery.sizeOf(context).width;
     final shouldPop =
         widget.enabled &&
-        horizontal &&
-        _dx > _commitDistance &&
-        (velocity > _fastCommitVelocity || _dx > _longCommitDistance);
+        _horizontalIntent &&
+        (_dx > width / 3 || velocity > _fastCommitVelocity);
     final driver = _driver;
     final routeDriverDetected = _routeDriverDetected;
     _reset();

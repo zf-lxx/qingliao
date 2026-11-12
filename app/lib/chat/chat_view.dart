@@ -125,6 +125,10 @@ import 'media_send_preview_view.dart';
 import 'media_spoiler.dart';
 import 'message_action_menu.dart';
 import 'message_action_menu_presentation.dart';
+import '../render/bubble_stamp.dart';
+import '../render/insert_shift.dart';
+import '../render/message_enter.dart';
+import '../render/row_height.dart';
 import 'message_bubble.dart';
 import 'message_bubble_repository_view.dart';
 import 'message_quote_selection_dialog.dart';
@@ -1466,6 +1470,7 @@ class _ChatViewState extends State<ChatView> {
   @override
   void initState() {
     super.initState();
+    _enter.addListener(_onEnterChanged);
     _detachExitController = widget.exitController?.register(_prepareExitState);
     _detachRevealLatestController = widget.revealLatestController?.register(
       _onRevealLatestRequested,
@@ -2846,6 +2851,97 @@ class _ChatViewState extends State<ChatView> {
     unawaited(_vm.markLoadedMessagesRead());
   }
 
+  void _onEnterChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Rect? _toOverlayRect(Rect? global) {
+    if (global == null) return null;
+    final box = _actionOverlayKey.currentContext?.findRenderObject();
+    if (box is! RenderBox) return global;
+    return box.globalToLocal(global.topLeft) & global.size;
+  }
+
+  void _onOutgoingTextFlyIn(String text, Rect? composerRect) {
+    final overlay = _actionOverlayKey.currentContext?.findRenderObject();
+    final size = overlay is RenderBox && overlay.hasSize
+        ? overlay.size
+        : MediaQuery.sizeOf(context);
+    final localField = _toOverlayRect(composerRect);
+    final composerTop = localField?.top ?? (size.height - 64);
+    final stamp = formatBubbleStamp(DateTime.now());
+    final to = estimateOutgoingRect(
+      viewport: size,
+      text: text,
+      stamp: stamp,
+      composerTop: composerTop,
+    );
+    final from = localField ?? to;
+    final pendingId = 'pending-${_flyInSeq++}';
+    _pendingFlyIns.add((text: text, pendingId: pendingId));
+    _enter.begin(
+      MessageEnterFlight(
+        id: pendingId,
+        text: text,
+        stamp: stamp,
+        from: from,
+        to: to,
+        fromColor: _effectiveOutgoingColor() ?? const Color(0xff24445e),
+        toColor: _effectiveOutgoingColor() ?? const Color(0xff24445e),
+        fromTextColor: _effectiveOutgoingTextColor() ?? const Color(0xffeef4fa),
+        toTextColor: _effectiveOutgoingTextColor() ?? const Color(0xffeef4fa),
+      ),
+    );
+    _bindPendingFlights();
+  }
+
+  void _bindPendingFlights({ChatMessage? newest}) {
+    if (_pendingFlyIns.isEmpty) return;
+    final candidates = newest != null
+        ? <ChatMessage>[newest, ..._vm.messages.reversed]
+        : _vm.messages.reversed;
+    final seen = <int>{};
+    for (final message in candidates) {
+      if (!message.isOutgoing || !seen.add(message.id)) continue;
+      if (_enter.hides('${message.id}')) continue;
+      final i = _pendingFlyIns.indexWhere((p) => p.text == message.text);
+      if (i < 0) continue;
+      final pending = _pendingFlyIns.removeAt(i);
+      _enter.bind(pending.pendingId, '${message.id}');
+      _insertShiftGeneration += 1;
+      _insertShiftNewMessageId = message.id;
+      final width = MediaQuery.sizeOf(context).width;
+      _insertShiftAmount = estimateRowHeight(
+        kind: 'text',
+        text: message.text,
+        viewportWidth: width,
+        hasReply: message.replyPreviewText != null,
+      );
+      if (_pendingFlyIns.isEmpty) return;
+    }
+  }
+
+  bool _clusteredWithNewer(
+    ChatMessage message,
+    int index, {
+    List<ChatMessage>? messages,
+  }) {
+    messages ??= _vm.messages;
+    if (index < 0 || index >= messages.length - 1) return false;
+    final next = messages[index + 1];
+    final sameSender =
+        next.isOutgoing == message.isOutgoing &&
+        (message.isOutgoing || next.senderId == message.senderId);
+    return isClusteredWithNewer(
+      sameSender: sameSender,
+      separatedByTimeOrTopic:
+          _needsSeparator(index + 1, messages: messages) ||
+          _needsUnreadDivider(index + 1, messages: messages) ||
+          _needsTopicSeparator(index + 1, messages: messages),
+      newerIsService: next.isService,
+    );
+  }
+
   void _onComposerMessageSent() {
     _cancelSessionScrollAnchorMaintenance();
     _maintainRestoredBottom = false;
@@ -3379,6 +3475,9 @@ class _ChatViewState extends State<ChatView> {
       _lastCount = _vm.messages.length;
       _lastNewestMessageId = newest?.id ?? _lastNewestMessageId;
       _lastOldestMessageId = oldest?.id ?? _lastOldestMessageId;
+      if (appendedNewest && newest.isOutgoing) {
+        _bindPendingFlights(newest: newest);
+      }
       final shouldAutoScroll =
           _initialTranscriptReady &&
           _scrollTargetId == null &&
@@ -4588,6 +4687,9 @@ class _ChatViewState extends State<ChatView> {
     _vm.removeListener(_publishTopicList);
     _vm.removeListener(_onModel);
     _vm.onDisappear();
+    _enter
+      ..removeListener(_onEnterChanged)
+      ..dispose();
     _vm.dispose();
     _scroll.dispose();
     super.dispose();
@@ -4810,6 +4912,7 @@ class _ChatViewState extends State<ChatView> {
       mePhoto: _vm.mePhoto,
       meId: _vm.meId,
       showRepeat: _vm.canForwardContent && _isRepeatTail(messageIndex),
+      clusteredWithNewer: _clusteredWithNewer(message, messageIndex),
       onRepeat: () => _vm.repeatMessage(message),
       onLongPress: _isSelecting ? null : _showActionMenuForMessage,
       onDesktopQuoteChanged: _handleDesktopQuoteChanged,
@@ -7281,6 +7384,16 @@ class _ChatViewState extends State<ChatView> {
                                 _actionOverlaySnapshot != null) &&
                             !_isSelecting)
                           _actionMenuOverlay(),
+                        if (_enter.active) ...[
+                          for (final flight in List<MessageEnterFlight>.from(
+                            _enter.flights,
+                          ))
+                            MessageEnterLayer(
+                              key: ValueKey('enter-${flight.id}'),
+                              flight: flight,
+                              onDone: () => _enter.complete(flight.id),
+                            ),
+                        ],
                       ],
                     ),
                   ),
@@ -8287,6 +8400,13 @@ class _ChatViewState extends State<ChatView> {
   bool _composerBarShowCallAction = false;
   bool _composerBarSimpleMode = false;
 
+  final MessageEnterController _enter = MessageEnterController();
+  final List<({String text, String pendingId})> _pendingFlyIns = [];
+  int _flyInSeq = 0;
+  int _insertShiftGeneration = 0;
+  double _insertShiftAmount = 0;
+  int? _insertShiftNewMessageId;
+
   Widget _chatInputBar() {
     final themeController = context.watch<ThemeController>();
     final requestInitialFocus = widget.requestComposerFocusOnReady;
@@ -8317,6 +8437,7 @@ class _ChatViewState extends State<ChatView> {
       simpleMode: simpleMode,
       onStartCall: _startCall,
       onMessageSent: _onComposerMessageSent,
+      onOutgoingTextFlyIn: _onOutgoingTextFlyIn,
       onPanelGeometryChanged: _onComposerPanelGeometryChanged,
       onInputHeightChanged: _onComposerInputHeightChanged,
       onMediaSendTapped: _onComposerMediaSendTapped,
@@ -10391,9 +10512,29 @@ class _ChatViewState extends State<ChatView> {
         _messageBubble(message, messageIndex),
       );
     }
-    final positionedMessageBody = usesExactMediaTarget || targetKey == null
+    var positionedMessageBody = usesExactMediaTarget || targetKey == null
         ? messageBody
         : KeyedSubtree(key: targetKey, child: messageBody);
+    final flying = entry.messages.any((m) => _enter.hides('${m.id}'));
+    if (flying) {
+      positionedMessageBody = Visibility(
+        visible: false,
+        maintainState: true,
+        maintainAnimation: true,
+        maintainSize: true,
+        child: positionedMessageBody,
+      );
+    }
+    if (_insertShiftGeneration > 0 &&
+        _insertShiftNewMessageId != null &&
+        !entry.messages.any((m) => m.id == _insertShiftNewMessageId)) {
+      positionedMessageBody = InsertShift(
+        generation: _insertShiftGeneration,
+        amount: _insertShiftAmount,
+        enabled: true,
+        child: positionedMessageBody,
+      );
+    }
     final visibilityKey = _entryVisibilityKeys.putIfAbsent(
       entry.last.id,
       GlobalKey.new,

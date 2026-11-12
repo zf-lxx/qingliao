@@ -58,6 +58,7 @@ import '../tdlib/td_client.dart';
 import '../tdlib/td_image_loader.dart';
 import '../tdlib/td_models.dart';
 import '../theme/app_motion.dart';
+import '../render/message_enter.dart';
 import '../theme/app_theme.dart';
 import '../theme/content_size.dart';
 import '../theme/theme_controller.dart';
@@ -532,6 +533,7 @@ class ChatInputBar extends StatefulWidget {
     required this.vm,
     required this.onStartCall,
     required this.onMessageSent,
+    this.onOutgoingTextFlyIn,
     this.onPanelGeometryChanged,
     this.onInputHeightChanged,
     this.onMediaSendTapped,
@@ -566,6 +568,11 @@ class ChatInputBar extends StatefulWidget {
   final ChatViewModel vm;
   final FutureOr<void> Function(bool isVideo) onStartCall;
   final VoidCallback onMessageSent;
+
+  /// Called with the outgoing text and the composer field rect, after a
+  /// successful send and before the field is cleared, so the chat can fly
+  /// the typography into the new bubble.
+  final void Function(String text, Rect? composerRect)? onOutgoingTextFlyIn;
   final VoidCallback? onPanelGeometryChanged;
 
   /// The text field's own height changed as text wrapped or was removed.
@@ -666,6 +673,7 @@ class _ChatInputBarState extends State<ChatInputBar>
 
   final _controller = EmojiTextEditingController();
   final _focus = FocusNode();
+  final _composerFieldKey = GlobalKey();
   final _panelSearch = TextEditingController();
 
   /// Simple mode's More panel. It never keeps an offset, so the panel always
@@ -3070,8 +3078,10 @@ class _ChatInputBarState extends State<ChatInputBar>
       final ok = await _confirmPaidMessageSend();
       if (!mounted || !ok) return;
     }
+    final field = globalRectOf(_composerFieldKey);
     final sent = await vm.sendFormatted(text, entities);
     if (!mounted || !sent) return;
+    widget.onOutgoingTextFlyIn?.call(text, field);
     widget.onMessageSent();
     _controller.clear();
     _focus.requestFocus();
@@ -6215,6 +6225,7 @@ class _ChatInputBarState extends State<ChatInputBar>
                                                       _touchTextFieldMaxHeight(),
                                                 ),
                                           child: TextField(
+                                            key: _composerFieldKey,
                                             controller: _controller,
                                             focusNode: _focus,
                                             // The caption is fixed while its

@@ -1,7 +1,8 @@
 //
 //  message_bubble.dart
 //
-//  One conversation message, reference-styled. Plain rounded bubbles (no tail).
+//  One conversation message, reference-styled. Custom bubble path with a tail
+//  and grouped corners; timestamp sits inside the text bubble.
 //  Renders text (with highlighted links), inline images (tap → full-screen
 //  viewer), stickers (.tgs Lottie), voice notes, location cards, and document
 //  cards. Shows a "+1" quick-repeat badge for a duplicate tail. Swipe the row
@@ -35,6 +36,11 @@ import '../settings/translation_controller.dart';
 import '../tdlib/json_helpers.dart';
 import '../tdlib/td_client.dart';
 import '../tdlib/td_models.dart';
+import '../render/bubble_shape.dart';
+import '../render/bubble_stamp.dart';
+import '../render/chat_image.dart';
+import '../render/message_layout.dart';
+import '../render/ql_curves.dart';
 import '../theme/app_theme.dart';
 import '../theme/content_size.dart';
 import '../theme/date_text.dart';
@@ -112,6 +118,7 @@ class MessageBubble extends StatelessWidget {
     this.meId,
     this.showRepeat = false,
     this.forceShowTimestamp = false,
+    this.clusteredWithNewer = false,
     this.onRepeat,
     this.onLongPress,
     this.mobileTextSelectionAreaKey,
@@ -181,6 +188,9 @@ class MessageBubble extends StatelessWidget {
   final int? meId;
   final bool showRepeat;
   final bool forceShowTimestamp;
+
+  /// Newer neighbor continues this sender cluster: drop the tail.
+  final bool clusteredWithNewer;
   final VoidCallback? onRepeat;
   final void Function(
     ChatMessage message,
@@ -196,6 +206,7 @@ class MessageBubble extends StatelessWidget {
   final ValueChanged<ChatMessage>? onAvatarTap;
   final ValueChanged<ChatMessage>? onAvatarLongPress;
   final ValueChanged<int>? onOpenReply;
+
   /// Preferred over [onOpenReply] so a quote whose target id is 0 / missing
   /// can still be resolved from the reply message itself (getRepliedMessage).
   final ValueChanged<ChatMessage>? onOpenReplyQuote;
@@ -427,14 +438,23 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
       }
       _desktopTouchLongPressTimer?.cancel();
       _desktopTouchLongPressTimer = null;
-      if (travel.dy.abs() >= travel.dx.abs()) {
+      if (travel.dx.abs() / 3 <= travel.dy.abs()) {
         _cancelDesktopTouchGesture();
         return;
       }
+      if (travel.dx > -qlEdgeStartPx(MediaQuery.devicePixelRatioOf(context))) {
+        return;
+      }
       _desktopTouchHorizontal = true;
-      _swipe.beginDrag();
+      _swipe.beginDrag(
+        startPx: qlEdgeStartPx(MediaQuery.devicePixelRatioOf(context)),
+      );
     }
-    _swipe.dragTo(math.min(0, travel.dx));
+    _swipe.dragTo(
+      math.min(0, travel.dx),
+      dy: travel.dy,
+      startPx: qlEdgeStartPx(MediaQuery.devicePixelRatioOf(context)),
+    );
     _clearDesktopTouchSelection();
   }
 
@@ -833,8 +853,27 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
       !widget.bubble.showCommentAttachment &&
       message.commentCount > 0;
 
-  BorderRadius _messageBorderRadius(double radius) =>
-      BorderRadius.circular(radius);
+  BorderRadius _messageBorderRadius(double radius) {
+    if (!widget.bubble.clusteredWithNewer) {
+      return BorderRadius.circular(radius);
+    }
+    const near = Radius.circular(6);
+    final r = Radius.circular(radius);
+    if (message.isOutgoing) {
+      return BorderRadius.only(
+        topLeft: r,
+        topRight: r,
+        bottomLeft: r,
+        bottomRight: near,
+      );
+    }
+    return BorderRadius.only(
+      topLeft: r,
+      topRight: r,
+      bottomLeft: near,
+      bottomRight: r,
+    );
+  }
 
   Widget _bubbleBackground({
     Key? key,
@@ -872,7 +911,14 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
       fallbackColor: outgoing ? _outgoingBubbleColor : _incomingBubbleColor,
       fallbackBorderRadius: borderRadius,
       fallbackPadding: padding,
-      fallbackBorder: outgoing || _messageColors != null
+      fallbackShape: _usesDecorativeBubbleBackground
+          ? null
+          : QingliaoBubbleShape(
+              mine: outgoing,
+              grouped: widget.bubble.clusteredWithNewer,
+            ),
+      fallbackBorder:
+          _usesDecorativeBubbleBackground || outgoing || _messageColors != null
           ? null
           : Border.all(color: _colors.divider, width: 0.5),
       constraints: constraints,
@@ -1131,7 +1177,7 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
         clipBehavior: Clip.none,
         children: [
           messageRow,
-          if (!timeInSenderHeader)
+          if (!timeInSenderHeader && !_embedsBubbleStamp)
             _detailTimestampOverlay(
               outgoing,
               showDetailTime
@@ -1281,6 +1327,34 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
       ),
     ),
   );
+
+  bool get _embedsBubbleStamp {
+    if (message.isContentRestricted && !_revealsRestrictedContent) return true;
+    if (message.isCall ||
+        message.contact != null ||
+        message.poll != null ||
+        message.checklist != null ||
+        message.story != null ||
+        message.gift != null ||
+        message.gramTransfer != null ||
+        message.summaryCard != null ||
+        message.animatedSticker != null ||
+        message.videoSticker != null ||
+        message.isDice ||
+        message.video != null ||
+        (message.stickerFileId != null && message.image != null) ||
+        message.image != null ||
+        message.music != null ||
+        message.location != null ||
+        message.voice != null ||
+        message.document != null) {
+      return false;
+    }
+    return true;
+  }
+
+  DateTime get _messageStampDate =>
+      DateTime.fromMillisecondsSinceEpoch(message.date * 1000);
 
   // MARK: - Content router
 
@@ -2344,6 +2418,32 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
         ),
       ],
     ];
+    final stamp = formatBubbleStamp(_messageStampDate);
+    final layout = StampLayout.measure(
+      text: displayText,
+      stamp: stamp,
+      viewportWidth: previewMaxWidth,
+    );
+    Widget body = parts.length == 1
+        ? parts.first
+        : Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: parts,
+          );
+    if (!emojiOnly && stamp.isNotEmpty) {
+      body = BubbleStampStack(
+        stamp: stamp,
+        sameLine: layout.sameLine,
+        stampWidth: layout.stampWidth,
+        stampHeight: layout.stampHeight,
+        minWidth: math.max(0, layout.bubbleWidth - bubblePadding.horizontal),
+        stampStyle: StampLayout.stampStyle.copyWith(
+          color: _messageTimeColor(outgoing).withValues(alpha: 0.85),
+        ),
+        child: body,
+      );
+    }
     return _bubbleBackground(
       key: ValueKey('messageTextBubble-${message.id}'),
       outgoing: outgoing,
@@ -2352,13 +2452,7 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
       borderRadius: _messageBorderRadius(messageTextBubbleRadius),
       // A plain text message is one span block; the column around it would
       // only re-derive the size the child already has.
-      child: parts.length == 1
-          ? parts.first
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: parts,
-            ),
+      child: body,
     );
   }
 
@@ -5861,9 +5955,18 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
   }
 
   MediaPreviewGeometry _imagePreviewGeometry() {
+    final w = message.imageWidth;
+    final h = message.imageHeight;
+    if (w == null || h == null || w <= 0 || h <= 0) {
+      final fallback = unknownImagePlaceholderSize(
+        availableWidth: _mediaMaxWidth(),
+        maxHeight: telegramChatMediaPreviewMaxHeight,
+      );
+      return MediaPreviewGeometry(contentSize: fallback, frameSize: fallback);
+    }
     return telegramDesktopMediaPreviewGeometry(
-      sourceWidth: message.imageWidth,
-      sourceHeight: message.imageHeight,
+      sourceWidth: w,
+      sourceHeight: h,
       availableWidth: _mediaMaxWidth(),
       maxHeight: telegramChatMediaPreviewMaxHeight,
     );

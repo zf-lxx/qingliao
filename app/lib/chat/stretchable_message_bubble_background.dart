@@ -19,6 +19,7 @@ class StretchableMessageBubbleBackground extends StatelessWidget {
     required this.child,
     this.constraints = const BoxConstraints(),
     this.fallbackBorder,
+    this.fallbackShape,
     this.clipBehavior = Clip.none,
   });
 
@@ -28,6 +29,7 @@ class StretchableMessageBubbleBackground extends StatelessWidget {
   final EdgeInsetsGeometry fallbackPadding;
   final BoxConstraints constraints;
   final BoxBorder? fallbackBorder;
+  final ShapeBorder? fallbackShape;
   final Clip clipBehavior;
   final Widget child;
 
@@ -77,6 +79,18 @@ class StretchableMessageBubbleBackground extends StatelessWidget {
           ),
           content,
         ],
+      );
+    }
+    if (fallbackShape != null) {
+      return Container(
+        constraints: _effectiveConstraints,
+        clipBehavior: clipBehavior == Clip.none ? Clip.antiAlias : clipBehavior,
+        decoration: ShapeDecoration(
+          color: fallbackColor,
+          shape: fallbackShape!,
+        ),
+        padding: fallbackPadding,
+        child: child,
       );
     }
     return Container(

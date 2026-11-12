@@ -1,11 +1,10 @@
 import 'package:flutter/widgets.dart';
 
 import '../components/full_page_back_swipe.dart';
+import '../render/ql_curves.dart';
 import '../theme/app_motion.dart';
 
 final GlobalKey<NavigatorState> appNavigatorKey = GlobalKey<NavigatorState>();
-
-const double _maximumBackSwipeScrimOpacity = 0.16;
 
 /// The shared route for app-level conversation surfaces.
 ///
@@ -26,16 +25,19 @@ class AppChatPageRoute<T> extends PageRoute<T>
   @override
   final bool maintainState;
 
+  @override
+  bool get opaque => false;
+
   NavigatorState? _gestureNavigator;
   AnimationController? _gestureController;
   AnimationStatusListener? _gestureStatusListener;
   bool _fullPageBackSwipeActive = false;
 
   @override
-  Duration get transitionDuration => AppMotion.route;
+  Duration get transitionDuration => QlDuration.page;
 
   @override
-  Duration get reverseTransitionDuration => AppMotion.routeReverse;
+  Duration get reverseTransitionDuration => QlDuration.page;
 
   @override
   Color? get barrierColor => null;
@@ -78,18 +80,18 @@ class AppChatPageRoute<T> extends PageRoute<T>
     if (!_fullPageBackSwipeActive || animationController == null) return;
     final restoreRoute = isCurrent || isActive;
     final target = restoreRoute ? 1.0 : 0.0;
-    final distance = (target - animationController.value).abs();
+    final progress = animationController.value;
     if (restoreRoute) {
       animationController.animateTo(
         target,
-        duration: _settleDuration(distance),
-        curve: AppMotion.standard,
+        duration: qlBackCancelDuration(1 - progress, 1),
+        curve: const AndroidDecelerate(1),
       );
     } else {
       animationController.animateBack(
         target,
-        duration: _settleDuration(distance),
-        curve: AppMotion.standard,
+        duration: qlBackFinishDuration(progress, 1),
+        curve: const AndroidDecelerate(1),
       );
     }
     _finishGestureWhenSettled(animationController);
@@ -110,7 +112,7 @@ class AppChatPageRoute<T> extends PageRoute<T>
       cancelFullPageBackSwipe();
       return;
     }
-    final distance = animationController.value;
+    final remaining = animationController.value;
     try {
       beforePop?.call();
       routeNavigator.pop<T>();
@@ -121,15 +123,12 @@ class AppChatPageRoute<T> extends PageRoute<T>
     if (animationController.isAnimating) {
       animationController.animateBack(
         0,
-        duration: _settleDuration(distance),
-        curve: AppMotion.standard,
+        duration: qlBackFinishDuration(remaining, 1),
+        curve: const AndroidDecelerate(1),
       );
     }
     _finishGestureWhenSettled(animationController);
   }
-
-  Duration _settleDuration(double distance) =>
-      Duration(milliseconds: (120 + 100 * distance.clamp(0.0, 1.0)).round());
 
   void _finishGestureWhenSettled(AnimationController animationController) {
     final existingListener = _gestureStatusListener;
@@ -199,74 +198,40 @@ class AppChatPageRoute<T> extends PageRoute<T>
     if (AppMotion.isReduced(context) && !_fullPageBackSwipeActive) {
       return child;
     }
-    final leaving =
-        _fullPageBackSwipeActive ||
-        animation.status == AnimationStatus.reverse ||
-        animation.status == AnimationStatus.dismissed;
-    if (leaving) {
-      final effectiveAnimation = popGestureInProgress
-          ? animation
-          : CurvedAnimation(
-              parent: animation,
-              curve: AppMotion.standard,
-              reverseCurve: AppMotion.standard.flipped,
-            );
-      final slide = SlideTransition(
-        position: Tween<Offset>(
-          begin: const Offset(1, 0),
-          end: Offset.zero,
-        ).animate(effectiveAnimation),
-        transformHitTests: false,
-        child: child,
-      );
-      if (!_fullPageBackSwipeActive) return slide;
-      return Stack(
-        fit: StackFit.expand,
-        children: [
-          FadeTransition(
-            opacity: Tween<double>(
-              begin: 0,
-              end: _maximumBackSwipeScrimOpacity,
-            ).animate(effectiveAnimation),
-            child: const IgnorePointer(
-              child: ColoredBox(color: Color(0xFF000000)),
+    final finger = _fullPageBackSwipeActive || popGestureInProgress;
+    return AnimatedBuilder(
+      animation: animation,
+      child: child,
+      builder: (context, child) {
+        final raw = animation.value;
+        final t = finger
+            ? raw
+            : (animation.status == AnimationStatus.reverse ||
+                  animation.status == AnimationStatus.dismissed)
+            ? const AndroidDecelerate(1).transform(raw)
+            : qlDefaultCurve.transform(raw);
+        final width = MediaQuery.sizeOf(context).width;
+        final translationX = (1 - t) * width;
+        final scrim = qlBackScrimOpacity(t);
+        return Stack(
+          fit: StackFit.expand,
+          children: [
+            if (scrim > 0)
+              IgnorePointer(
+                child: ColoredBox(color: Color.fromRGBO(0, 0, 0, scrim)),
+              ),
+            Transform.translate(
+              offset: Offset(translationX, 0),
+              transformHitTests: false,
+              child: Transform.scale(
+                alignment: Alignment.centerLeft,
+                scale: qlBackPageScale(translationX),
+                child: child,
+              ),
             ),
-          ),
-          slide,
-        ],
-      );
-    }
-
-    final entrance = CurvedAnimation(
-      parent: animation,
-      curve: AppMotion.standard,
-      reverseCurve: AppMotion.accelerate,
-    );
-    final covered = CurvedAnimation(
-      parent: secondaryAnimation,
-      curve: AppMotion.standard,
-      reverseCurve: AppMotion.accelerate,
-    );
-    return FadeTransition(
-      opacity: Tween<double>(begin: 1, end: 0.96).animate(covered),
-      child: SlideTransition(
-        position: Tween<Offset>(
-          begin: Offset.zero,
-          end: const Offset(-0.018, 0),
-        ).animate(covered),
-        transformHitTests: false,
-        child: _EntranceFade(
-          animation: entrance,
-          child: SlideTransition(
-            position: Tween<Offset>(
-              begin: const Offset(0.045, 0),
-              end: Offset.zero,
-            ).animate(entrance),
-            transformHitTests: false,
-            child: child,
-          ),
-        ),
-      ),
+          ],
+        );
+      },
     );
   }
 
@@ -278,43 +243,6 @@ class AppChatPageRoute<T> extends PageRoute<T>
 
   @override
   String get debugLabel => '${super.debugLabel}(${settings.name})';
-}
-
-/// Fades a conversation in as it arrives and holds it fully opaque as it leaves.
-///
-/// Replaying the arrival fade in reverse kept a full-screen [OpacityLayer] alive
-/// for the whole 240 ms pop, at an alpha below 255 on every frame. An [Opacity]
-/// over a group of widgets costs an offscreen buffer plus a render target switch
-/// (see the [Opacity] docs), and a pop is exactly when the chat list underneath
-/// is re-rasterizing itself. At 1.0 `RenderOpacity` paints its child directly
-/// and builds no opacity layer at all, so the departure becomes a plain slide.
-///
-/// The value a completed route starts its reverse at is 1.0, which is also the
-/// value this holds it at, so nothing jumps when a pop begins — including an
-/// interactive one, where the page now stays crisp while it follows the finger.
-/// The `covered` dim in `buildTransitions` cannot do the same: it sits at 0.96
-/// while a conversation is on top, so pinning it would brighten the returning
-/// page in a single frame.
-class _EntranceFade extends AnimatedWidget {
-  const _EntranceFade({
-    required Animation<double> animation,
-    required this.child,
-  }) : super(listenable: animation);
-
-  final Widget child;
-
-  @override
-  Widget build(BuildContext context) {
-    final entrance = listenable as Animation<double>;
-    final leaving = switch (entrance.status) {
-      AnimationStatus.reverse || AnimationStatus.dismissed => true,
-      AnimationStatus.forward || AnimationStatus.completed => false,
-    };
-    return Opacity(
-      opacity: leaving ? 1.0 : 0.92 + 0.08 * entrance.value,
-      child: child,
-    );
-  }
 }
 
 Future<T?> pushAppChatRoute<T>(BuildContext context, Route<T> route) {

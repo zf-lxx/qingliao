@@ -16,17 +16,17 @@ import 'package:flutter/services.dart';
 
 import '../components/app_icons.dart';
 import '../platform/adaptive_platform.dart';
-import '../theme/app_motion.dart';
+import '../render/ql_curves.dart';
 import '../theme/app_theme.dart';
 
 /// Travel at which letting go commits the reply.
-const double messageSwipeReplyTrigger = 48;
+const double messageSwipeReplyTrigger = 50;
 
 /// Travel that follows the finger 1:1 before resistance starts.
-const double messageSwipeReplyRestingLimit = 72;
+const double messageSwipeReplyRestingLimit = 80;
 
 /// Travel the row never passes, however hard the finger pulls.
-const double messageSwipeReplyHardLimit = 104;
+const double messageSwipeReplyHardLimit = 80;
 
 /// Leftward flick speed in px/s that commits without reaching the trigger.
 const double messageSwipeReplyFlickVelocity = -650;
@@ -51,6 +51,9 @@ const double messageSwipeReplyResistance = 0.34;
 /// Callers feed either the accumulated offset plus the new delta (a drag
 /// stream, which damps progressively) or the raw travel from the touch origin
 /// (a pointer path that knows the whole gesture). Both read the same.
+double messageSwipeReplyStartPx(BuildContext context) =>
+    qlEdgeStartPx(MediaQuery.devicePixelRatioOf(context));
+
 double messageSwipeReplyOffset(double travel) {
   if (travel >= -messageSwipeReplyRestingLimit) {
     return travel.clamp(-messageSwipeReplyHardLimit, 0).toDouble();
@@ -87,7 +90,13 @@ class MessageSwipeReplyController {
 
   /// Set by the host's build so a reduced-motion setting shortens the spring
   /// home the way it shortens every other surface.
-  Duration settleDuration = AppMotion.responsive;
+  Duration settleDuration = QlDuration.swipeSnap;
+
+  double _gateX = 0;
+  double _gateY = 0;
+  double _startPx = 0;
+  bool _gated = true;
+  bool _rejected = false;
 
   /// The row listens to this.
   Listenable get travel => _travel;
@@ -100,17 +109,49 @@ class MessageSwipeReplyController {
   int get tickCount => _tickCount;
 
   /// Claims a fresh drag: stops a running spring and re-arms the tick.
-  void beginDrag() {
+  void beginDrag({double startPx = 0}) {
     if (_disposed) return;
     _travel.stop();
     _tickArmed = _travel.value > -messageSwipeReplyTrigger;
+    _startPx = startPx;
+    _gateX = 0;
+    _gateY = 0;
+    _gated = startPx <= 0;
+    _rejected = false;
   }
 
   /// Moves by one drag delta.
-  void dragBy(double delta) => _apply(_travel.value + delta);
+  void dragBy(double delta, {double dy = 0}) {
+    if (_disposed || _rejected) return;
+    if (!_gated) {
+      _gateX += delta;
+      _gateY += dy;
+      if (_gateX <= -_startPx && _gateX.abs() / 3 > _gateY.abs()) {
+        _gated = true;
+      } else if (_gateX.abs() > 24 && _gateY.abs() > _gateX.abs() / 3) {
+        _rejected = true;
+      }
+      return;
+    }
+    _apply(_travel.value + delta);
+  }
 
   /// Moves to an absolute travel from the gesture origin.
-  void dragTo(double travel) => _apply(travel);
+  void dragTo(double travel, {double dy = 0, double startPx = 0}) {
+    if (_disposed || _rejected) return;
+    final threshold = startPx > 0 ? startPx : _startPx;
+    if (!_gated && threshold > 0) {
+      if (travel <= -threshold && travel.abs() / 3 > dy.abs()) {
+        _gated = true;
+      } else if (travel.abs() > 24 && dy.abs() > travel.abs() / 3) {
+        _rejected = true;
+        return;
+      } else {
+        return;
+      }
+    }
+    _apply(travel);
+  }
 
   void _apply(double requested) {
     if (_disposed) return;
@@ -148,7 +189,11 @@ class MessageSwipeReplyController {
     // A scheduled put-back can outlive the row that scheduled it.
     if (_disposed) return;
     if (_travel.value == 0 && !_travel.isAnimating) return;
-    _travel.animateTo(0, duration: settleDuration, curve: Curves.easeOutCubic);
+    _travel.animateTo(
+      0,
+      duration: settleDuration,
+      curve: const AndroidDecelerate(1),
+    );
   }
 
   void dispose() {
@@ -176,7 +221,9 @@ Widget buildMessageSwipeReply({
   VoidCallback? onReply,
   bool swipeEnabled = true,
 }) {
-  controller.settleDuration = AppMotion.duration(context, AppMotion.responsive);
+  controller.settleDuration = MediaQuery.disableAnimationsOf(context)
+      ? const Duration(milliseconds: 1)
+      : QlDuration.swipeSnap;
   final interactive =
       onReply != null &&
       swipeEnabled &&
@@ -190,9 +237,10 @@ Widget buildMessageSwipeReply({
   final row = interactive
       ? GestureDetector(
           behavior: HitTestBehavior.opaque,
-          onHorizontalDragStart: (_) => controller.beginDrag(),
+          onHorizontalDragStart: (_) =>
+              controller.beginDrag(startPx: messageSwipeReplyStartPx(context)),
           onHorizontalDragUpdate: (details) =>
-              controller.dragBy(details.delta.dx),
+              controller.dragBy(details.delta.dx, dy: details.delta.dy),
           onHorizontalDragEnd: (details) => controller.finish(
             onReply: onReply,
             primaryVelocity: details.primaryVelocity,
