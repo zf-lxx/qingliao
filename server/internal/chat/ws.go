@@ -104,6 +104,15 @@ func (h *Hub) closeSession(id string) {
 		}
 	}
 }
+func (h *Hub) closeUser(id string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for c := range h.clients {
+		if c.p.UserID == id {
+			c.ws.Close()
+		}
+	}
+}
 func (c *connection) enqueue(v any) {
 	select {
 	case c.out <- v:
@@ -178,6 +187,7 @@ func (a *App) websocket(w http.ResponseWriter, r *http.Request) {
 		ws.Close()
 		a.hub.remove(c)
 		a.DB.Exec("UPDATE users SET last_seen=? WHERE id=?", now(), p.UserID)
+		a.touchDevice(p.DeviceID)
 		a.presence(p.UserID)
 	}()
 	a.presence(p.UserID)

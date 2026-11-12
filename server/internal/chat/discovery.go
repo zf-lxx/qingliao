@@ -191,12 +191,14 @@ func (a *App) SharedMedia(p Principal, cid, kind string, before int64, date stri
 		filter = " AND m.kind='" + kind + "'"
 	case "link":
 		filter = " AND m.preview_json<>''"
+	case "audio":
+		filter, _ = globalMediaFilter("audio")
 	default:
 		return nil, ErrInvalid
 	}
 	base := ` FROM messages m JOIN members b ON b.chat_id=m.chat_id WHERE m.chat_id=? AND b.user_id=? AND m.seq>b.joined_seq AND m.deleted=0`
 	// Stats are over the complete visible history, not the paginated page.
-	counts := map[string]int64{"image": 0, "video": 0, "file": 0, "voice": 0, "link": 0}
+	counts := map[string]int64{"image": 0, "video": 0, "file": 0, "voice": 0, "link": 0, "audio": 0}
 	rows, e := a.DB.Query("SELECT m.kind,count(*)"+base+" AND m.media_id<>'' GROUP BY m.kind", cid, p.UserID)
 	if e != nil {
 		return nil, e
@@ -216,6 +218,9 @@ func (a *App) SharedMedia(p Principal, cid, kind string, before int64, date stri
 	}
 	rows.Close()
 	if e = a.DB.QueryRow("SELECT count(*)"+base+" AND m.preview_json<>''", cid, p.UserID).Scan(newCount(counts, "link")); e != nil {
+		return nil, e
+	}
+	if e = a.DB.QueryRow("SELECT count(*)"+base+" AND m.kind='file' AND EXISTS (SELECT 1 FROM media md WHERE md.id=m.media_id AND (md.mime LIKE 'audio/%' OR lower(md.file_name) LIKE '%.mp3' OR lower(md.file_name) LIKE '%.m4a' OR lower(md.file_name) LIKE '%.flac' OR lower(md.file_name) LIKE '%.ogg' OR lower(md.file_name) LIKE '%.wav' OR lower(md.file_name) LIKE '%.aac'))", cid, p.UserID).Scan(newCount(counts, "audio")); e != nil {
 		return nil, e
 	}
 	buckets := []map[string]any{}
@@ -310,6 +315,14 @@ func (a *App) discoveryRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/conversations/{id}/media", a.auth(func(w http.ResponseWriter, r *http.Request, p Principal) {
 		before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
 		v, e := a.SharedMedia(p, r.PathValue("id"), r.URL.Query().Get("kind"), before, r.URL.Query().Get("before_date"), num(r, "limit"))
+		if e != nil {
+			fail(w, e)
+			return
+		}
+		respond(w, 200, v)
+	}))
+	mux.HandleFunc("GET /v1/me/media", a.auth(func(w http.ResponseWriter, r *http.Request, p Principal) {
+		v, e := a.GlobalMedia(p, r.URL.Query().Get("kind"), r.URL.Query().Get("q"), r.URL.Query().Get("offset"), num(r, "limit"))
 		if e != nil {
 			fail(w, e)
 			return
@@ -425,4 +438,123 @@ func (a *App) reports(w http.ResponseWriter, r *http.Request, p Principal) {
 		out = append(out, map[string]string{"id": id, "reporter": u, "conversation_id": c, "message_id": m, "reason": reason, "created_at": t})
 	}
 	respond(w, 200, map[string]any{"reports": out})
+}
+
+
+// GlobalMedia lists media (and link / voice / audio) messages across every
+// conversation the caller can still see. Used by the drawer-level 「文件」
+// browser. The cursor is an opaque "created|message-id" string so the page
+// can stride across chats; the per-chat seq cursor used by SharedMedia would
+// collide between conversations.
+func (a *App) GlobalMedia(p Principal, kind, q, offset string, limit int) (map[string]any, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 40
+	}
+	if kind == "" {
+		kind = "all"
+	}
+	filter, err := globalMediaFilter(kind)
+	if err != nil {
+		return nil, err
+	}
+	base := ` FROM messages m JOIN members b ON b.chat_id=m.chat_id WHERE b.user_id=? AND m.seq>b.joined_seq AND m.deleted=0`
+	where := base + filter
+	args := []any{p.UserID}
+	if needle := strings.TrimSpace(q); needle != "" {
+		like := "%" + strings.ToLower(needle) + "%"
+		where += " AND (lower(ifnull(m.text,'')) LIKE ? OR EXISTS (SELECT 1 FROM media md WHERE md.id=m.media_id AND (lower(ifnull(md.file_name,'')) LIKE ? OR lower(ifnull(md.mime,'')) LIKE ?)))"
+		args = append(args, like, like, like)
+	}
+	if offCreated, offID, ok := parseGlobalMediaOffset(offset); ok {
+		where += " AND (m.created < ? OR (m.created = ? AND m.id < ?))"
+		args = append(args, offCreated, offCreated, offID)
+	}
+	query := "SELECT " + prefixColumns("m", msgColumns) + where + " ORDER BY m.created DESC, m.id DESC LIMIT ?"
+	args = append(args, limit+1)
+	rows, e := a.DB.Query(query, args...)
+	if e != nil {
+		return nil, e
+	}
+	items, e := scanMessages(rows)
+	rows.Close()
+	if e != nil {
+		return nil, e
+	}
+	attachReplySeqs(a.DB, items)
+	a.attachPolls(items, p.UserID)
+	a.attachChecklists(items)
+	more := len(items) > limit
+	if more {
+		items = items[:limit]
+	}
+	next := ""
+	if more && len(items) > 0 {
+		last := items[len(items)-1]
+		next = formatGlobalMediaOffset(last.Created, last.ID)
+	}
+	counts, e := a.globalMediaCounts(p.UserID)
+	if e != nil {
+		return nil, e
+	}
+	return map[string]any{"messages": items, "has_more": more, "next_offset": next, "counts": counts}, nil
+}
+
+func globalMediaFilter(kind string) (string, error) {
+	switch kind {
+	case "all":
+		return " AND (m.media_id<>'' OR m.preview_json<>'')", nil
+	case "image", "video", "file", "voice":
+		return " AND m.kind='" + kind + "'", nil
+	case "link":
+		return " AND m.preview_json<>''", nil
+	case "audio":
+		return " AND m.kind='file' AND EXISTS (SELECT 1 FROM media md WHERE md.id=m.media_id AND (md.mime LIKE 'audio/%' OR lower(md.file_name) LIKE '%.mp3' OR lower(md.file_name) LIKE '%.m4a' OR lower(md.file_name) LIKE '%.flac' OR lower(md.file_name) LIKE '%.ogg' OR lower(md.file_name) LIKE '%.wav' OR lower(md.file_name) LIKE '%.aac'))", nil
+	default:
+		return "", ErrInvalid
+	}
+}
+
+func formatGlobalMediaOffset(created, id string) string {
+	return created + "|" + id
+}
+
+func parseGlobalMediaOffset(offset string) (string, string, bool) {
+	if offset == "" {
+		return "", "", false
+	}
+	i := strings.IndexByte(offset, '|')
+	if i <= 0 || i == len(offset)-1 {
+		return "", "", false
+	}
+	return offset[:i], offset[i+1:], true
+}
+
+func (a *App) globalMediaCounts(userID string) (map[string]int64, error) {
+	counts := map[string]int64{"image": 0, "video": 0, "file": 0, "voice": 0, "link": 0, "audio": 0}
+	base := ` FROM messages m JOIN members b ON b.chat_id=m.chat_id WHERE b.user_id=? AND m.seq>b.joined_seq AND m.deleted=0`
+	rows, e := a.DB.Query("SELECT m.kind,count(*)"+base+" AND m.media_id<>'' GROUP BY m.kind", userID)
+	if e != nil {
+		return nil, e
+	}
+	for rows.Next() {
+		var k string
+		var n int64
+		if e = rows.Scan(&k, &n); e != nil {
+			rows.Close()
+			return nil, e
+		}
+		counts[k] = n
+	}
+	if e = rows.Err(); e != nil {
+		rows.Close()
+		return nil, e
+	}
+	rows.Close()
+	if e = a.DB.QueryRow("SELECT count(*)"+base+" AND m.preview_json<>''", userID).Scan(newCount(counts, "link")); e != nil {
+		return nil, e
+	}
+	if e = a.DB.QueryRow("SELECT count(*)"+base+" AND m.kind='file' AND EXISTS (SELECT 1 FROM media md WHERE md.id=m.media_id AND (md.mime LIKE 'audio/%' OR lower(md.file_name) LIKE '%.mp3' OR lower(md.file_name) LIKE '%.m4a' OR lower(md.file_name) LIKE '%.flac' OR lower(md.file_name) LIKE '%.ogg' OR lower(md.file_name) LIKE '%.wav' OR lower(md.file_name) LIKE '%.aac'))", userID).Scan(newCount(counts, "audio")); e != nil {
+		return nil, e
+	}
+	return counts, nil
 }

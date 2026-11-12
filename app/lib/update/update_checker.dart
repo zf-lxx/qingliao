@@ -2,7 +2,7 @@
 //  update_checker.dart
 //
 //  In-app update check against the project's GitHub Releases, on the platforms
-//  Mithka distributes itself on. On launch it asks the latest release for its
+//  轻聊 distributes itself on. On launch it asks the latest release for its
 //  tag (semver) and assets, compares the tag to the installed version, and
 //  offers whatever that platform can act on:
 //
@@ -50,7 +50,7 @@ class UpdateChecker {
     bool isGooglePlayBuild = _isGooglePlayBuild,
   }) => !isGooglePlayBuild;
 
-  /// Whether this platform ships packages Mithka can offer from GitHub.
+  /// Whether this platform ships packages 轻聊 can offer from GitHub.
   ///
   /// The optional arguments keep the rule testable off the target platform.
   static bool platformSelfDistributes({
@@ -72,7 +72,7 @@ class UpdateChecker {
 
   /// Whether About shows a manual "check for updates" row.
   ///
-  /// Same rule as the automatic check: only where Mithka distributes its own
+  /// Same rule as the automatic check: only where 轻聊 distributes its own
   /// packages, and never on a Play build, where the store owns updates.
   static bool get supportsManualCheck =>
       automaticChecksEnabled() &&
@@ -251,9 +251,12 @@ class UpdateChecker {
 
   /// The release's APK for the device's preferred ABI, first match wins.
   ///
-  /// Qingliao artifacts are named like `qingliao-mithka-p3-arm64.apk`, which
-  /// does not contain the Android ABI token `arm64-v8a`. Only 轻聊 packages
-  /// are eligible — an upstream mithka APK must never be offered.
+  /// Qingliao artifacts are named like `qingliao-0.4.2-arm64.apk`. Older
+  /// historical names such as `qingliao-mithka-p3-arm64.apk` are still
+  /// recognized so already-installed clients can update; they are not used
+  /// for new releases. The filename may not contain the Android ABI token
+  /// `arm64-v8a`. Only 轻聊 packages are eligible — an upstream mithka APK
+  /// must never be offered.
   static String? _apkFor(ReleaseInfo release, List<String> abis) {
     for (final abi in abis) {
       final matches = [

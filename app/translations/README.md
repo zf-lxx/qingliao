@@ -1,8 +1,10 @@
-# Mithka translations
+# 轻聊 translations
 
-The source of truth for every string [Mithka](https://github.com/iebb/mithka)
+Historical note: this directory started as the localization tree of an earlier client. The shipping product is 轻聊. Keep visible string *values* free of Telegram/mithka; legacy *key names* (for example `mithkaProTitle`) stay so existing call sites keep compiling. The “Borrowing from Telegram's packs” section below is a historical import rule, not a product identity claim.
+
+The source of truth for every string 轻聊
 renders. The catalogue lives here for now and is meant to move to its own
-repository (`iebb/mithka-l10n`) later, so nothing in this directory reaches
+a separate localization repository later, so nothing in this directory reaches
 back into the app except through `tools/`.
 
 | | |

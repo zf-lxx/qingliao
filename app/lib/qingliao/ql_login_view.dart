@@ -2,7 +2,7 @@
 //  ql_login_view.dart — 轻聊 sign-in / invite registration.
 //
 //  Replaces the phone-number flow: handle + password against the configured
-//  server, or registration with an invite code. Built from Mithka's own login
+//  server, or registration with an invite code. Built from the existing login
 //  primitives (InputField, AppInteractiveSurface) so it shares their motion.
 //
 
@@ -36,9 +36,12 @@ class _QlLoginViewState extends State<QlLoginView> {
   final _password = ObscuringController();
   final _invite = TextEditingController();
   final _name = TextEditingController();
+  final _totp = TextEditingController();
   bool _register = false;
   bool _showServer = false;
   bool _working = false;
+  bool _awaitingTotp = false;
+  String _pendingToken = '';
   String? _error;
 
   @override
@@ -57,7 +60,7 @@ class _QlLoginViewState extends State<QlLoginView> {
 
   @override
   void dispose() {
-    for (final c in [_server, _handle, _password, _invite, _name]) {
+    for (final c in [_server, _handle, _password, _invite, _name, _totp]) {
       c.dispose();
     }
     super.dispose();
@@ -67,7 +70,8 @@ class _QlLoginViewState extends State<QlLoginView> {
       !_working &&
       _handle.text.trim().length >= 3 &&
       _password.text.isNotEmpty &&
-      (!_register || _invite.text.trim().isNotEmpty);
+      (!_register || _invite.text.trim().isNotEmpty) &&
+      (!_awaitingTotp || _totp.text.trim().length >= 6);
 
   Future<void> _submit() async {
     if (!_canSubmit) return;
@@ -82,7 +86,25 @@ class _QlLoginViewState extends State<QlLoginView> {
       if (_register && _password.text.length < 12) {
         throw const FormatException('密码至少 12 个字符');
       }
-      await TdClient.shared.query({
+      if (_awaitingTotp) {
+        await TdClient.shared.query({
+          '@type': 'qlLoginTotp',
+          'server': server,
+          'handle': _handle.text.trim(),
+          'pending_token': _pendingToken,
+          'totp_code': _totp.text.trim(),
+        });
+        _password.clear();
+        _totp.clear();
+        if (mounted) {
+          setState(() {
+            _awaitingTotp = false;
+            _pendingToken = '';
+          });
+        }
+        return;
+      }
+      final result = await TdClient.shared.query({
         '@type': _register ? 'qlRegister' : 'qlLogin',
         'server': server,
         'handle': _handle.text.trim(),
@@ -90,6 +112,16 @@ class _QlLoginViewState extends State<QlLoginView> {
         if (_register) 'invite_code': _invite.text.trim(),
         if (_register) 'display_name': _name.text.trim(),
       });
+      if (result['@type'] == 'qlTwoFactorRequired') {
+        if (mounted) {
+          setState(() {
+            _awaitingTotp = true;
+            _pendingToken = result['pending_token']?.toString() ?? '';
+            _error = null;
+          });
+        }
+        return;
+      }
       _password.clear();
     } on TdError catch (e) {
       if (mounted) setState(() => _error = e.message);
@@ -155,7 +187,38 @@ class _QlLoginViewState extends State<QlLoginView> {
                   secure: true,
                   textInputAction: _register ? TextInputAction.next : TextInputAction.done,
                   onChanged: (_) => setState(() => _error = null),
-                  onSubmitted: (_) => _register ? null : unawaited(_submit()),
+                  onSubmitted: (_) => _register || _awaitingTotp ? null : unawaited(_submit()),
+                ),
+                AnimatedSize(
+                  duration: AppMotion.quick,
+                  curve: AppMotion.standard,
+                  alignment: Alignment.topCenter,
+                  child: _awaitingTotp
+                      ? Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            const SizedBox(height: 12),
+                            Text(
+                              '该账号已开启两步验证，请输入验证器中的 6 位验证码。',
+                              style: TextStyle(fontSize: 14, height: 1.4, color: c.textSecondary),
+                            ),
+                            const SizedBox(height: 12),
+                            InputField(
+                              systemImage: HeroAppIcons.shieldHalved.data,
+                              placeholder: '两步验证码',
+                              controller: _totp,
+                              keyboardType: TextInputType.number,
+                              textInputAction: TextInputAction.done,
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                                LengthLimitingTextInputFormatter(8),
+                              ],
+                              onChanged: (_) => setState(() => _error = null),
+                              onSubmitted: (_) => unawaited(_submit()),
+                            ),
+                          ],
+                        )
+                      : const SizedBox(width: double.infinity),
                 ),
                 AnimatedSize(
                   duration: AppMotion.quick,
@@ -214,6 +277,9 @@ class _QlLoginViewState extends State<QlLoginView> {
                     _link(c, _register ? '已有账号？登录' : '有邀请码？注册', () {
                       setState(() {
                         _register = !_register;
+                        _awaitingTotp = false;
+                        _pendingToken = '';
+                        _totp.clear();
                         _error = null;
                       });
                     }),
@@ -257,7 +323,7 @@ class _QlLoginViewState extends State<QlLoginView> {
     final enabled = _canSubmit;
     final radius = BorderRadius.circular(12);
     return AppInteractiveSurface(
-      semanticLabel: _register ? '注册' : '登录',
+      semanticLabel: _awaitingTotp ? '验证并登录' : (_register ? '注册' : '登录'),
       onTap: enabled ? () => unawaited(_submit()) : null,
       enabled: enabled,
       borderRadius: radius,
@@ -271,7 +337,7 @@ class _QlLoginViewState extends State<QlLoginView> {
           child: _working
               ? AppActivityIndicator(size: 20, color: c.onAccent)
               : Text(
-                  _register ? '注册并登录' : '登录',
+                  _awaitingTotp ? '验证并登录' : (_register ? '注册并登录' : '登录'),
                   style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: c.onAccent),
                 ),
         ),

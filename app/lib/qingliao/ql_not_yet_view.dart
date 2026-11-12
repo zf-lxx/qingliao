@@ -1,7 +1,7 @@
 //
 //  ql_not_yet_view.dart — Placeholder for settings that need a later server API.
 //
-//  The row stays in Mithka's Settings layout; opening it must not pretend the
+//  The row stays in the Settings layout; opening it must not pretend the
 //  feature works or persist a fake success.
 //
 

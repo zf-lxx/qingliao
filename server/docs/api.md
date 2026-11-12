@@ -20,7 +20,8 @@
 |---|---|
 | GET `/healthz` | `{ok:true}`，检查数据库连接 |
 | POST `/auth/register` | `{handle,password,invite_code,display_name?,platform?}`；仅有效未过期邀请，原子扣次数；handle 3–32 字母数字下划线，自动小写；password 12–72 **字节**，bcrypt |
-| POST `/auth/login` | `{handle,password,platform?}` |
+| POST `/auth/login` | `{handle,password,platform?,app_name?,app_version?,device_model?,totp_code?,recovery_code?}`。若已开启 TOTP 且未附验证码，返回 `{two_factor_required:true, pending_token}` 而非会话 |
+| POST `/auth/login/totp` | `{pending_token, totp_code}` 或 `{pending_token, recovery_code}`，完成两步验证 |
 | POST `/auth/logout` | 撤销当前 session 并关闭对应 WS |
 | POST `/invites` | 仅系统管理员；`{uses:1,expires_hours:24}`，次数 1–100、有效期 1–720 小时；返回一次性明文 `invite_code`，数据库只存 hash |
 | GET `/me` / GET `/users/{id}` | 用户 id、handle、display_name、avatar_media_id、online、last_seen |
@@ -29,6 +30,14 @@
 | GET `/devices` | 自己的设备、platform、revoked、last_persisted_event_seq、current；不返回 push token |
 | PUT `/devices/current/push` | 主通道`mipush/fcm/huawei/oppo/vivo/none`，none+空token清除；详见push.md |
 | DELETE `/devices/{id}` | 仅本人设备，撤销该设备的所有会话，并关闭 WS |
+| GET `/me/security` | 登录密码是否已设置、两步验证是否开启、恢复码剩余数量；无恢复邮箱（暂未开放） |
+| POST `/me/password` | `{current_password, new_password}`，12–72 字符；不可清空登录密码 |
+| POST `/me/totp/start` | 开始绑定 TOTP，返回 otpauth URI 与 secret |
+| POST `/me/totp/confirm` | `{code}`，确认绑定；一次性返回恢复码明文 |
+| POST `/me/totp/disable` | `{password, totp_code?}` 关闭两步验证 |
+| POST `/me/delete` | `{password, totp_code?}` 注销账号：handle 墓碑、撤销会话、清理联系人/动态/专辑 |
+| POST `/devices/revoke-others` | 撤销除当前设备外的全部登录 |
+| GET `/me/media` | 全局媒体：`kind=photo|file|link|voice|video|audio`，`q`、`offset`、`limit`；游标 `created|id` |
 
 注册/登录返回：
 ```json
@@ -165,4 +174,5 @@ Storage 接口含 Put/Open/Delete/Usage/PresignUpload，local 实现可用；`CH
 - 清单：`POST /v1/conversations/{id}/checklists`，`GET/PATCH /v1/messages/{id}/checklist`，`POST .../checklist/tasks`，`POST .../checklist/done`（`done_task_ids` / `undone_task_ids`）。
 - 文件夹、链接预览：沿用已有 ` /v1/folders` 与 `POST /v1/link-previews`。文件夹 `types` 现允许 `direct|group|channel`。
 - 动态 / 故事：`POST /v1/stories`（`media_id`, `kind=photo|video`, `caption`, `privacy`），`GET /v1/stories/active`，`GET/PATCH/DELETE /v1/stories/{author}/{no}`，`POST .../open`，`PUT .../privacy`，`PUT .../reaction`，`GET .../interactions`，`POST .../report`，`GET /v1/users/{id}/stories?archived=&from_no=`。默认 24 小时过期。无直播/RTMP。
+- 动态专辑：`GET/POST /v1/story-albums`，`GET/PATCH/DELETE /v1/story-albums/{id}`，`PUT /v1/story-albums/{id}/stories`（`op=set|add|remove|reorder`），`POST /v1/story-albums/reorder`。收录进专辑的动态在 24 小时后仍可见。
 - 富文本实体在原有加粗/斜体等之外，允许 `cashtag`、`email`、`phone`、`bot_command`、`text_mention`（`user_id`）。

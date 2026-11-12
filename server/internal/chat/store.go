@@ -315,9 +315,16 @@ func (a *App) Difference(user string, after int64, limit int) (map[string]any, e
 func (a *App) authenticate(token string) (Principal, error) {
 	var p Principal
 	var admin int
-	e := a.DB.QueryRow(`SELECT s.user_id,s.device_id,s.id,u.admin FROM sessions s JOIN users u ON u.id=s.user_id JOIN devices d ON d.id=s.device_id WHERE s.token_hash=? AND s.expires>? AND s.revoked=0 AND d.revoked=0`, hash(token), time.Now().Unix()).Scan(&p.UserID, &p.DeviceID, &p.SessionID, &admin)
+	var deleted int
+	e := a.DB.QueryRow(`SELECT s.user_id,s.device_id,s.id,u.admin,IFNULL(u.deleted,0) FROM sessions s JOIN users u ON u.id=s.user_id JOIN devices d ON d.id=s.device_id WHERE s.token_hash=? AND s.expires>? AND s.revoked=0 AND d.revoked=0`, hash(token), time.Now().Unix()).Scan(&p.UserID, &p.DeviceID, &p.SessionID, &admin, &deleted)
+	if e != nil {
+		return Principal{}, e
+	}
+	if deleted == 1 {
+		return Principal{}, ErrForbidden
+	}
 	p.Admin = admin == 1
-	return p, e
+	return p, nil
 }
 func (a *App) validSession(p Principal) bool {
 	var n int

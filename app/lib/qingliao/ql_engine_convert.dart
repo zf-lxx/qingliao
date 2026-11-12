@@ -26,9 +26,6 @@ int qlGroupInt(String convId) =>
 int qlMediaFileId(String mediaId) =>
     (_fnv1a64('f:$mediaId') & 0x3FFFFFFF) | 0x40000000;
 
-int qlMessageId(int seq) => seq << 20;
-int qlSeqOf(int messageId) => messageId >> 20;
-
 int _parseDate(Object? v) {
   if (v is String && v.isNotEmpty) {
     final d = DateTime.tryParse(v);
@@ -531,11 +528,13 @@ extension on QlTdEngine {
     Map<String, dynamic>? reply;
     if (replyTo.isNotEmpty) {
       final ref = _messageRef[replyTo];
-      final replySeq = QlTdEngine._int(m['reply_to_seq']) ?? ref?.$2;
       reply = {
         '@type': 'messageReplyToMessage',
         'chat_id': c.chatId,
-        'message_id': replySeq == null ? 0 : qlMessageId(replySeq),
+        'message_id': qlReplyMessageId(
+          replyToSeq: QlTdEngine._int(m['reply_to_seq']),
+          refSeq: ref?.$2,
+        ),
         'quote': null,
         'checklist_task_id': 0,
         'origin': null,

@@ -6,6 +6,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'ql_proxy.dart';
+
 class QlApiException implements Exception {
   const QlApiException(this.statusCode, this.error);
 
@@ -35,16 +37,36 @@ Uri qlNormalizeServer(String raw) {
 }
 
 class QlApi {
-  QlApi(this.server, {this.token});
+  QlApi(this.server, {this.token, QlProxyConfig? proxy}) {
+    applyProxy(proxy);
+  }
 
   final Uri server;
   String? token;
+  QlProxyConfig? proxy;
 
   final HttpClient _http = HttpClient()
     ..connectionTimeout = const Duration(seconds: 12)
     ..idleTimeout = const Duration(seconds: 30);
 
+  void applyProxy(QlProxyConfig? next) {
+    proxy = next;
+    qlApplyProxy(_http, next);
+  }
+
   void close() => _http.close(force: true);
+
+  /// Opens a WebSocket through the same proxy as REST calls.
+  Future<WebSocket> connectWebSocket(
+    Uri uri, {
+    Map<String, dynamic>? headers,
+  }) {
+    return WebSocket.connect(
+      uri.toString(),
+      headers: headers,
+      customClient: _http,
+    );
+  }
 
   Uri endpoint(String path, [Map<String, String>? query]) {
     final base = server.path;

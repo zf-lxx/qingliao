@@ -1085,8 +1085,6 @@ class _ProxyEditViewState extends State<ProxyEditView> {
     final types = [
       ('socks5', 'SOCKS5'),
       ('http', 'HTTP'),
-      ('mtproto', 'MTProto'),
-      if (ProxyConfig.supportsWebProxy) ('web', 'Web'),
     ];
     final selectedLabel = types.firstWhere((entry) => entry.$1 == _type).$2;
     return SettingsCard.rows(

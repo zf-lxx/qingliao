@@ -2084,7 +2084,7 @@
     <string name="loginBotAccountDescription">機器人無法取得之前的訊息。登入後收到的新訊息將由 輕聊 儲存在此裝置上。</string>
     <string name="loginBotAccountTitle">以機器人身分登入</string>
     <string name="loginBotApiEndpoint">機器人 API 端點</string>
-    <string name="loginBotApiEndpointHint">僅填寫伺服器根網址。預設：https://api.telegram.org</string>
+    <string name="loginBotApiEndpointHint">僅填寫伺服器根網址。</string>
     <string name="loginBotFailed">無法加入機器人帳號。</string>
     <string name="loginBotSubmit">登入機器人</string>
     <string name="loginBotToken">機器人權杖</string>
@@ -2126,7 +2126,7 @@
     <string name="loginSwitchAccount">切換帳號</string>
     <string name="loginTelegramAccountTitle">登入 輕聊 帳號</string>
     <string name="loginTelegramApiCredentialsMissing">尚未設定 輕聊 API 憑證</string>
-    <string name="loginTelegramApiPortalInstructions">（可在 my.telegram.org 取得）。</string>
+    <string name="loginTelegramApiPortalInstructions">（請向管理員取得客戶端憑證。）</string>
     <string name="loginTelegramApiSecretsInstructions">請填寫你自己的 輕聊 客戶端 api_id 與 api_hash</string>
     <string name="loginTelegramPremiumIsRequired">需要 会员</string>
     <string name="loginTelegramRequiresAnEmailAddressToFinishSigning">輕聊 需要電子郵件地址才能完成登入。</string>

@@ -583,7 +583,18 @@ extension on QlTdEngine {
 
   /// Makes sure senders are known and image sizes are available before the
   /// UI lays out a page (the backend stores no dimensions yet).
+  void _indexMessageRefs(_Conv c, List<Map<String, dynamic>> raw) {
+    for (final m in raw) {
+      final id = m['id']?.toString() ?? '';
+      final seq = QlTdEngine._int(m['conversation_seq']) ?? 0;
+      if (id.isNotEmpty && seq > 0) {
+        _messageRef[id] = (c.id, seq);
+      }
+    }
+  }
+
   Future<void> _prepareMessages(_Conv c, List<Map<String, dynamic>> raw) async {
+    _indexMessageRefs(c, raw);
     final senders = <String>{for (final m in raw) m['sender_id']?.toString() ?? ''}
       ..remove('');
     final missing = senders.where((s) => !_users.containsKey(s)).toList();

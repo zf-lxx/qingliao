@@ -2091,7 +2091,7 @@
     <string name="loginBotAccountDescription">Bots können keine älteren Nachrichten abrufen. Qingliao speichert neue Nachrichten, die nach der Anmeldung eingehen, auf diesem Gerät.</string>
     <string name="loginBotAccountTitle">Als Bot anmelden</string>
     <string name="loginBotApiEndpoint">Bot-API-Endpunkt</string>
-    <string name="loginBotApiEndpointHint">Nur Server-Stammadresse. Standard: https://api.telegram.org</string>
+    <string name="loginBotApiEndpointHint">Nur Server-Stammadresse.</string>
     <string name="loginBotFailed">Das Bot-Konto konnte nicht hinzugefügt werden.</string>
     <string name="loginBotSubmit">Bot anmelden</string>
     <string name="loginBotToken">Bot-Token</string>
@@ -2133,7 +2133,7 @@
     <string name="loginSwitchAccount">Konto wechseln</string>
     <string name="loginTelegramAccountTitle">Bei Qingliao anmelden</string>
     <string name="loginTelegramApiCredentialsMissing">Qingliao API-Zugangsdaten sind noch nicht konfiguriert</string>
-    <string name="loginTelegramApiPortalInstructions">(Verfügbar unter my.telegram.org.)</string>
+    <string name="loginTelegramApiPortalInstructions">(Client-Zugangsdaten beim Administrator erfragen.)</string>
     <string name="loginTelegramApiSecretsInstructions">Gib deine eigene api_id und deinen api_hash für den Qingliao-Client ein</string>
     <string name="loginTelegramPremiumIsRequired">Premium ist erforderlich</string>
     <string name="loginTelegramRequiresAnEmailAddressToFinishSigning">Qingliao benötigt eine E-Mail-Adresse, um die Anmeldung abzuschließen.</string>

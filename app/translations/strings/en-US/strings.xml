@@ -2091,7 +2091,7 @@
     <string name="loginBotAccountDescription">Bots cannot fetch earlier messages. Qingliao saves new messages received after login on this device.</string>
     <string name="loginBotAccountTitle">Log in as a bot</string>
     <string name="loginBotApiEndpoint">Bot API endpoint</string>
-    <string name="loginBotApiEndpointHint">Server root only. Default: https://api.telegram.org</string>
+    <string name="loginBotApiEndpointHint">Server root only.</string>
     <string name="loginBotFailed">The bot account could not be added.</string>
     <string name="loginBotSubmit">Log in as bot</string>
     <string name="loginBotToken">Bot token</string>
@@ -2133,7 +2133,7 @@
     <string name="loginSwitchAccount">Switch account</string>
     <string name="loginTelegramAccountTitle">Log in to Qingliao</string>
     <string name="loginTelegramApiCredentialsMissing">Qingliao API credentials are not configured</string>
-    <string name="loginTelegramApiPortalInstructions">(You can get them from my.telegram.org.)</string>
+    <string name="loginTelegramApiPortalInstructions">(Ask an administrator for client credentials.)</string>
     <string name="loginTelegramApiSecretsInstructions">Enter your own Qingliao client api_id and api_hash</string>
     <string name="loginTelegramPremiumIsRequired">Premium is required</string>
     <string name="loginTelegramRequiresAnEmailAddressToFinishSigning">Qingliao requires an email address to finish signing in.</string>

@@ -281,8 +281,8 @@ extension on QlTdEngine {
       _backoffSeconds > 4 ? 'connectionStateWaitingForNetwork' : 'connectionStateConnecting',
     );
     try {
-      final ws = await WebSocket.connect(
-        api.webSocketUri.toString(),
+      final ws = await api.connectWebSocket(
+        api.webSocketUri,
         headers: {'Authorization': 'Bearer ${session.token}'},
       ).timeout(const Duration(seconds: 15));
       if (generation != _socketGeneration || _closed) {

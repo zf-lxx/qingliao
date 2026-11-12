@@ -1042,8 +1042,8 @@ class _SettingsViewState extends State<SettingsView> {
         icon: HeroAppIcons.globe,
         color: const Color(0xFF34A2DF),
         destination: () => const ProxyView(),
-        searchTerms: const ['proxy', 'socks5', 'http', 'mtproto', 'connection'],
-        comingSoon: true,
+        searchTerms: const ['proxy', 'socks5', 'http', 'connection'],
+        comingSoon: false,
       ),
       _SettingsDestination(
         id: 'mithka-advanced',

@@ -111,7 +111,7 @@ extension _QlP3 on QlTdEngine {
       case 'getChatArchivedStories':
         return _listUserStoriesTd(r, archived: true);
       case 'getChatStoryAlbums':
-        return {'@type': 'storyAlbums', 'albums': const <Object>[]};
+        return _getChatStoryAlbums(r);
       default:
         return null;
     }

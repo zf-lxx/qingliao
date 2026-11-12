@@ -2084,7 +2084,7 @@
     <string name="loginBotAccountDescription">Bot は過去のメッセージを取得できません。ログイン後に受信した新しいメッセージは Qingliao がこの端末に保存します。</string>
     <string name="loginBotAccountTitle">Bot としてログイン</string>
     <string name="loginBotApiEndpoint">Bot API エンドポイント</string>
-    <string name="loginBotApiEndpointHint">サーバーのルートのみ。既定値: https://api.telegram.org</string>
+    <string name="loginBotApiEndpointHint">サーバーのルートのみ。</string>
     <string name="loginBotFailed">Bot アカウントを追加できませんでした。</string>
     <string name="loginBotSubmit">Bot としてログイン</string>
     <string name="loginBotToken">Bot トークン</string>
@@ -2126,7 +2126,7 @@
     <string name="loginSwitchAccount">アカウントを切り替え</string>
     <string name="loginTelegramAccountTitle">Qingliao アカウントにログイン</string>
     <string name="loginTelegramApiCredentialsMissing">Qingliao API 認証情報がまだ設定されていません</string>
-    <string name="loginTelegramApiPortalInstructions">（my.telegram.org で取得できます）。</string>
+    <string name="loginTelegramApiPortalInstructions">（クライアント認証情報は管理者に問い合わせてください）。</string>
     <string name="loginTelegramApiSecretsInstructions">ご自身の Qingliao クライアントの api_id と api_hash を入力してください</string>
     <string name="loginTelegramPremiumIsRequired">テレグラムプレミアムが必要です</string>
     <string name="loginTelegramRequiresAnEmailAddressToFinishSigning">Qingliao では、サインインを完了するには電子メール アドレスが必要です。</string>

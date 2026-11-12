@@ -7371,6 +7371,26 @@ class ChatViewModel extends ChangeNotifier {
 
   // MARK: - 引用 reply-quote resolution
 
+  /// Returns the quoted message's id, using getRepliedMessage when the reply
+  /// was stored with a missing / zero target id (text replies used to hit this).
+  Future<int> resolveReplyTarget(ChatMessage message) async {
+    final existing = message.replyToMessageId ?? 0;
+    if (existing > 0) return existing;
+    final chatId = message.chatId ?? this.chatId;
+    if (chatId == 0 || message.id <= 0) return 0;
+    try {
+      final response = await _client.query({
+        '@type': 'getRepliedMessage',
+        'chat_id': chatId,
+        'message_id': message.id,
+      });
+      if (response['@type'] != 'message') return 0;
+      return TDParse.message(response)?.id ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
   /// For each message that replies to another, resolve the quoted sender +
   /// preview — from the already-loaded list when possible, else via getMessages.
   void _resolveRepliesIfNeeded(List<ChatMessage> batch) {

@@ -1741,9 +1741,13 @@ abstract final class TDParse {
 
     // 引用: reply_to is messageReplyToMessage { chat_id, message_id, … }.
     final replyTo = message.obj('reply_to');
-    final replyToMessageId = replyTo?.type == 'messageReplyToMessage'
+    final rawReplyToMessageId = replyTo?.type == 'messageReplyToMessage'
         ? replyTo?.int64('message_id')
         : null;
+    final replyToMessageId =
+        rawReplyToMessageId == null || rawReplyToMessageId <= 0
+        ? null
+        : rawReplyToMessageId;
     final rawReplyToChatId = replyTo?.type == 'messageReplyToMessage'
         ? replyTo?.int64('chat_id')
         : null;

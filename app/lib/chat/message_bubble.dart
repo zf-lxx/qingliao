@@ -122,6 +122,7 @@ class MessageBubble extends StatelessWidget {
     this.onAvatarTap,
     this.onAvatarLongPress,
     this.onOpenReply,
+    this.onOpenReplyQuote,
     this.onOpenForwarded,
     this.onTapViaBot,
     this.onOpenImage,
@@ -195,6 +196,9 @@ class MessageBubble extends StatelessWidget {
   final ValueChanged<ChatMessage>? onAvatarTap;
   final ValueChanged<ChatMessage>? onAvatarLongPress;
   final ValueChanged<int>? onOpenReply;
+  /// Preferred over [onOpenReply] so a quote whose target id is 0 / missing
+  /// can still be resolved from the reply message itself (getRepliedMessage).
+  final ValueChanged<ChatMessage>? onOpenReplyQuote;
   final ValueChanged<ChatMessage>? onOpenForwarded;
   final ValueChanged<ChatMessage>? onTapViaBot;
   final ValueChanged<ChatMessage>? onOpenImage;
@@ -4396,10 +4400,13 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
     final line = _messageReplyLineColor(outgoing);
     final sender = message.replyToSender ?? '';
     final time = DateText.quoteLabel(message.replyToDate ?? 0);
-    final targetId = message.replyToMessageId;
-    final openOriginal = targetId == null || widget.bubble.onOpenReply == null
-        ? null
-        : () => widget.bubble.onOpenReply!.call(targetId);
+    final openOriginal = widget.bubble.onOpenReplyQuote != null
+        ? () => widget.bubble.onOpenReplyQuote!(message)
+        : (message.replyToMessageId != null &&
+              message.replyToMessageId! > 0 &&
+              widget.bubble.onOpenReply != null)
+        ? () => widget.bubble.onOpenReply!(message.replyToMessageId!)
+        : null;
     return GestureDetector(
       key: const ValueKey('messageReplyOpenOriginal'),
       behavior: HitTestBehavior.opaque,

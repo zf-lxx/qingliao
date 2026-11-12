@@ -2073,7 +2073,7 @@
     <string name="linkHandlerStarsPickerSubtitleWithPurposeValue1Value2">Elige un paquete con al menos {value1} Stars para {value2}.</string>
     <string name="linkHandlerStarsPurchaseUnavailable">Compra de estrellas no disponible</string>
     <string name="linkHandlerStoreDependencySubtitleValue1">{value1} se detiene antes de abrir StoreKit salvo que Qingliao autorice esta app y devuelva un producto de la App Store de su cuenta de desarrollador. Android requiere además un adaptador de token de compra de Google Play Billing, que no se incluye en esta versión.</string>
-    <string name="linkHandlerTelegramLogin">iniciar sesión en telegrama</string>
+    <string name="linkHandlerTelegramLogin">Inicio de sesión de Qingliao</string>
     <string name="linkHandlerTelegramPassportRequest">Solicitud de pasaporte de Qingliao</string>
     <string name="linkHandlerTelegramPremium">Qingliaoa Premium</string>
     <string name="linkHandlerTelegramPremiumGift">Regalo Qingliaoa Premium</string>
@@ -2091,7 +2091,7 @@
     <string name="loginBotAccountDescription">Los bots no pueden recuperar mensajes anteriores. Qingliao guarda en este dispositivo los mensajes nuevos recibidos después de iniciar sesión.</string>
     <string name="loginBotAccountTitle">Iniciar sesión como bot</string>
     <string name="loginBotApiEndpoint">Endpoint de la API de bots</string>
-    <string name="loginBotApiEndpointHint">Solo la raíz del servidor. Predeterminado: https://api.telegram.org</string>
+    <string name="loginBotApiEndpointHint">Solo la raíz del servidor.</string>
     <string name="loginBotFailed">No se pudo añadir la cuenta del bot.</string>
     <string name="loginBotSubmit">Iniciar sesión como bot</string>
     <string name="loginBotToken">Token del bot</string>
@@ -2133,7 +2133,7 @@
     <string name="loginSwitchAccount">Cambiar de cuenta</string>
     <string name="loginTelegramAccountTitle">Iniciar sesión en Qingliao</string>
     <string name="loginTelegramApiCredentialsMissing">Aún no se han configurado las credenciales de API de Qingliao</string>
-    <string name="loginTelegramApiPortalInstructions">(Puedes obtenerlas en my.telegram.org).</string>
+    <string name="loginTelegramApiPortalInstructions">(Pide las credenciales del cliente a un administrador).</string>
     <string name="loginTelegramApiSecretsInstructions">Introduce tu api_id y api_hash de cliente de Qingliao</string>
     <string name="loginTelegramPremiumIsRequired">Se requiere Premium</string>
     <string name="loginTelegramRequiresAnEmailAddressToFinishSigning">Qingliao requiere una dirección de correo electrónico para finalizar el inicio de sesión.</string>

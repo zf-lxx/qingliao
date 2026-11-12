@@ -1000,7 +1000,14 @@ func (a *App) addSticker(w http.ResponseWriter, r *http.Request, p Principal) {
 		return
 	}
 	var n int
-	if e := a.DB.QueryRow("SELECT count(*) FROM media WHERE id=? AND owner=?", b.MediaID, p.UserID).Scan(&n); e != nil || n != 1 {
+	var mime string
+	if e := a.DB.QueryRow("SELECT count(*), COALESCE(max(mime),'') FROM media WHERE id=? AND owner=?", b.MediaID, p.UserID).Scan(&n, &mime); e != nil || n != 1 {
+		fail(w, ErrInvalid)
+		return
+	}
+	switch mime {
+	case "image/png", "image/webp", "image/jpeg":
+	default:
 		fail(w, ErrInvalid)
 		return
 	}

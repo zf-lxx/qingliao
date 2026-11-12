@@ -11,7 +11,8 @@ func (a *App) migrateExtensions() error {
 		"messages": {"media_meta_json": "TEXT NOT NULL DEFAULT ''", "album_id": "TEXT NOT NULL DEFAULT ''", "entities_json": "TEXT NOT NULL DEFAULT '[]'", "preview_json": "TEXT NOT NULL DEFAULT ''", "reply_markup_json": "TEXT NOT NULL DEFAULT ''", "via_bot_id": "TEXT NOT NULL DEFAULT ''", "forward_origin_json": "TEXT NOT NULL DEFAULT ''"},
 		"media":    {"width": "INTEGER NOT NULL DEFAULT 0", "height": "INTEGER NOT NULL DEFAULT 0", "duration_ms": "INTEGER NOT NULL DEFAULT 0", "waveform": "TEXT NOT NULL DEFAULT ''", "file_name": "TEXT NOT NULL DEFAULT ''", "thumbnail_id": "TEXT NOT NULL DEFAULT ''"},
 		"chats":    {"last_activity": "INTEGER NOT NULL DEFAULT 0", "avatar": "TEXT NOT NULL DEFAULT ''"},
-		"users":    {"read_receipts_enabled": "INTEGER NOT NULL DEFAULT 1"},
+		"users":    {"read_receipts_enabled": "INTEGER NOT NULL DEFAULT 1", "password_hint": "TEXT NOT NULL DEFAULT ''", "totp_secret": "TEXT NOT NULL DEFAULT ''", "totp_pending": "TEXT NOT NULL DEFAULT ''", "totp_recovery": "TEXT NOT NULL DEFAULT ''", "deleted": "INTEGER NOT NULL DEFAULT 0"},
+		"devices":  {"created": "TEXT NOT NULL DEFAULT ''", "last_seen": "TEXT NOT NULL DEFAULT ''", "app_name": "TEXT NOT NULL DEFAULT ''", "app_version": "TEXT NOT NULL DEFAULT ''", "device_model": "TEXT NOT NULL DEFAULT ''", "last_ip": "TEXT NOT NULL DEFAULT ''"},
 		"members":  {"manual_unread": "INTEGER NOT NULL DEFAULT 0", "archived": "INTEGER NOT NULL DEFAULT 0", "pin_order": "INTEGER NOT NULL DEFAULT 0", "notification_mute_until": "INTEGER NOT NULL DEFAULT 0", "draft_json": "TEXT NOT NULL DEFAULT ''", "joined_at": "INTEGER NOT NULL DEFAULT 0", "muted_until": "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		rows, e := a.DB.Query("PRAGMA table_info(" + table + ")")
@@ -38,7 +39,7 @@ func (a *App) migrateExtensions() error {
 			}
 		}
 	}
-	_, e := a.DB.Exec(extensionSchema+discoverySchema+p2Schema+p3Schema+p4Schema)
+	_, e := a.DB.Exec(extensionSchema+discoverySchema+p2Schema+p3Schema+p4Schema+p5Schema)
 	return e
 }
 
@@ -114,4 +115,15 @@ CREATE TABLE IF NOT EXISTS story_reactions(author_id TEXT NOT NULL,story_no INTE
 CREATE TABLE IF NOT EXISTS story_reads(viewer_id TEXT NOT NULL REFERENCES users(id),author_id TEXT NOT NULL,max_read_no INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(viewer_id,author_id));
 CREATE TABLE IF NOT EXISTS story_reports(id TEXT PRIMARY KEY,reporter_id TEXT NOT NULL REFERENCES users(id),author_id TEXT NOT NULL,story_no INTEGER NOT NULL,reason TEXT NOT NULL,created TEXT NOT NULL);
 PRAGMA user_version=7;
+`
+
+const p5Schema = `
+CREATE TABLE IF NOT EXISTS login_challenges(token_hash TEXT PRIMARY KEY,user_id TEXT NOT NULL REFERENCES users(id),platform TEXT NOT NULL,app_name TEXT NOT NULL DEFAULT '',app_version TEXT NOT NULL DEFAULT '',device_model TEXT NOT NULL DEFAULT '',last_ip TEXT NOT NULL DEFAULT '',expires INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS story_albums(id TEXT PRIMARY KEY,owner TEXT NOT NULL REFERENCES users(id),title TEXT NOT NULL,sort_order INTEGER NOT NULL DEFAULT 0,created TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS story_album_items(album_id TEXT NOT NULL REFERENCES story_albums(id) ON DELETE CASCADE,story_no INTEGER NOT NULL,sort_order INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(album_id,story_no));
+CREATE INDEX IF NOT EXISTS story_albums_owner ON story_albums(owner,sort_order,id);
+CREATE INDEX IF NOT EXISTS story_album_items_story ON story_album_items(story_no,album_id);
+CREATE INDEX IF NOT EXISTS login_challenges_expiry ON login_challenges(expires);
+CREATE INDEX IF NOT EXISTS users_deleted ON users(deleted);
+PRAGMA user_version=8;
 `

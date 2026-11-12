@@ -9,6 +9,8 @@ import '../components/toast.dart';
 import '../components/ui_components.dart';
 import '../tdlib/json_helpers.dart';
 import '../theme/app_theme.dart';
+import '../qingliao/ql_not_yet_view.dart';
+import '../tdlib/td_client.dart';
 import 'account_security_service.dart';
 
 class TwoStepPasswordView extends StatefulWidget {
@@ -29,7 +31,13 @@ class _TwoStepPasswordViewState extends State<TwoStepPasswordView> {
   bool _working = false;
   bool _hasPassword = false;
   bool _hasRecoveryEmail = false;
+  bool _twoFactorEnabled = false;
+  bool _totpStarting = false;
   String _loginEmailPattern = '';
+  String _totpSecret = '';
+  String _totpUri = '';
+  final _totpCode = TextEditingController();
+  final _totpPassword = TextEditingController();
 
   @override
   void initState() {
@@ -45,6 +53,8 @@ class _TwoStepPasswordViewState extends State<TwoStepPasswordView> {
       _confirmPassword,
       _hint,
       _recoveryEmail,
+      _totpCode,
+      _totpPassword,
     ]) {
       controller.dispose();
     }
@@ -61,6 +71,7 @@ class _TwoStepPasswordViewState extends State<TwoStepPasswordView> {
             state.boolean('has_recovery_email_address') ?? false;
         _loginEmailPattern = state.str('login_email_address_pattern') ?? '';
         _hint.text = state.str('password_hint') ?? '';
+        _twoFactorEnabled = state['@ql_two_factor_enabled'] == true;
       });
     } catch (error) {
       if (mounted) showToast(context, error.toString());
@@ -137,6 +148,99 @@ class _TwoStepPasswordViewState extends State<TwoStepPasswordView> {
     await _save();
   }
 
+  Future<void> _startTotp() async {
+    if (_totpStarting) return;
+    setState(() => _totpStarting = true);
+    try {
+      final started = await TdClient.shared.query({'@type': 'qlStartTotp'});
+      if (!mounted) return;
+      setState(() {
+        _totpSecret = started['secret']?.toString() ?? '';
+        _totpUri = started['otpauth_url']?.toString() ?? '';
+        _totpCode.clear();
+      });
+    } catch (error) {
+      if (mounted) showToast(context, error.toString());
+    } finally {
+      if (mounted) setState(() => _totpStarting = false);
+    }
+  }
+
+  Future<void> _confirmTotp() async {
+    if (_working) return;
+    setState(() => _working = true);
+    try {
+      final result = await TdClient.shared.query({
+        '@type': 'qlConfirmTotp',
+        'code': _totpCode.text.trim(),
+      });
+      if (!mounted) return;
+      final codes = (result['recovery_codes'] as List? ?? const [])
+          .map((e) => e.toString())
+          .where((e) => e.isNotEmpty)
+          .toList();
+      if (codes.isNotEmpty) {
+        await _showRecoveryCodes(codes);
+      }
+      if (!mounted) return;
+      showToast(context, '两步验证已开启');
+      setState(() {
+        _twoFactorEnabled = true;
+        _totpSecret = '';
+        _totpUri = '';
+        _totpCode.clear();
+      });
+    } catch (error) {
+      if (mounted) showToast(context, error.toString());
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  Future<void> _disableTotp() async {
+    if (_working) return;
+    setState(() => _working = true);
+    try {
+      await TdClient.shared.query({
+        '@type': 'qlDisableTotp',
+        'password': _totpPassword.text,
+        'code': _totpCode.text.trim(),
+      });
+      if (!mounted) return;
+      showToast(context, '两步验证已关闭');
+      setState(() {
+        _twoFactorEnabled = false;
+        _totpCode.clear();
+        _totpPassword.clear();
+      });
+    } catch (error) {
+      if (mounted) showToast(context, error.toString());
+    } finally {
+      if (mounted) setState(() => _working = false);
+    }
+  }
+
+  Future<void> _showRecoveryCodes(List<String> codes) {
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('请保存恢复码'),
+        content: SingleChildScrollView(
+          child: Text(
+            '这些恢复码只会显示一次。丢失验证器时可用其中任意一条登录。\n\n${codes.join('\n')}',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('已保存'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return SettingsPageScaffold(
@@ -182,15 +286,18 @@ class _TwoStepPasswordViewState extends State<TwoStepPasswordView> {
                       ),
                       icon: HeroAppIcons.circleInfo,
                     ),
-                    if (!_hasRecoveryEmail)
-                      _SecurityField(
-                        controller: _recoveryEmail,
-                        label: AppStrings.t(
-                          AppStringKeys.accountSecurityRecoveryEmailRecommended,
+                    const SizedBox(height: 4),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                      child: Text(
+                        '这是登录密码，新密码至少 12 个字符。恢复邮箱暂未开放。',
+                        style: TextStyle(
+                          fontSize: 13,
+                          height: 1.4,
+                          color: context.colors.textSecondary,
                         ),
-                        icon: HeroAppIcons.at,
-                        keyboardType: TextInputType.emailAddress,
                       ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 14),
@@ -203,49 +310,76 @@ class _TwoStepPasswordViewState extends State<TwoStepPasswordView> {
                   working: _working,
                   onTap: _save,
                 ),
-                if (_hasPassword) ...[
-                  const SizedBox(height: 14),
-                  _SecurityCard(
-                    children: [
+                const SizedBox(height: 14),
+                _SecurityCard(
+                  children: [
+                    _SecurityActionRow(
+                      icon: HeroAppIcons.shieldHalved,
+                      title: '验证器两步验证',
+                      subtitle: _twoFactorEnabled ? '已开启' : '未开启',
+                    ),
+                    if (!_twoFactorEnabled && _totpSecret.isEmpty)
                       _SecurityActionRow(
-                        icon: HeroAppIcons.at,
-                        title: AppStrings.t(
-                          _hasRecoveryEmail
-                              ? AppStringKeys.accountSecurityChangeRecoveryEmail
-                              : AppStringKeys.accountSecurityAddRecoveryEmail,
-                        ),
-                        subtitle: _loginEmailPattern,
-                        onTap: () => Navigator.of(context)
-                            .push<void>(
-                              MaterialPageRoute(
-                                builder: (_) => const RecoveryEmailView(),
-                              ),
-                            )
-                            .then((_) => _load()),
+                        icon: HeroAppIcons.key,
+                        title: '开启两步验证',
+                        subtitle: '在验证器应用中扫描或手动输入密钥',
+                        onTap: _totpStarting ? null : () => unawaited(_startTotp()),
                       ),
-                      if (_hasRecoveryEmail)
-                        _SecurityActionRow(
-                          icon: HeroAppIcons.restore,
-                          title: AppStrings.t(
-                            AppStringKeys.accountSecurityRecoverOrResetPassword,
-                          ),
-                          onTap: () => Navigator.of(context).push<void>(
-                            MaterialPageRoute(
-                              builder: (_) => const PasswordRecoveryView(),
-                            ),
-                          ),
+                    if (!_twoFactorEnabled && _totpSecret.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                        child: SelectableText(
+                          '密钥：$_totpSecret\n将此密钥添加到验证器应用后，输入 6 位验证码确认。',
+                          style: const TextStyle(fontSize: 13, height: 1.45),
                         ),
-                      _SecurityActionRow(
-                        icon: HeroAppIcons.trash,
-                        title: AppStrings.t(
-                          AppStringKeys.accountSecurityRemovePassword,
+                      ),
+                      _SecurityField(
+                        controller: _totpCode,
+                        label: '验证码',
+                        icon: HeroAppIcons.shieldHalved,
+                        keyboardType: TextInputType.number,
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+                        child: _PrimarySecurityButton(
+                          label: '确认开启',
+                          working: _working,
+                          onTap: _confirmTotp,
                         ),
-                        destructive: true,
-                        onTap: _remove,
                       ),
                     ],
-                  ),
-                ],
+                    if (_twoFactorEnabled) ...[
+                      _SecurityField(
+                        controller: _totpPassword,
+                        label: '当前登录密码',
+                        icon: HeroAppIcons.lock,
+                        obscureText: true,
+                      ),
+                      _SecurityField(
+                        controller: _totpCode,
+                        label: '验证码',
+                        icon: HeroAppIcons.shieldHalved,
+                        keyboardType: TextInputType.number,
+                      ),
+                      _SecurityActionRow(
+                        icon: HeroAppIcons.trash,
+                        title: '关闭两步验证',
+                        destructive: true,
+                        onTap: _disableTotp,
+                      ),
+                    ],
+                    _SecurityActionRow(
+                      icon: HeroAppIcons.at,
+                      title: '恢复邮箱',
+                      subtitle: '暂未开放',
+                      onTap: () => Navigator.of(context).push<void>(
+                        MaterialPageRoute(
+                          builder: (_) => const QlNotYetView(titleKey: '恢复邮箱'),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ],
             ),
     );
@@ -782,12 +916,14 @@ class _DeleteTelegramAccountViewState extends State<DeleteTelegramAccountView> {
   final _service = const AccountSecurityService();
   final _reason = TextEditingController();
   final _password = TextEditingController();
+  final _totp = TextEditingController();
   bool _working = false;
 
   @override
   void dispose() {
     _reason.dispose();
     _password.dispose();
+    _totp.dispose();
     super.dispose();
   }
 
@@ -809,10 +945,12 @@ class _DeleteTelegramAccountViewState extends State<DeleteTelegramAccountView> {
     if (!confirmed || !mounted) return;
     setState(() => _working = true);
     try {
-      await _service.deleteAccount(
-        reason: _reason.text.trim(),
-        password: _password.text,
-      );
+      await TdClient.shared.query({
+        '@type': 'deleteAccount',
+        'reason': _reason.text.trim(),
+        'password': _password.text,
+        if (_totp.text.trim().isNotEmpty) 'totp_code': _totp.text.trim(),
+      });
     } catch (error) {
       if (mounted) showToast(context, error.toString());
     } finally {
@@ -836,6 +974,12 @@ class _DeleteTelegramAccountViewState extends State<DeleteTelegramAccountView> {
             ),
             icon: HeroAppIcons.lock,
             obscureText: true,
+          ),
+          _SecurityField(
+            controller: _totp,
+            label: '两步验证码（如已开启）',
+            icon: HeroAppIcons.shieldHalved,
+            keyboardType: TextInputType.number,
           ),
           _SecurityField(
             controller: _reason,

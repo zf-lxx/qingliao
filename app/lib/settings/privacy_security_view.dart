@@ -22,10 +22,9 @@ import '../tdlib/json_helpers.dart';
 import '../tdlib/td_client.dart';
 import '../theme/app_theme.dart';
 import '../theme/theme_controller.dart';
+import '../qingliao/ql_not_yet_view.dart';
 import 'account_security_views.dart';
-import 'auto_delete_view.dart';
 import 'ghost_mode_settings_view.dart';
-import 'passkeys_view.dart';
 import 'privacy_detail_views.dart';
 import 'privacy_rule_options.dart';
 import 'sensitive_content_controller.dart';
@@ -274,8 +273,8 @@ class _PrivacySecurityViewState extends State<PrivacySecurityView> {
             _Row(
               HeroAppIcons.phone,
               AppStrings.t(AppStringKeys.accountSecurityChangePhoneNumber),
-              '',
-              () => _open(const ChangePhoneNumberView()),
+              '暂未开放',
+              () => _open(const QlNotYetView(titleKey: '更换手机号')),
             ),
             _Row(
               HeroAppIcons.networkWired,
@@ -283,13 +282,12 @@ class _PrivacySecurityViewState extends State<PrivacySecurityView> {
               '',
               () => _open(const ActiveSessionsView()),
             ),
-            if (_passkeyCount != null)
-              _Row(
-                HeroAppIcons.key,
-                AppStrings.t(AppStringKeys.passkeysTitle),
-                '$_passkeyCount',
-                () => _open(const PasskeysView()).then((_) => _loadPasskeys()),
-              ),
+            _Row(
+              HeroAppIcons.key,
+              AppStrings.t(AppStringKeys.passkeysTitle),
+              '暂未开放',
+              () => _open(const QlNotYetView(titleKey: '通行密钥')),
+            ),
             if (sensitiveContent.shouldShowToggle)
               _SwitchRow(
                 HeroAppIcons.eye,
@@ -307,8 +305,8 @@ class _PrivacySecurityViewState extends State<PrivacySecurityView> {
             _Row(
               HeroAppIcons.stopwatch,
               AppStringKeys.chatInfoAutoDeleteMessages,
-              '',
-              () => _open(const AutoDeleteView()),
+              '暂未开放',
+              () => _open(const QlNotYetView(titleKey: '自动删除消息')),
             ),
             // Compile-time gated: the row (and the whole ghost-mode surface
             // behind it) does not exist in builds without the ToS define.
@@ -324,8 +322,8 @@ class _PrivacySecurityViewState extends State<PrivacySecurityView> {
             _Row(
               HeroAppIcons.stopwatch,
               AppStrings.t(AppStringKeys.accountSecurityDeleteAccountIfAwayFor),
-              '',
-              () => _open(const AccountInactivityView()),
+              '暂未开放',
+              () => _open(const QlNotYetView(titleKey: '长时间未登录自动注销')),
             ),
             _Row(
               HeroAppIcons.trash,

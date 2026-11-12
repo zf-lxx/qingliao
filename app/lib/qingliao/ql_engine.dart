@@ -1,7 +1,7 @@
 //
 //  ql_engine.dart — a pure-Dart stand-in for one TDLib client.
 //
-//  Receives TDLib-JSON requests (exactly what Mithka's UI sends to tdjson) and
+//  Receives TDLib-JSON requests (exactly what the 轻聊 UI sends to the engine) and
 //  answers them from the 轻聊 backend: REST for queries and mutations, the
 //  /v1/ws event stream (seq/ack, difference sync) for realtime updates. Every
 //  answer and update uses TDLib's JSON shapes so the vendored UI keeps working.
@@ -18,8 +18,11 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'ql_api.dart';
+import 'ql_ids.dart';
 import 'ql_image_size.dart';
+import 'ql_proxy.dart';
 
+part 'ql_engine_account.dart';
 part 'ql_engine_convert.dart';
 part 'ql_engine_files.dart';
 part 'ql_engine_ops.dart';
@@ -73,7 +76,6 @@ const Set<String> qlEmptyResultMethods = {
   'getAvailableEffects',
   'getChatSimilarChats',
   'getRecommendedChats',
-  'getActiveSessions',
   'getConnectedWebsites',
   'getChatScheduledMessages',
   'getCommunities',
@@ -193,6 +195,10 @@ class QlTdEngine {
   QlSession? _session;
   QlApi? _api;
   Future<void>? _initialLoad;
+  List<QlProxyConfig> _proxies = [];
+  int _proxySeq = 0;
+  final Map<int, String> _deviceByInt = {};
+  final Map<int, String> _albumByInt = {};
 
   // ---- state
   final Set<String> _blockedUserIds = {};
@@ -294,9 +300,11 @@ class QlTdEngine {
 
   String _humanError(QlApiException e) => switch (e.error) {
     'unauthorized' || 'invalid_credentials' => '账号或密码错误',
+    'invalid_totp' => '两步验证码不正确',
     'invalid_invite' => '邀请码无效或已用完',
     'handle_taken' => '这个用户名已被占用',
     'forbidden' => '没有权限',
+    'conflict' => '已经开启两步验证',
     _ => e.error,
   };
 
@@ -324,6 +332,46 @@ class QlTdEngine {
         return _login(r, register: false);
       case 'qlRegister':
         return _login(r, register: true);
+      case 'qlLoginTotp':
+        return _loginTotp(r);
+      case 'getPasswordState':
+        return _getPasswordState();
+      case 'setPassword':
+        return _setPassword(r);
+      case 'qlStartTotp':
+        return _startTotp();
+      case 'qlConfirmTotp':
+        return _confirmTotp(r);
+      case 'qlDisableTotp':
+        return _disableTotp(r);
+      case 'deleteAccount':
+        return _deleteAccount(r);
+      case 'getActiveSessions':
+        return _getActiveSessions();
+      case 'terminateSession':
+        return _terminateSession(r);
+      case 'terminateAllOtherSessions':
+        return _terminateOtherSessions();
+      case 'createNewStickerSet':
+        return _createNewStickerSet(r);
+      case 'addStickerToSet':
+        return _addStickerToSet(r);
+      case 'createStoryAlbum':
+        return _createStoryAlbum(r);
+      case 'getStoryAlbumStories':
+        return _getStoryAlbumStories(r);
+      case 'setStoryAlbumName':
+        return _setStoryAlbumName(r);
+      case 'reorderStoryAlbums':
+        return _reorderStoryAlbums(r);
+      case 'deleteStoryAlbum':
+        return _deleteStoryAlbum(r);
+      case 'addStoryAlbumStories':
+        return _mutateStoryAlbumStories(r, 'add');
+      case 'removeStoryAlbumStories':
+        return _mutateStoryAlbumStories(r, 'remove');
+      case 'reorderStoryAlbumStories':
+        return _mutateStoryAlbumStories(r, 'reorder');
       case 'qlGetServer':
         return {
           '@type': 'qlServer',
@@ -342,16 +390,25 @@ class QlTdEngine {
       case 'getCurrentState':
         return {'@type': 'updates', 'updates': _currentStateUpdates()};
       case 'setNetworkType':
-      case 'setProxy':
-      case 'addProxy':
-      case 'disableProxy':
-      case 'enableProxy':
       case 'setAlarm':
       case 'testNetwork':
       case 'registerDevice':
-        return type == 'addProxy' ? _unsupported(type) : _ok;
+        return _ok;
+      case 'addProxy':
+        return _addProxy(r);
+      case 'editProxy':
+        return _editProxy(r);
+      case 'removeProxy':
+        return _removeProxy(r);
+      case 'enableProxy':
+        return _enableProxy(r, enabled: true);
+      case 'disableProxy':
+      case 'setProxy':
+        return _enableProxy(r, enabled: false);
       case 'getProxies':
-        return {'@type': 'proxies', 'proxies': const <Object>[]};
+        return _getProxies();
+      case 'pingProxy':
+        return _pingProxy(r);
       // --- chats
       case 'loadChats':
         return _loadChats(r);
@@ -549,8 +606,6 @@ class QlTdEngine {
         return {'@type': 'stickers', 'stickers': const <Object>[]};
       case 'getSavedAnimations':
         return {'@type': 'animations', 'animations': const <Object>[]};
-      case 'getActiveSessions':
-        return {'@type': 'sessions', 'sessions': const <Object>[], 'inactive_session_ttl_days': 180};
       case 'getConnectedWebsites':
         return {'@type': 'connectedWebsites', 'websites': const <Object>[]};
       case 'getAvailableEffects':
@@ -620,6 +675,7 @@ class QlTdEngine {
 
   String get _sessionPath => '$_databaseDir/qingliao_session.json';
   String get _statePath => '$_databaseDir/qingliao_state.json';
+  String get _proxyPath => '$_databaseDir/qingliao_proxies.json';
 
   Future<Map<String, dynamic>> _setParameters(Map<String, dynamic> r) async {
     if (_databaseDir.isNotEmpty) return _ok; // idempotent (hot restart)
@@ -627,6 +683,7 @@ class QlTdEngine {
     _filesDir = r['files_directory']?.toString() ?? '$_databaseDir/files';
     if (_databaseDir.isEmpty) return _error(400, 'database_directory required');
     await Directory(_databaseDir).create(recursive: true);
+    _loadProxies();
     _loadState();
     QlSession? session;
     try {
@@ -658,12 +715,19 @@ class QlTdEngine {
     if (handle.isEmpty || password.isEmpty) {
       return _error(400, '请填写用户名和密码');
     }
-    final api = QlApi(server);
+    final api = QlApi(server, proxy: _activeProxy);
     try {
       final body = <String, dynamic>{
         'handle': handle,
         'password': password,
         'platform': Platform.isAndroid ? 'android' : Platform.operatingSystem,
+        'app_name': '轻聊',
+        'app_version': '0.4.2',
+        'device_model': Platform.operatingSystem,
+        if ((r['totp_code']?.toString() ?? '').isNotEmpty)
+          'totp_code': r['totp_code'].toString(),
+        if ((r['recovery_code']?.toString() ?? '').isNotEmpty)
+          'recovery_code': r['recovery_code'].toString(),
       };
       if (register) {
         body['invite_code'] = (r['invite_code']?.toString() ?? '').trim();
@@ -674,6 +738,12 @@ class QlTdEngine {
         register ? '/auth/register' : '/auth/login',
         body,
       );
+      if (result['two_factor_required'] == true) {
+        return {
+          '@type': 'qlTwoFactorRequired',
+          'pending_token': result['pending_token']?.toString() ?? '',
+        };
+      }
       final token = result['access_token']?.toString() ?? '';
       final userId = result['user_id']?.toString() ?? '';
       if (token.isEmpty || userId.isEmpty) {
@@ -697,7 +767,7 @@ class QlTdEngine {
   void _writeSession(QlSession session) {
     final file = File(_sessionPath);
     file.writeAsStringSync(jsonEncode(session.toJson()), flush: true);
-    // Mithka's multi-account quarantine deletes slots that lack td.binlog.
+    // The multi-account quarantine deletes slots that lack td.binlog.
     final marker = File('$_databaseDir/td.binlog');
     if (!marker.existsSync()) {
       marker.writeAsBytesSync(utf8.encode('QLSESS01'), flush: true);
@@ -712,7 +782,7 @@ class QlTdEngine {
   void _startSession(QlSession session) {
     _session = session;
     _api?.close();
-    _api = QlApi(Uri.parse(session.server), token: session.token);
+    _api = QlApi(Uri.parse(session.server), token: session.token, proxy: _activeProxy);
     _emit({
       '@type': 'updateOption',
       'name': 'my_id',

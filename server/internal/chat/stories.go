@@ -62,14 +62,14 @@ func normalizeStoryPrivacy(p *storyPrivacy) error {
 	return nil
 }
 
-func (a *App) canViewStory(viewer, author string, privacy storyPrivacy, expires, deleted int64) bool {
+func (a *App) canViewStory(viewer, author string, no int, privacy storyPrivacy, expires, deleted int64) bool {
 	if deleted == 1 {
 		return false
 	}
 	if viewer == author {
 		return true
 	}
-	if expires > 0 && expires <= time.Now().Unix() {
+	if expires > 0 && expires <= time.Now().Unix() && !a.storyInAlbum(author, no) {
 		return false
 	}
 	switch privacy.Type {
@@ -151,10 +151,10 @@ func (a *App) loadStory(author string, no int, viewer string, includeExpired boo
 	}
 	var priv storyPrivacy
 	_ = json.Unmarshal([]byte(privacyRaw), &priv)
-	if !includeExpired && !a.canViewStory(viewer, author, priv, expires, deleted) {
+	if !includeExpired && !a.canViewStory(viewer, author, no, priv, expires, deleted) {
 		return nil, ErrForbidden
 	}
-	if includeExpired && (deleted == 1 || (viewer != author && !a.canViewStory(viewer, author, priv, 0, deleted))) {
+	if includeExpired && (deleted == 1 || (viewer != author && !a.canViewStory(viewer, author, no, priv, 0, deleted))) {
 		return nil, ErrForbidden
 	}
 	var views, reactions int
@@ -292,7 +292,7 @@ func (a *App) activeStories(w http.ResponseWriter, r *http.Request, p Principal)
 	for _, it := range raw {
 		var priv storyPrivacy
 		_ = json.Unmarshal([]byte(it.Privacy), &priv)
-		if !a.canViewStory(p.UserID, it.Author, priv, it.Expires, it.Deleted) {
+		if !a.canViewStory(p.UserID, it.Author, int(it.No), priv, it.Expires, it.Deleted) {
 			continue
 		}
 		if _, ok := grouped[it.Author]; !ok {

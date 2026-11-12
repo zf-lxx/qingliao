@@ -471,8 +471,8 @@ extension on QlTdEngine {
       'searchMessagesFilterDocument' => 'file',
       'searchMessagesFilterVoiceNote' || 'searchMessagesFilterVoiceAndVideoNote' => 'voice',
       'searchMessagesFilterUrl' => 'link',
+      'searchMessagesFilterAudio' => 'audio',
       'searchMessagesFilterAnimation' ||
-      'searchMessagesFilterAudio' ||
       'searchMessagesFilterVideoNote' ||
       'searchMessagesFilterPoll' ||
       'searchMessagesFilterChatPhoto' ||
@@ -518,6 +518,7 @@ extension on QlTdEngine {
           'file' => QlTdEngine._int(counts['file']) ?? found['total_count'],
           'voice' => QlTdEngine._int(counts['voice']) ?? found['total_count'],
           'link' => QlTdEngine._int(counts['link']) ?? found['total_count'],
+          'audio' => QlTdEngine._int(counts['audio']) ?? found['total_count'],
           _ => (QlTdEngine._int(counts['image']) ?? 0) +
               (QlTdEngine._int(counts['video']) ?? 0) +
               (found['total_count'] as int? ?? 0),
@@ -602,6 +603,7 @@ extension on QlTdEngine {
       'searchMessagesFilterVoiceNote' || 'searchMessagesFilterVoiceAndVideoNote' => 'voice',
       'searchMessagesFilterUrl' => 'link',
       'searchMessagesFilterPhotoAndVideo' => 'all',
+      'searchMessagesFilterAudio' => 'audio',
       _ => 'all',
     };
     final result = await _apiOrThrow.get('/conversations/${c.id}/media', {
@@ -617,6 +619,7 @@ extension on QlTdEngine {
         'file' => QlTdEngine._int(counts['file']) ?? 0,
         'voice' => QlTdEngine._int(counts['voice']) ?? 0,
         'link' => QlTdEngine._int(counts['link']) ?? 0,
+        'audio' => QlTdEngine._int(counts['audio']) ?? 0,
         _ => (QlTdEngine._int(counts['image']) ?? 0) +
             (QlTdEngine._int(counts['video']) ?? 0) +
             (QlTdEngine._int(counts['file']) ?? 0) +
@@ -626,17 +629,88 @@ extension on QlTdEngine {
     return {'@type': 'count', 'count': n};
   }
 
+  Map<String, dynamic> _emptyFoundMessages() => {
+    '@type': 'foundMessages',
+    'total_count': 0,
+    'messages': const <Object>[],
+    'next_offset': '',
+  };
+
+  String? _globalSearchKind(String filter) {
+    return switch (filter) {
+      'searchMessagesFilterEmpty' ||
+      'searchMessagesFilterMention' ||
+      'searchMessagesFilterUnreadMention' =>
+        '',
+      'searchMessagesFilterPhoto' => 'image',
+      'searchMessagesFilterVideo' => 'video',
+      'searchMessagesFilterPhotoAndVideo' => 'all',
+      'searchMessagesFilterDocument' => 'file',
+      'searchMessagesFilterVoiceNote' ||
+      'searchMessagesFilterVoiceAndVideoNote' =>
+        'voice',
+      'searchMessagesFilterUrl' => 'link',
+      'searchMessagesFilterAudio' => 'audio',
+      _ => null, // animation / video-note / poll / etc: do not fake an empty stored type
+    };
+  }
+
   Future<Map<String, dynamic>> _searchMessages(Map<String, dynamic> r) async {
     final q = (r['query']?.toString() ?? '').trim();
-    if (q.isEmpty) {
-      return {
-        '@type': 'foundMessages',
-        'total_count': 0,
-        'messages': const <Object>[],
-        'next_offset': '',
-      };
+    final filter =
+        (r['filter'] as Map?)?['@type']?.toString() ?? 'searchMessagesFilterEmpty';
+    final kind = _globalSearchKind(filter);
+    if (kind == null) {
+      return _emptyFoundMessages();
     }
     final limit = (QlTdEngine._int(r['limit']) ?? 20).clamp(1, 50);
+    final offset = r['offset']?.toString() ?? '';
+    // Drawer 「文件」 tabs send a media filter with an empty query. That used
+    // to short-circuit to an empty foundMessages, so 图片/文件/链接/语音/视频
+    // all looked empty even when the chat history had items.
+    if (kind.isNotEmpty) {
+      try {
+        final result = await _apiOrThrow.get('/me/media', {
+          'kind': kind,
+          if (q.isNotEmpty) 'q': q,
+          if (offset.isNotEmpty) 'offset': offset,
+          'limit': '$limit',
+        });
+        final out = <Map<String, dynamic>>[];
+        for (final raw in (result['messages'] as List? ?? const [])) {
+          if (raw is! Map) continue;
+          final map = Map<String, dynamic>.from(raw);
+          final c = _convs[map['conversation_id']?.toString() ?? ''];
+          if (c == null) continue;
+          final td = _tdMessage(c, map);
+          if (td == null) continue;
+          _cacheMessage(c, td, map);
+          out.add(td);
+        }
+        var total = out.length;
+        final counts = result['counts'];
+        if (counts is Map) {
+          if (kind == 'all') {
+            total = 0;
+            for (final key in const ['image', 'video', 'file', 'voice', 'link']) {
+              total += QlTdEngine._int(counts[key]) ?? 0;
+            }
+          } else {
+            total = QlTdEngine._int(counts[kind]) ?? out.length;
+          }
+        }
+        return {
+          '@type': 'foundMessages',
+          'total_count': total,
+          'messages': out,
+          'next_offset': result['next_offset']?.toString() ?? '',
+        };
+      } on QlApiException catch (e) {
+        if (e.statusCode == 400) return _emptyFoundMessages();
+        rethrow;
+      }
+    }
+    if (q.isEmpty) return _emptyFoundMessages();
     final out = <Map<String, dynamic>>[];
     for (final c in _convs.values) {
       if (!c.announced || c.id.startsWith('virtual:')) continue;

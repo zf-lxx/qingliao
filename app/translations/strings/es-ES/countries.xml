@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Generated from the Mithka app tables. Edit translations here; run tools/gen_dart.py to push them back into the app. -->
+<!-- Generated from the 轻聊 app tables. Edit translations here; run tools/gen_dart.py to push them back into the app. -->
 <resources>
     <string name="countryAC">Isla de la Ascensión</string>
     <string name="countryAD">Andorra</string>

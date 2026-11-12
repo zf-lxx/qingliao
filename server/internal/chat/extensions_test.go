@@ -368,7 +368,7 @@ func TestStateMigrationFromV1(t *testing.T) {
 	defer a.Close()
 	var version int
 	a.DB.QueryRow("PRAGMA user_version").Scan(&version)
-	if version != 7 {
+	if version != 8 {
 		t.Fatal(version)
 	}
 }

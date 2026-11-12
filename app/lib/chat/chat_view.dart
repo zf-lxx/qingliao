@@ -4829,6 +4829,7 @@ class _ChatViewState extends State<ChatView> {
         }
       },
       onOpenReply: _openReplyMessage,
+      onOpenReplyQuote: (message) => unawaited(_openReplyQuote(message)),
       onOpenForwarded: _openForwardedMessage,
       onTapViaBot: (m) => unawaited(_activateMessageViaBot(m)),
       onOpenComments: _openMessageComments,
@@ -9534,16 +9535,23 @@ class _ChatViewState extends State<ChatView> {
     );
   }
 
+  Future<void> _openReplyQuote(ChatMessage message) async {
+    final targetId = await _vm.resolveReplyTarget(message);
+    if (targetId <= 0 || !mounted) return;
+    await _openReplyMessage(targetId);
+  }
+
   Future<void> _openReplyMessage(int messageId) async {
+    if (messageId <= 0) return;
     // Capture before the viewport is claimed: the claim marks a navigation in
     // progress and the recorded origin is the frame the reader just left.
     _captureJumpOrigin();
     _claimTranscriptViewport();
     final didReachTarget = await _scrollToMessageAndReport(messageId);
     if (!didReachTarget || !mounted) return;
-    if (isDesktopTargetPlatform(Theme.of(context).platform)) {
-      _flashLinkedMessageHighlight(messageId);
-    }
+    // Highlight on every platform: an already-visible text original would
+    // otherwise look like a dead quote tap, unlike an off-screen image jump.
+    _flashLinkedMessageHighlight(messageId);
   }
 
   void _flashLinkedMessageHighlight(int messageId) {

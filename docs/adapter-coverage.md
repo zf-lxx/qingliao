@@ -4,19 +4,17 @@
 
 此前的 0.2 Flutter 树仍在 `client/`，仅作对照，不是本分支的构建入口。在 `app/` 下执行 `source ~/sdk/env.sh` 与 `flutter build apk --release --target-platform android-arm64`。没有 `android/key.properties` 时，发行签名回退到 `~/.android/debug.keystore`，与既有内测包一致。
 
-arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控制在约 50 MB 以内（当前制品：`/workspace/qingliao-0.4.1-arm64.apk`，版本 0.4.1+8）。
+arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控制在约 50 MB 以内（当前制品：`/workspace/qingliao-0.4.2-arm64.apk`，版本 0.4.2+9）。
 
-原生 `libtdjson` 不再随包提供。`TdBindings` 是纯 Dart 实现，把请求交给 `QlTdEngine`，由它对接轻聊后端（`REST` + `WS /v1/ws`，带 seq/ack 与增量同步）。尚未支持的方法返回 TDLib 风格的 `error`（`QL_UNSUPPORTED: <method>`），不会崩溃，也不会假装成功。一小份白名单（`qlEmptyResultMethods`）对后端确实没有的列表查询返回真实的空集合（登录设备/通行密钥、自定义表情包、直播动态专辑、社区等）。
+原生 `libtdjson` 不再随包提供。`TdBindings` 是纯 Dart 实现，把请求交给 `QlTdEngine`，由它对接轻聊后端（`REST` + `WS /v1/ws`，带 seq/ack 与增量同步）。尚未支持的方法返回 TDLib 风格的 `error`（`QL_UNSUPPORTED: <method>`），不会崩溃，也不会假装成功。一小份白名单（`qlEmptyResultMethods`）对后端确实没有的列表查询返回真实的空集合（通行密钥、社区等尚未提供的能力）。
 
 ## 设置
 
 设置页保留搜索和原有分组。本地即可工作的页面包括：主题、外观/界面、聊天行为、解锁/密码、内容过滤（本机关键词）、数据与存储（本地缓存）、语言、关于，以及可选的桌面快捷键。
 
-仍没有真实轻聊接口的服务端页面会留在列表里，带「暂未开放 / Not yet」标签并打开占位页：
+仍没有真实轻聊接口的服务端页面会留在列表里，带「暂未开放 / Not yet」标签并打开占位页：通行密钥、更换手机号、恢复邮箱、长时间未登录自动注销、自动删除消息，以及 MTProto/Web 代理。通话、直播动态、Bot API 和厂商推送保持隐藏或暂未开放（需要 coturn/SFU、RTMP 以及厂商推送凭证）。
 
-- 代理。通话和厂商推送保持隐藏/暂未开放（需要 coturn/SFU 以及小米推送/FCM 凭证）。隐私与安全里的两步验证、登录设备、通行密钥、注销账号也尚未实现；可见性规则本身已接通。
-
-已接通贴纸（内置「轻聊」PNG 包与用户包包，非外部素材；`.tgs` / `.webm` 因体积暂缓）、投票、清单、链接预览、联系人、聊天文件夹、通知范围、隐私规则、已读回执开关、动态（24 小时图片/视频，查看、回应、举报；没有直播）、更完整的富文本实体、本机会话备份与恢复，以及多账号槽位。应用内更新只读取 `zf-lxx/qingliao` 的发行，并能从历史标签或 `v0.4.1` 这类版本号解析出版本。输入栏回复引用的 X 在键盘保持打开时也可以取消回复。
+已接通：两步验证（登录密码 + TOTP，恢复码只展示一次；恢复邮箱暂未开放）、登录设备列表与远程登出、账号注销、HTTP/SOCKS5 代理（应用于 REST 与 WebSocket）、用户自建 PNG/WebP 贴纸包、动态专辑（专辑内动态在 24 小时后仍可查看；没有直播）、全局「文件」页跨会话媒体（图片/文件/链接/语音/视频/音乐，音乐使用真实音频）、文字与图片回复引用跳转。另有贴纸（内置「轻聊」PNG 包与用户包包，非外部素材；`.tgs` / `.webm` 因体积暂缓）、投票、清单、链接预览、联系人、聊天文件夹、通知范围、隐私规则、已读回执开关、动态（24 小时图片/视频，查看、回应、举报）、更完整的富文本实体、本机会话备份与恢复，以及多账号槽位。应用内更新只读取 `zf-lxx/qingliao` 的发行，并能从历史标签或 `v0.4.2` 这类版本号解析出版本。输入栏回复引用的 X 在键盘保持打开时也可以取消回复。
 
 「已屏蔽用户」此前已经接通，不会标成暂未开放。
 
@@ -24,19 +22,19 @@ arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控�
 
 客户端 UI 会调用 **457** 个互不相同的 TDLib 风格方法（对 `TdClient` / 界面查询点的静态盘点）。当前状态：
 
-- 已实现：约 **120**（含贴纸、投票、清单、文件夹、联系人、隐私、通知范围、链接预览、动态及相关写入）
-- 空结果（真实空集合）：约 **20**（登录设备、自定义表情包、动态专辑、社区等）
-- 未支持（`QL_UNSUPPORTED`）：约 **317**
+- 已实现：约 **140**（含两步验证/登录设备/注销、HTTP/SOCKS5 代理、自定义贴纸包、动态专辑、全局媒体搜索、回复引用跳转，以及贴纸、投票、清单、文件夹、联系人、隐私、通知范围、链接预览、动态及相关写入）
+- 空结果（真实空集合）：约 **16**（通行密钥、社区等尚未提供的能力）
+- 未支持（`QL_UNSUPPORTED`）：约 **300**
 
 直播动态、通话、Bot API 和厂商推送仍未支持或已隐藏。
 
-轻聊自有方法（`qlLogin`、`qlRegister`、`qlGetServer`）已实现，供登录页使用，并排在方法表最前。
+轻聊自有方法（`qlLogin`、`qlLoginTotp`、`qlRegister`、`qlGetServer`、`qlStartTotp`、`qlConfirmTotp`、`qlDisableTotp`）已实现，供登录页与安全设置使用，并排在方法表最前。
 
 ## Method table
 
 | Method | Endpoint / notes | Status |
 | --- | --- | --- |
-| `qlLogin` | POST /v1/auth/login | implemented |
+| `qlLogin` | POST /v1/auth/login（可返回 two_factor_required） | implemented |
 | `qlRegister` | POST /v1/auth/register | implemented |
 | `qlGetServer` | — (local) | implemented |
 | `acceptCall` | QL_UNSUPPORTED | unsupported |
@@ -53,9 +51,9 @@ arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控�
 | `addMessageReaction` | PUT /v1/messages/{id}/reactions | implemented |
 | `addOffer` | QL_UNSUPPORTED | unsupported |
 | `addPollOption` | QL_UNSUPPORTED | unsupported |
-| `addProxy` | QL_UNSUPPORTED | unsupported |
+| `addProxy` | 本地 HTTP/SOCKS5 配置，应用于 REST+WS | implemented |
 | `addQuickReplyShortcutMessage` | QL_UNSUPPORTED | unsupported |
-| `addStickerToSet` | QL_UNSUPPORTED | unsupported |
+| `addStickerToSet` | POST /v1/sticker-packs/{id}/stickers（PNG/WebP/JPEG） | implemented |
 | `addTextCompositionStyle` | QL_UNSUPPORTED | unsupported |
 | `allowBotToSendMessages` | QL_UNSUPPORTED | unsupported |
 | `answerGuestQuery` | QL_UNSUPPORTED | unsupported |
@@ -100,17 +98,17 @@ arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控�
 | `createForumTopic` | QL_UNSUPPORTED | unsupported |
 | `createNewBasicGroupChat` | POST /v1/conversations (group) | implemented |
 | `createNewSecretChat` | QL_UNSUPPORTED | unsupported |
-| `createNewStickerSet` | QL_UNSUPPORTED | unsupported |
+| `createNewStickerSet` | POST /v1/sticker-packs（PNG/WebP 静态包） | implemented |
 | `createNewSupergroupChat` | POST /v1/conversations (kind=channel or group) | implemented |
 | `createPrivateChat` | POST /v1/conversations (direct, on first send) | implemented |
 | `createRichMessageWithAi` | QL_UNSUPPORTED | unsupported |
-| `createStoryAlbum` | QL_UNSUPPORTED | unsupported |
+| `createStoryAlbum` | POST /v1/story-albums | implemented |
 | `createTemporaryPassword` | QL_UNSUPPORTED | unsupported |
 | `createTextCompositionStyle` | QL_UNSUPPORTED | unsupported |
 | `createVideoChat` | QL_UNSUPPORTED | unsupported |
 | `declineOauthRequest` | QL_UNSUPPORTED | unsupported |
 | `declineSuggestedPost` | QL_UNSUPPORTED | unsupported |
-| `deleteAccount` | QL_UNSUPPORTED | unsupported |
+| `deleteAccount` | POST /v1/me/delete（需密码，可选 TOTP） | implemented |
 | `deleteBusinessChatLink` | QL_UNSUPPORTED | unsupported |
 | `deleteBusinessConnectedBot` | QL_UNSUPPORTED | unsupported |
 | `deleteChat` | QL_UNSUPPORTED | unsupported |
@@ -132,9 +130,9 @@ arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控�
 | `deleteQuickReplyShortcutMessages` | QL_UNSUPPORTED | unsupported |
 | `deleteStickerSet` | QL_UNSUPPORTED | unsupported |
 | `deleteStory` | QL_UNSUPPORTED | unsupported |
-| `deleteStoryAlbum` | QL_UNSUPPORTED | unsupported |
+| `deleteStoryAlbum` | DELETE /v1/story-albums/{id} | implemented |
 | `deleteTextCompositionStyle` | QL_UNSUPPORTED | unsupported |
-| `disableProxy` | — (noop) | implemented |
+| `disableProxy` | 本地禁用代理并重绑 HttpClient | implemented |
 | `discardCall` | QL_UNSUPPORTED | unsupported |
 | `downloadFile` | GET /v1/media/{id} | implemented |
 | `editBusinessChatLink` | QL_UNSUPPORTED | unsupported |
@@ -150,11 +148,11 @@ arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控�
 | `editQuickReplyMessage` | QL_UNSUPPORTED | unsupported |
 | `editStory` | QL_UNSUPPORTED | unsupported |
 | `editTextCompositionStyle` | QL_UNSUPPORTED | unsupported |
-| `enableProxy` | — (noop) | implemented |
+| `enableProxy` | 本地启用 HTTP/SOCKS5 并重绑 HttpClient | implemented |
 | `fixTextWithAi` | QL_UNSUPPORTED | unsupported |
 | `forwardMessages` | POST /v1/messages/{id}/forward | implemented |
 | `getAccountTtl` | QL_UNSUPPORTED | unsupported |
-| `getActiveSessions` | — (truthful empty result) | empty |
+| `getActiveSessions` | GET /v1/devices | implemented |
 | `getAttachmentMenuBot` | — (truthful empty result) | empty |
 | `getAuthenticationPasskeyParameters` | QL_UNSUPPORTED | unsupported |
 | `getAuthorizationState` | — (local) | implemented |
@@ -191,7 +189,7 @@ arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控�
 | `getChatSimilarChats` | — (truthful empty result) | empty |
 | `getChatSponsoredMessages` | QL_UNSUPPORTED | unsupported |
 | `getChatStatistics` | QL_UNSUPPORTED | unsupported |
-| `getChatStoryAlbums` | QL_UNSUPPORTED | unsupported |
+| `getChatStoryAlbums` | GET /v1/story-albums | implemented |
 | `getChats` | GET /v1/conversations (cached) | implemented |
 | `getChatsForChatFolderInviteLink` | QL_UNSUPPORTED | unsupported |
 | `getChatsToPostStories` | — (truthful empty result) | empty |
@@ -247,7 +245,7 @@ arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控�
 | `getOwnedStickerSets` | QL_UNSUPPORTED | unsupported |
 | `getPasskeyParameters` | QL_UNSUPPORTED | unsupported |
 | `getPassportAuthorizationForm` | QL_UNSUPPORTED | unsupported |
-| `getPasswordState` | QL_UNSUPPORTED | unsupported |
+| `getPasswordState` | GET /v1/me/security | implemented |
 | `getPaymentForm` | QL_UNSUPPORTED | unsupported |
 | `getPollVoteStatistics` | QL_UNSUPPORTED | unsupported |
 | `getPollVoters` | QL_UNSUPPORTED | unsupported |
@@ -256,7 +254,7 @@ arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控�
 | `getPremiumGiveawayPaymentOptions` | QL_UNSUPPORTED | unsupported |
 | `getPreparedInlineMessage` | QL_UNSUPPORTED | unsupported |
 | `getPreparedKeyboardButton` | QL_UNSUPPORTED | unsupported |
-| `getProxies` | — (empty list) | implemented |
+| `getProxies` | 本地读取 HTTP/SOCKS5 列表 | implemented |
 | `getPublicPostSearchLimits` | QL_UNSUPPORTED | unsupported |
 | `getReadDatePrivacySettings` | QL_UNSUPPORTED | unsupported |
 | `getReceivedGifts` | QL_UNSUPPORTED | unsupported |
@@ -318,7 +316,7 @@ arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控�
 | `optimizeStorage` | QL_UNSUPPORTED | unsupported |
 | `parseMarkdown` | — (pass-through / local) | implemented |
 | `pinChatMessage` | PUT /v1/conversations/{id}/pins | implemented |
-| `pingProxy` | QL_UNSUPPORTED | unsupported |
+| `pingProxy` | 对已配置代理探测 /healthz | implemented |
 | `postStory` | QL_UNSUPPORTED | unsupported |
 | `processChatJoinRequest` | QL_UNSUPPORTED | unsupported |
 | `processChatJoinRequests` | QL_UNSUPPORTED | unsupported |
@@ -334,7 +332,7 @@ arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控�
 | `removeFileFromDownloads` | QL_UNSUPPORTED | unsupported |
 | `removeLoginPasskey` | QL_UNSUPPORTED | unsupported |
 | `removeMessageReaction` | PUT /v1/messages/{id}/reactions remove | implemented |
-| `removeProxy` | QL_UNSUPPORTED | unsupported |
+| `removeProxy` | 本地删除代理配置 | implemented |
 | `removeStickerFromSet` | QL_UNSUPPORTED | unsupported |
 | `removeTextCompositionStyle` | QL_UNSUPPORTED | unsupported |
 | `reorderChatFolders` | QL_UNSUPPORTED | unsupported |
@@ -362,7 +360,7 @@ arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控�
 | `searchContacts` | GET /v1/users/search | implemented |
 | `searchEmojis` | QL_UNSUPPORTED | unsupported |
 | `searchFileDownloads` | QL_UNSUPPORTED | unsupported |
-| `searchMessages` | GET /v1/conversations/{id}/search across announced chats | implemented |
+| `searchMessages` | 空查询走 GET /v1/me/media（全局文件页）；有关键词时仍可搜会话 | implemented |
 | `searchPublicChat` | GET /v1/users/search | implemented |
 | `searchPublicChats` | GET /v1/users/search | implemented |
 | `searchPublicMessagesByTag` | QL_UNSUPPORTED | unsupported |
@@ -429,7 +427,7 @@ arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控�
 | `setMessageSenderBlockList` | PUT /v1/users/{id}/block | implemented |
 | `setName` | PATCH /v1/me | implemented |
 | `setOption` | — (noop) | implemented |
-| `setPassword` | QL_UNSUPPORTED | unsupported |
+| `setPassword` | POST /v1/me/password（12–72 字符；不可清空登录密码） | implemented |
 | `setPersonalChat` | QL_UNSUPPORTED | unsupported |
 | `setPinnedForumTopics` | QL_UNSUPPORTED | unsupported |
 | `setPollAnswer` | QL_UNSUPPORTED | unsupported |
@@ -446,7 +444,7 @@ arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控�
 | `setStickerPositionInSet` | QL_UNSUPPORTED | unsupported |
 | `setStickerSetThumbnail` | QL_UNSUPPORTED | unsupported |
 | `setStickerSetTitle` | QL_UNSUPPORTED | unsupported |
-| `setStoryAlbumName` | QL_UNSUPPORTED | unsupported |
+| `setStoryAlbumName` | PATCH /v1/story-albums/{id} | implemented |
 | `setStoryPrivacySettings` | QL_UNSUPPORTED | unsupported |
 | `setStoryReaction` | QL_UNSUPPORTED | unsupported |
 | `setSupergroupUsername` | QL_UNSUPPORTED | unsupported |
@@ -461,8 +459,8 @@ arm64 发行包不包含 `libtdjson`、FVP/FFmpeg 或额外 CPU ABI，体积控�
 | `suggestUserBirthdate` | QL_UNSUPPORTED | unsupported |
 | `suggestUserProfilePhoto` | QL_UNSUPPORTED | unsupported |
 | `summarizeMessage` | QL_UNSUPPORTED | unsupported |
-| `terminateAllOtherSessions` | QL_UNSUPPORTED | unsupported |
-| `terminateSession` | QL_UNSUPPORTED | unsupported |
+| `terminateAllOtherSessions` | POST /v1/devices/revoke-others | implemented |
+| `terminateSession` | DELETE /v1/devices/{id} | implemented |
 | `testProxy` | QL_UNSUPPORTED | unsupported |
 | `toggleAllDownloadsArePaused` | QL_UNSUPPORTED | unsupported |
 | `toggleBotCanManageEmojiStatus` | QL_UNSUPPORTED | unsupported |

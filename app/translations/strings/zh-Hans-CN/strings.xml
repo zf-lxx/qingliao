@@ -2066,11 +2066,11 @@
     <string name="linkHandlerStarsPickerSubtitleWithPurposeValue1Value2">请选择一个至少包含 {value1} Stars 的套餐，用于{value2}。</string>
     <string name="linkHandlerStarsPurchaseUnavailable">明星无法购买</string>
     <string name="linkHandlerStoreDependencySubtitleValue1">除非 轻聊 授权此应用并返回其开发者账号名下的 App Store 商品，否则{value1}会在打开 StoreKit 前中止。Android 还需要 Google Play Billing 购买令牌适配器，而此版本未包含该适配器。</string>
-    <string name="linkHandlerTelegramLogin">电报登录</string>
+    <string name="linkHandlerTelegramLogin">轻聊登录</string>
     <string name="linkHandlerTelegramPassportRequest">轻聊 护照请求</string>
     <string name="linkHandlerTelegramPremium">轻聊 高级版</string>
     <string name="linkHandlerTelegramPremiumGift">轻聊 高级礼物</string>
-    <string name="linkHandlerTelegramStarsCount">{value1} 电报星星</string>
+    <string name="linkHandlerTelegramStarsCount">{value1} 星星</string>
     <string name="linkHandlerUnsupportedTelegramLink">暂不支持打开此 轻聊 链接</string>
     <string name="linkHandlerWritingStyle">写作风格</string>
     <string name="listSeparator">、</string>
@@ -2084,7 +2084,7 @@
     <string name="loginBotAccountDescription">机器人无法获取之前的消息。登录后收到的新消息将由 轻聊 保存在此设备上。</string>
     <string name="loginBotAccountTitle">以机器人身份登录</string>
     <string name="loginBotApiEndpoint">机器人 API 端点</string>
-    <string name="loginBotApiEndpointHint">仅填写服务器根地址。默认：https://api.telegram.org</string>
+    <string name="loginBotApiEndpointHint">仅填写服务器根地址。</string>
     <string name="loginBotFailed">无法添加机器人账号。</string>
     <string name="loginBotSubmit">登录机器人</string>
     <string name="loginBotToken">机器人令牌</string>
@@ -2126,7 +2126,7 @@
     <string name="loginSwitchAccount">切换账号</string>
     <string name="loginTelegramAccountTitle">登录 轻聊 账号</string>
     <string name="loginTelegramApiCredentialsMissing">尚未配置 轻聊 API 凭证</string>
-    <string name="loginTelegramApiPortalInstructions">（可在 my.telegram.org 获取）。</string>
+    <string name="loginTelegramApiPortalInstructions">（请向管理员获取客户端凭证。）</string>
     <string name="loginTelegramApiSecretsInstructions">请填写你自己的 轻聊 客户端 api_id 与 api_hash</string>
     <string name="loginTelegramPremiumIsRequired">需要 会员</string>
     <string name="loginTelegramRequiresAnEmailAddressToFinishSigning">轻聊 需要电子邮件地址才能完成登录。</string>

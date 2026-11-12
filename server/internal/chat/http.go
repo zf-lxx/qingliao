@@ -74,6 +74,8 @@ func (a *App) Handler() http.Handler {
 	a.p2Routes(mux)
 	a.p3Routes(mux)
 	a.storyRoutes(mux)
+	a.securityRoutes(mux)
+	a.albumRoutes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if e := a.Ping(r.Context()); e != nil {
 			respond(w, 503, map[string]bool{"ok": false})
@@ -114,7 +116,7 @@ func (a *App) Handler() http.Handler {
 		a.hideBlockedPresence(p.UserID, &u)
 		respond(w, 200, u)
 	}))
-	mux.HandleFunc("GET /v1/devices", a.auth(a.devices))
+	mux.HandleFunc("GET /v1/devices", a.auth(a.listDevices))
 	mux.HandleFunc("PUT /v1/devices/current/push", a.auth(a.devicePush))
 	mux.HandleFunc("DELETE /v1/devices/{id}", a.auth(a.revokeDevice))
 	mux.HandleFunc("POST /v1/ws-ticket", a.auth(a.wsTicket))
@@ -341,7 +343,7 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			return ErrConflict
 		}
-		result, e = a.newSession(tx, uid, b.Platform)
+		result, e = a.newSessionMeta(tx, uid, deviceMeta{Platform: b.Platform, AppName: "轻聊"})
 		return e
 	})
 	if e != nil {
@@ -349,49 +351,6 @@ func (a *App) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respond(w, 201, result)
-}
-func (a *App) newSession(tx *sql.Tx, user, platform string) (map[string]any, error) {
-	token := id() + id()
-	device, sid := id(), id()
-	expires := time.Now().Add(a.C.SessionTTL).Unix()
-	if _, e := tx.Exec("INSERT INTO devices(id,user_id,platform,push_provider) VALUES(?,?,?,'none')", device, user, platform); e != nil {
-		return nil, e
-	}
-	if _, e := tx.Exec("INSERT INTO sessions(id,user_id,device_id,token_hash,expires) VALUES(?,?,?,?,?)", sid, user, device, hash(token), expires); e != nil {
-		return nil, e
-	}
-	return map[string]any{"access_token": token, "token_type": "Bearer", "expires_at": time.Unix(expires, 0).UTC().Format(time.RFC3339), "device_id": device, "user_id": user}, nil
-}
-func (a *App) login(w http.ResponseWriter, r *http.Request) {
-	var b struct {
-		Handle   string `json:"handle"`
-		Password string `json:"password"`
-		Platform string `json:"platform"`
-	}
-	if !decode(w, r, &b) {
-		return
-	}
-	if len(b.Password) > 72 || len(b.Platform) > 32 {
-		fail(w, ErrInvalid)
-		return
-	}
-	var uid, pass string
-	e := a.DB.QueryRow("SELECT id,password FROM users WHERE handle=?", strings.ToLower(b.Handle)).Scan(&uid, &pass)
-	if e != nil {
-		pass = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy"
-	}
-	check := bcrypt.CompareHashAndPassword([]byte(pass), []byte(b.Password))
-	if e != nil || check != nil {
-		respond(w, 401, map[string]string{"error": "invalid_credentials"})
-		return
-	}
-	var result map[string]any
-	e = a.transaction(func(tx *sql.Tx) error { var e error; result, e = a.newSession(tx, uid, b.Platform); return e })
-	if e != nil {
-		fail(w, e)
-		return
-	}
-	respond(w, 200, result)
 }
 func (a *App) invite(w http.ResponseWriter, r *http.Request, p Principal) {
 	if !p.Admin {
@@ -481,26 +440,6 @@ func (a *App) users(w http.ResponseWriter, r *http.Request, p Principal) {
 		out = append(out, u)
 	}
 	respond(w, 200, map[string]any{"users": out})
-}
-func (a *App) devices(w http.ResponseWriter, r *http.Request, p Principal) {
-	rows, e := a.DB.Query("SELECT id,platform,revoked,ack FROM devices WHERE user_id=?", p.UserID)
-	if e != nil {
-		fail(w, e)
-		return
-	}
-	defer rows.Close()
-	out := []map[string]any{}
-	for rows.Next() {
-		var id, platform string
-		var revoked int
-		var ack int64
-		if e = rows.Scan(&id, &platform, &revoked, &ack); e != nil {
-			fail(w, e)
-			return
-		}
-		out = append(out, map[string]any{"id": id, "platform": platform, "revoked": revoked == 1, "last_persisted_event_seq": ack, "current": id == p.DeviceID})
-	}
-	respond(w, 200, map[string]any{"devices": out})
 }
 func (a *App) devicePush(w http.ResponseWriter, r *http.Request, p Principal) {
 	var b struct {
