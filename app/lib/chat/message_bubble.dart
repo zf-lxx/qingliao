@@ -64,6 +64,7 @@ import 'looping_video_view.dart';
 import 'media_preview_geometry.dart';
 import 'media_spoiler.dart';
 import 'message_action_menu.dart';
+import 'message_delivery_mark.dart';
 import 'message_direction.dart';
 import 'message_gift_card.dart';
 import 'message_gram_envelope.dart';
@@ -1353,6 +1354,20 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
     return true;
   }
 
+  String get _stampTextSource {
+    if (_translationReplacesOriginalFor(message)) {
+      return message.translationText ?? '';
+    }
+    return message.text;
+  }
+
+  /// Time and delivery sit inside the text-bubble stamp; skip the overlay so
+  /// the slightly wider double tick does not cover the clock.
+  bool get _stampCarriesMeta =>
+      _embedsBubbleStamp &&
+      !_isEmojiOnlyText(_stampTextSource) &&
+      formatBubbleStamp(_messageStampDate).isNotEmpty;
+
   DateTime get _messageStampDate =>
       DateTime.fromMillisecondsSinceEpoch(message.date * 1000);
 
@@ -1755,7 +1770,8 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
   /// itself; the compact reply count still floats over it.
   Widget _withFloatingMeta(Widget child, bool outgoing, {bool meta = true}) {
     final showReplies = _showsCompactReplyCount;
-    final showMeta = meta && (message.isEdited || outgoing);
+    final showMeta =
+        meta && (message.isEdited || outgoing) && !_stampCarriesMeta;
     final show = showMeta || showReplies;
     if (!show) return child;
     return Stack(
@@ -1845,12 +1861,12 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
     Color readColor = AppTheme.readMark,
   }) {
     if (message.isSending && !message.isSendAcknowledged) {
-      return _MessageDeliveryIndicator(
-        pendingColor: pendingColor ?? _outgoingTextColor,
+      return MessageDeliverySendingIndicator(
+        color: pendingColor ?? _outgoingTextColor,
         size: 10,
       );
     }
-    return _MessageDeliverySettled(
+    return MessageDeliverySettledMark(
       isRead: widget.bubble.isRead,
       // The tick is ink on the bubble like the text is, so it follows the same
       // colour. Hardcoding white lost it entirely on a light outgoing fill.
@@ -1887,19 +1903,17 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
     );
   }
 
-  /// Transfers show only their outgoing delivery ring, using the coordinated
+  /// Transfers show only their outgoing delivery mark, using the coordinated
   /// footer palette. A pending transfer keeps its spinner until it is sent.
   Widget? _gramFooterMeta(bool outgoing, GramTransferState state) {
     if (!outgoing || state == GramTransferState.failed) return null;
     final palette = GramTransferCardColors.of(context);
     return IgnorePointer(
-      child: state == GramTransferState.sending
-          ? _MessageDeliveryIndicator(pendingColor: palette.footerInk, size: 10)
-          : _MessageDeliverySettled(
-              isRead: widget.bubble.isRead,
-              color: widget.bubble.isRead ? palette.readInk : palette.footerInk,
-              size: 10,
-            ),
+      child: MessageDeliveryMark(
+        isSending: state == GramTransferState.sending,
+        isRead: widget.bubble.isRead,
+        color: widget.bubble.isRead ? palette.readInk : palette.footerInk,
+      ),
     );
   }
 
@@ -2432,15 +2446,32 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
             children: parts,
           );
     if (!emojiOnly && stamp.isNotEmpty) {
+      final stampMeta = (outgoing || message.isEdited)
+          ? Padding(
+              padding: const EdgeInsets.only(left: 3),
+              child: _floatingMeta(outgoing),
+            )
+          : null;
+      final trailingWidth = stampMeta == null
+          ? 0.0
+          : 3 +
+                (message.isEdited
+                    ? 10.0
+                    : messageDeliveryMarkWidth(
+                        isSending:
+                            message.isSending && !message.isSendAcknowledged,
+                        isRead: widget.bubble.isRead,
+                      ));
       body = BubbleStampStack(
         stamp: stamp,
         sameLine: layout.sameLine,
-        stampWidth: layout.stampWidth,
+        stampWidth: layout.stampWidth + trailingWidth,
         stampHeight: layout.stampHeight,
         minWidth: math.max(0, layout.bubbleWidth - bubblePadding.horizontal),
         stampStyle: StampLayout.stampStyle.copyWith(
           color: _messageTimeColor(outgoing).withValues(alpha: 0.85),
         ),
+        trailing: stampMeta,
         child: body,
       );
     }
@@ -6719,125 +6750,6 @@ class _LatexView extends StatelessWidget {
       return Text(expression, style: style);
     }
   }
-}
-
-/// The settled tick: no controller, no ticker. Only the in-flight spinner needs
-/// an animation, and every outgoing bubble used to mount one to draw a circle.
-class _MessageDeliverySettled extends StatelessWidget {
-  const _MessageDeliverySettled({
-    required this.isRead,
-    required this.color,
-    required this.size,
-  });
-
-  final bool isRead;
-  final Color color;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) => SizedBox.square(
-    key: ValueKey(isRead ? 'messageDeliveryRead' : 'messageDeliverySent'),
-    dimension: size,
-    child: CustomPaint(
-      painter: _MessageDeliveryPainter(isSending: false, color: color),
-    ),
-  );
-}
-
-class _MessageDeliveryIndicator extends StatefulWidget {
-  const _MessageDeliveryIndicator({
-    required this.pendingColor,
-    required this.size,
-  });
-
-  final Color pendingColor;
-  final double size;
-
-  @override
-  State<_MessageDeliveryIndicator> createState() =>
-      _MessageDeliveryIndicatorState();
-}
-
-class _MessageDeliveryIndicatorState extends State<_MessageDeliveryIndicator>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-
-  @override
-  void initState() {
-    super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 900),
-    );
-    _controller.repeat();
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => SizedBox.square(
-    key: const ValueKey('messageDeliverySending'),
-    dimension: widget.size,
-    // Its own layer: the painter repaints on every tick, and without a
-    // boundary that re-records the whole outgoing bubble at 60fps for the
-    // entire send.
-    child: RepaintBoundary(
-      child: CustomPaint(
-        painter: _MessageDeliveryPainter(
-          rotation: _controller,
-          isSending: true,
-          color: widget.pendingColor.withValues(alpha: 0.72),
-        ),
-      ),
-    ),
-  );
-}
-
-class _MessageDeliveryPainter extends CustomPainter {
-  _MessageDeliveryPainter({
-    Animation<double>? rotation,
-    required this.isSending,
-    required this.color,
-  }) : _rotation = rotation,
-       super(repaint: rotation);
-
-  final Animation<double>? _rotation;
-  final bool isSending;
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final strokeWidth = math.max(1.25, size.shortestSide * 0.16);
-    final radius = (size.shortestSide - strokeWidth) / 2;
-    final rect = Rect.fromCircle(
-      center: size.center(Offset.zero),
-      radius: radius,
-    );
-    final paint = Paint()
-      ..color = color
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = strokeWidth
-      ..strokeCap = StrokeCap.round;
-    if (isSending) {
-      canvas.drawArc(
-        rect,
-        (_rotation?.value ?? 0.0) * math.pi * 2 - math.pi / 2,
-        math.pi * 1.35,
-        false,
-        paint,
-      );
-    } else {
-      canvas.drawCircle(size.center(Offset.zero), radius, paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_MessageDeliveryPainter oldDelegate) =>
-      oldDelegate.isSending != isSending || oldDelegate.color != color;
 }
 
 /// Folds a rich quote body to [maxHeight]. The child is laid out with an

@@ -99,6 +99,42 @@ void main() {
       ),
       isTrue,
     );
+    expect(
+      isOutgoingServerMessageRead(
+        message: ChatMessage(
+          id: 250,
+          isOutgoing: true,
+          text: 'sent unread',
+          date: 300,
+        ),
+        lastReadOutboxId: 200,
+      ),
+      isFalse,
+    );
+    expect(
+      isOutgoingServerMessageRead(
+        message: ChatMessage(
+          id: 150,
+          isOutgoing: true,
+          text: 'receipts hidden',
+          date: 300,
+        ),
+        lastReadOutboxId: 0,
+      ),
+      isFalse,
+    );
+    expect(
+      isOutgoingServerMessageRead(
+        message: ChatMessage(
+          id: 150,
+          isOutgoing: false,
+          text: 'incoming',
+          date: 300,
+        ),
+        lastReadOutboxId: 200,
+      ),
+      isFalse,
+    );
   });
 
   test('an empty local page does not exhaust remote older history', () {

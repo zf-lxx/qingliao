@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../chat/message_delivery_mark.dart';
 import '../tdlib/json_helpers.dart';
 import '../tdlib/td_client.dart';
 import '../tdlib/td_models.dart';
@@ -296,6 +297,15 @@ ChatRowMetrics chatRowMetricsFor(
     previewHasSender:
         chat.draftText.trim().isEmpty && (chat.lastSender?.isNotEmpty ?? false),
     timestamp: DateText.listLabel(chat.date),
+    timestampExtraWidth: () {
+      final delivery = chatListOutgoingDelivery(chat);
+      if (delivery == null) return 0.0;
+      return 3 +
+          messageDeliveryMarkWidth(
+            isSending: delivery.isSending,
+            isRead: delivery.isRead,
+          );
+    }(),
     folderTags: tags?.tagsFor(chat.folderIds).isNotEmpty ?? false,
     mentions: chat.unreadMentionCount,
     reactions: chat.unreadReactionCount,

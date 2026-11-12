@@ -1841,6 +1841,7 @@ class ChatListViewModel extends ChangeNotifier {
           'mithkaChatLeft',
           'updateChatDraftMessage',
           'updateChatReadInbox',
+          'updateChatReadOutbox',
           'updateChatUnreadMentionCount',
           'updateMessageMentionRead',
           'updateChatUnreadReactionCount',
@@ -2010,6 +2011,22 @@ class ChatListViewModel extends ChangeNotifier {
           s.unreadCount = update.integer('unread_count') ?? s.unreadCount;
         });
         _scheduleBadgeRefresh();
+
+      case 'updateChatReadOutbox':
+        final id = update.int64('chat_id');
+        if (id == null) return;
+        _mutate(id, (s) {
+          final lastReadOutboxMessageId = update.int64(
+            'last_read_outbox_message_id',
+          );
+          if (lastReadOutboxMessageId != null &&
+              lastReadOutboxMessageId < s.lastReadOutboxMessageId) {
+            return;
+          }
+          if (lastReadOutboxMessageId != null) {
+            s.lastReadOutboxMessageId = lastReadOutboxMessageId;
+          }
+        });
 
       case 'updateChatUnreadMentionCount':
       case 'updateMessageMentionRead':
@@ -2272,6 +2289,7 @@ class ChatListViewModel extends ChangeNotifier {
       if (recency == 0) {
         _preserveFresherReadState(summary, existing);
       }
+      _preserveFresherOutboxState(summary, existing);
     }
     if (_meId != null) summary.isSavedMessages = summary.peerUserId == _meId;
     summary.lastMessage = _previewText(
@@ -2821,6 +2839,17 @@ class ChatListViewModel extends ChangeNotifier {
     if (!existingIsFresher) return;
     candidate.lastReadInboxMessageId = existing.lastReadInboxMessageId;
     candidate.unreadCount = existing.unreadCount;
+  }
+
+  /// Outbox frontiers only move forward. Keep the further of the two when a
+  /// later getChat snapshot would otherwise rewind the delivery mark.
+  static void _preserveFresherOutboxState(
+    ChatSummary candidate,
+    ChatSummary existing,
+  ) {
+    if (existing.lastReadOutboxMessageId > candidate.lastReadOutboxMessageId) {
+      candidate.lastReadOutboxMessageId = existing.lastReadOutboxMessageId;
+    }
   }
 
   int _compare(ChatSummary a, ChatSummary b) {

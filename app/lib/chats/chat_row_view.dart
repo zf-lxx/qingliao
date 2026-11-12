@@ -12,6 +12,7 @@ import 'package:provider/provider.dart';
 
 import '../chat/custom_emoji.dart';
 import '../chat/group_remark_controller.dart';
+import '../chat/message_delivery_mark.dart';
 import '../components/app_icons.dart';
 import '../components/photo_avatar.dart';
 import '../components/ui_components.dart';
@@ -233,12 +234,34 @@ class ChatRowView extends StatelessWidget {
     );
   }
 
-  Widget _time(BuildContext context, double fontSize) => Text(
-    DateText.listLabel(chat.date),
-    maxLines: 1,
-    overflow: TextOverflow.ellipsis,
-    style: TextStyle(fontSize: fontSize, color: context.colors.textTertiary),
-  );
+  Widget _time(BuildContext context, double fontSize) {
+    final style = TextStyle(
+      fontSize: fontSize,
+      color: context.colors.textTertiary,
+    );
+    final label = Text(
+      DateText.listLabel(chat.date),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      style: style,
+    );
+    final delivery = chatListOutgoingDelivery(chat);
+    if (delivery == null) return label;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        MessageDeliveryMark(
+          isSending: delivery.isSending,
+          isRead: delivery.isRead,
+          color: delivery.isRead
+              ? AppTheme.readMark
+              : context.colors.textTertiary,
+        ),
+        const SizedBox(width: 3),
+        label,
+      ],
+    );
+  }
 
   /// 文件夹标签, on their own line along the bottom of the row, under the
   /// message preview. Names only, in each folder's own colour — a chat in five

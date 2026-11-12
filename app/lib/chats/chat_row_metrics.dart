@@ -68,6 +68,7 @@ class ChatRowMetrics {
     bool muted = false,
     double trailingWidth = 0,
     double titleAccessoryWidth = 0,
+    double timestampExtraWidth = 0,
   }) {
     final data = ContentSizeScope.of(context);
     final scale = data.appScale;
@@ -140,9 +141,10 @@ class ChatRowMetrics {
     final accessoryWidth =
         accessories.fold<double>(0, (sum, item) => sum + item.width) +
         math.max(0, accessories.length - 1) * 4;
+    final timeWidth = time.width + timestampExtraWidth;
     final timeBelow =
         available -
-            math.max(time.width, accessoryWidth) -
+            math.max(timeWidth, accessoryWidth) -
             8 -
             titleAccessoryWidth <
         80;
@@ -208,7 +210,7 @@ class ChatRowMetrics {
         stack + 16,
         if (!calibratedTouch) 44.0,
       ].reduce(math.max),
-      timestampWidth: time.width,
+      timestampWidth: timeWidth,
       timeBelow: timeBelow,
     );
   }

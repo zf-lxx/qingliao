@@ -549,6 +549,7 @@ class ChatSummary {
     required this.date,
     required this.unreadCount,
     this.lastReadInboxMessageId = 0,
+    this.lastReadOutboxMessageId = 0,
     this.unreadMentionCount = 0,
     this.unreadReactionCount = 0,
     required this.order,
@@ -580,6 +581,10 @@ class ChatSummary {
   int date;
   int unreadCount;
   int lastReadInboxMessageId;
+
+  /// Peer-read frontier for outgoing messages, from the chat object's
+  /// last_read_outbox_message_id. Zero when receipts are hidden.
+  int lastReadOutboxMessageId;
   int unreadMentionCount;
   int unreadReactionCount;
   int order;
@@ -1635,6 +1640,7 @@ abstract final class TDParse {
       date: date,
       unreadCount: unread,
       lastReadInboxMessageId: chat.int64('last_read_inbox_message_id') ?? 0,
+      lastReadOutboxMessageId: chat.int64('last_read_outbox_message_id') ?? 0,
       unreadMentionCount: chat.integer('unread_mention_count') ?? 0,
       unreadReactionCount: chat.integer('unread_reaction_count') ?? 0,
       order: order,
@@ -3938,8 +3944,7 @@ abstract final class TDParse {
         final prizeLabel = switch (prize?.type) {
           'giveawayPrizePremium' =>
             '${prize?.integer('month_count') ?? 0} months Premium',
-          'giveawayPrizeStars' =>
-            '${prize?.int64('star_count') ?? 0} Stars',
+          'giveawayPrizeStars' => '${prize?.int64('star_count') ?? 0} Stars',
           _ => parameters?.str('prize_description') ?? '',
         };
         return MessageSummaryCard(
