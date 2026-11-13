@@ -27,7 +27,11 @@ func (a *App) p3Routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/sticker-packs", a.auth(a.listStickerPacks))
 	mux.HandleFunc("GET /v1/sticker-packs/{id}", a.auth(a.getStickerPack))
 	mux.HandleFunc("POST /v1/sticker-packs", a.auth(a.createStickerPack))
+	mux.HandleFunc("PATCH /v1/sticker-packs/{id}", a.auth(a.editStickerPack))
+	mux.HandleFunc("DELETE /v1/sticker-packs/{id}", a.auth(a.deleteStickerPack))
 	mux.HandleFunc("POST /v1/sticker-packs/{id}/stickers", a.auth(a.addSticker))
+	mux.HandleFunc("PATCH /v1/sticker-packs/{id}/stickers/{sticker}", a.auth(a.patchSticker))
+	mux.HandleFunc("DELETE /v1/sticker-packs/{id}/stickers/{sticker}", a.auth(a.deleteSticker))
 	mux.HandleFunc("GET /v1/sticker-files/{id}", a.auth(a.stickerFile))
 	mux.HandleFunc("GET /v1/stickers", a.auth(a.searchStickers))
 	mux.HandleFunc("GET /v1/me/sticker-favorites", a.auth(a.listFavoriteStickers))
@@ -1114,4 +1118,207 @@ func parseMuteUntil(v any) int64 {
 	default:
 		return 0
 	}
+}
+
+// deleteStickerPack removes a pack the caller owns. Default packs (owner '')
+// belong to the deployment and cannot be deleted by a user.
+func (a *App) deleteStickerPack(w http.ResponseWriter, r *http.Request, p Principal) {
+	pid := r.PathValue("id")
+	e := a.transaction(func(tx *sql.Tx) error {
+		var owner string
+		if e := tx.QueryRow("SELECT owner FROM sticker_packs WHERE id=?", pid).Scan(&owner); e != nil {
+			return ErrForbidden
+		}
+		if owner != p.UserID {
+			return ErrForbidden
+		}
+		// Messages already sent keep their media reference, so the stickers
+		// row can go without orphaning what users see in their history.
+		if _, e := tx.Exec("DELETE FROM sticker_favorites WHERE sticker_id IN (SELECT id FROM stickers WHERE pack_id=?)", pid); e != nil {
+			return e
+		}
+		if _, e := tx.Exec("DELETE FROM stickers WHERE pack_id=?", pid); e != nil {
+			return e
+		}
+		if _, e := tx.Exec("DELETE FROM sticker_packs WHERE id=?", pid); e != nil {
+			return e
+		}
+		return emit(tx, []string{p.UserID}, "sticker.pack.deleted", "", map[string]string{"id": pid})
+	})
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	respond(w, 200, map[string]bool{"ok": true})
+}
+
+// editStickerPack renames a pack the caller owns.
+func (a *App) editStickerPack(w http.ResponseWriter, r *http.Request, p Principal) {
+	pid := r.PathValue("id")
+	var b struct {
+		Title string `json:"title"`
+	}
+	if !decode(w, r, &b) {
+		return
+	}
+	title := strings.TrimSpace(b.Title)
+	if title == "" || len(title) > 100 {
+		fail(w, ErrInvalid)
+		return
+	}
+	e := a.transaction(func(tx *sql.Tx) error {
+		var owner string
+		if e := tx.QueryRow("SELECT owner FROM sticker_packs WHERE id=?", pid).Scan(&owner); e != nil {
+			return ErrForbidden
+		}
+		if owner != p.UserID {
+			return ErrForbidden
+		}
+		if _, e := tx.Exec("UPDATE sticker_packs SET title=? WHERE id=?", title, pid); e != nil {
+			return e
+		}
+		return emit(tx, []string{p.UserID}, "sticker.pack.updated", "", map[string]string{"id": pid, "title": title})
+	})
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	respond(w, 200, map[string]any{"id": pid, "title": title})
+}
+
+// deleteSticker removes one sticker from a pack the caller owns.
+func (a *App) deleteSticker(w http.ResponseWriter, r *http.Request, p Principal) {
+	pid, sid := r.PathValue("id"), r.PathValue("sticker")
+	e := a.transaction(func(tx *sql.Tx) error {
+		var owner string
+		if e := tx.QueryRow("SELECT owner FROM sticker_packs WHERE id=?", pid).Scan(&owner); e != nil {
+			return ErrForbidden
+		}
+		if owner != p.UserID {
+			return ErrForbidden
+		}
+		var exists int
+		if e := tx.QueryRow("SELECT count(*) FROM stickers WHERE id=? AND pack_id=?", sid, pid).Scan(&exists); e != nil || exists != 1 {
+			return ErrForbidden
+		}
+		if _, e := tx.Exec("DELETE FROM sticker_favorites WHERE sticker_id=?", sid); e != nil {
+			return e
+		}
+		if _, e := tx.Exec("DELETE FROM stickers WHERE id=?", sid); e != nil {
+			return e
+		}
+		return emit(tx, []string{p.UserID}, "sticker.deleted", "", map[string]string{"id": sid, "pack_id": pid})
+	})
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	respond(w, 200, map[string]bool{"ok": true})
+}
+
+// patchSticker updates one sticker's emoji and/or position in a pack the
+// caller owns. Positions are rewritten as a dense 0..n-1 sequence so two
+// stickers can never share a slot.
+func (a *App) patchSticker(w http.ResponseWriter, r *http.Request, p Principal) {
+	pid, sid := r.PathValue("id"), r.PathValue("sticker")
+	var b struct {
+		Emoji    *string `json:"emoji"`
+		Position *int    `json:"position"`
+	}
+	if !decode(w, r, &b) {
+		return
+	}
+	if b.Emoji != nil {
+		trimmed := strings.TrimSpace(*b.Emoji)
+		if trimmed == "" || len(trimmed) > 16 {
+			fail(w, ErrInvalid)
+			return
+		}
+		b.Emoji = &trimmed
+	}
+	e := a.transaction(func(tx *sql.Tx) error {
+		var owner string
+		if e := tx.QueryRow("SELECT owner FROM sticker_packs WHERE id=?", pid).Scan(&owner); e != nil {
+			return ErrForbidden
+		}
+		if owner != p.UserID {
+			return ErrForbidden
+		}
+		var exists int
+		if e := tx.QueryRow("SELECT count(*) FROM stickers WHERE id=? AND pack_id=?", sid, pid).Scan(&exists); e != nil || exists != 1 {
+			return ErrForbidden
+		}
+		if b.Emoji != nil {
+			if _, e := tx.Exec("UPDATE stickers SET emoji=? WHERE id=?", *b.Emoji, sid); e != nil {
+				return e
+			}
+		}
+		if b.Position != nil {
+			ids, e := stickerIDsInOrder(tx, pid)
+			if e != nil {
+				return e
+			}
+			moved, e := moveStickerTo(ids, sid, *b.Position)
+			if e != nil {
+				return e
+			}
+			for i, id := range moved {
+				if _, e := tx.Exec("UPDATE stickers SET sort_order=? WHERE id=?", i, id); e != nil {
+					return e
+				}
+			}
+		}
+		return emit(tx, []string{p.UserID}, "sticker.updated", "", map[string]string{"id": sid, "pack_id": pid})
+	})
+	if e != nil {
+		fail(w, e)
+		return
+	}
+	respond(w, 200, map[string]bool{"ok": true})
+}
+
+func stickerIDsInOrder(tx *sql.Tx, pid string) ([]string, error) {
+	rows, e := tx.Query("SELECT id FROM stickers WHERE pack_id=? ORDER BY sort_order,id", pid)
+	if e != nil {
+		return nil, e
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if e = rows.Scan(&id); e != nil {
+			return nil, e
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// moveStickerTo returns ids with sid relocated to position, clamped to the
+// valid range. Moving to the current index is a no-op.
+func moveStickerTo(ids []string, sid string, position int) ([]string, error) {
+	from := -1
+	for i, id := range ids {
+		if id == sid {
+			from = i
+			break
+		}
+	}
+	if from < 0 {
+		return nil, ErrInvalid
+	}
+	if position < 0 {
+		position = 0
+	}
+	if position > len(ids)-1 {
+		position = len(ids) - 1
+	}
+	if position == from {
+		return ids, nil
+	}
+	out := make([]string, 0, len(ids))
+	out = append(out, ids[:from]...)
+	out = append(out, ids[from+1:]...)
+	out = append(out[:position], append([]string{sid}, out[position:]...)...)
+	return out, nil
 }

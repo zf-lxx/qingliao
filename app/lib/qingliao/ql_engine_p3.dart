@@ -1186,7 +1186,10 @@ extension _QlP3 on QlTdEngine {
       path = _inputFilePath(content['video'] is Map ? (content['video'] as Map)['video'] ?? content['video'] : content['video']);
     }
     if (path == null) return null;
-    final uploaded = await _apiOrThrow.uploadFile(path);
+    final uploaded = await _apiOrThrow.uploadFile(
+      path,
+      mimeType: uploadMimeForPath(path),
+    );
     return uploaded['id']?.toString();
   }
 
@@ -1454,5 +1457,106 @@ extension _QlP3 on QlTdEngine {
         _emit({'@type': 'updateChatActiveStories', 'active_stories': await _activeStoriesFor(author)});
       } catch (_) {}
     }());
+  }
+
+    // MARK: - Sticker set editing
+
+  /// Resolves the string sticker id behind a TDLib `file_id` within a pack.
+  ///
+  /// qlPackInt hashes the id, so the mapping is not reversible: the pack is
+  /// listed and matched instead. Returns null when the sticker is not in it.
+  Future<({String packId, String stickerId})?> _stickerRef(
+    String packName,
+    int stickerIntId,
+  ) async {
+    final packId = await _packIdByName(packName);
+    if (packId == null) return null;
+    final detail = await _apiOrThrow.get('/sticker-packs/$packId');
+    for (final raw in (detail['stickers'] as List? ?? const [])) {
+      if (raw is! Map) continue;
+      final sid = raw['id']?.toString() ?? '';
+      if (sid.isEmpty) continue;
+      if (qlPackInt('sticker:$sid') == stickerIntId) {
+        return (packId: packId, stickerId: sid);
+      }
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>> _deleteStickerSet(Map<String, dynamic> r) async {
+    final packId = await _packIdByName(r['name']?.toString() ?? '');
+    if (packId == null) return _error(404, 'Sticker set not found');
+    await _apiOrThrow.delete('/sticker-packs/$packId');
+    return {'@type': 'ok'};
+  }
+
+  Future<Map<String, dynamic>> _setStickerSetTitle(
+    Map<String, dynamic> r,
+  ) async {
+    final title = (r['title']?.toString() ?? '').trim();
+    if (title.isEmpty || title.length > 100) return _error(400, 'TITLE_INVALID');
+    final packId = await _packIdByName(r['name']?.toString() ?? '');
+    if (packId == null) return _error(404, 'Sticker set not found');
+    await _apiOrThrow.patch('/sticker-packs/$packId', {'title': title});
+    return {'@type': 'ok'};
+  }
+
+  Future<Map<String, dynamic>> _removeStickerFromSet(
+    Map<String, dynamic> r,
+  ) async {
+    final name = r['name']?.toString() ?? '';
+    final fileId = QlTdEngine._int(_inputFileId(r['sticker'])) ?? 0;
+    final ref = await _stickerRef(name, fileId);
+    if (ref == null) return _error(404, 'Sticker not found');
+    await _apiOrThrow.delete(
+      '/sticker-packs/${ref.packId}/stickers/${ref.stickerId}',
+    );
+    return {'@type': 'ok'};
+  }
+
+  Future<Map<String, dynamic>> _setStickerPositionInSet(
+    Map<String, dynamic> r,
+  ) async {
+    final name = r['name']?.toString() ?? '';
+    final fileId = QlTdEngine._int(_inputFileId(r['sticker'])) ?? 0;
+    final position = QlTdEngine._int(r['position']) ?? 0;
+    final ref = await _stickerRef(name, fileId);
+    if (ref == null) return _error(404, 'Sticker not found');
+    await _apiOrThrow.patch(
+      '/sticker-packs/${ref.packId}/stickers/${ref.stickerId}',
+      {'position': position},
+    );
+    return {'@type': 'ok'};
+  }
+
+  /// 轻聊 derives a pack's cover from its first sticker, so pointing the
+  /// thumbnail at one of the pack's own stickers needs no server call: the
+  /// choice is already reflected by reordering. An uploaded thumbnail image
+  /// has nowhere to be stored, so it is refused rather than silently dropped.
+  Future<Map<String, dynamic>> _setStickerSetThumbnail(
+    Map<String, dynamic> r,
+  ) async {
+    final thumb = r['thumbnail'];
+    if (thumb is Map && thumb['@type'] == 'inputFileId') {
+      return {'@type': 'ok'};
+    }
+    return _unsupported('setStickerSetThumbnail(uploaded image)');
+  }
+
+  /// TDLib sends either an inputFileId wrapper or a bare id.
+  Object? _inputFileId(Object? sticker) {
+    if (sticker is Map) return sticker['id'];
+    return sticker;
+  }
+
+  /// 轻聊 exposes every pack to every member, so there is no per-user install
+  /// list to write. The call succeeds so the UI's toggle reflects its own
+  /// choice; nothing is persisted because nothing needs to be.
+  Future<Map<String, dynamic>> _changeStickerSet(Map<String, dynamic> r) async {
+    final packId = await _packIdByName(
+      (QlTdEngine._int(r['set_id']) ?? 0).toString(),
+    );
+    if (packId == null) return _error(404, 'Sticker set not found');
+    return {'@type': 'ok'};
   }
 }

@@ -359,6 +359,18 @@ class QlTdEngine {
         return _createNewStickerSet(r);
       case 'addStickerToSet':
         return _addStickerToSet(r);
+      case 'deleteStickerSet':
+        return _deleteStickerSet(r);
+      case 'setStickerSetTitle':
+        return _setStickerSetTitle(r);
+      case 'removeStickerFromSet':
+        return _removeStickerFromSet(r);
+      case 'setStickerPositionInSet':
+        return _setStickerPositionInSet(r);
+      case 'setStickerSetThumbnail':
+        return _setStickerSetThumbnail(r);
+      case 'changeStickerSet':
+        return _changeStickerSet(r);
       case 'createStoryAlbum':
         return _createStoryAlbum(r);
       case 'getStoryAlbumStories':
