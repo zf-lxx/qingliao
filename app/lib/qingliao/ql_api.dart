@@ -137,9 +137,15 @@ class QlApi {
 
   /// Uploads a local file as raw bytes. [conversationId] binds the media to a
   /// conversation (required for message attachments; omitted for avatars).
+  ///
+  /// [mimeType] is what the server uses to classify the media, so callers that
+  /// know the real type (a picked video, a recorded voice note) must pass it.
+  /// Without it the request claims application/octet-stream and the server has
+  /// to guess from the first bytes, which mislabels m4a as video/mp4.
   Future<Map<String, dynamic>> uploadFile(
     String path, {
     String? conversationId,
+    String? mimeType,
     Map<String, String>? headers,
     void Function(int sent, int total)? onProgress,
   }) async {
@@ -149,7 +155,13 @@ class QlApi {
         .postUrl(endpoint('/media'))
         .timeout(const Duration(seconds: 15));
     request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
-    request.headers.contentType = ContentType.binary;
+    final resolvedMime = (mimeType ?? '').trim().toLowerCase();
+    request.headers.contentType = resolvedMime.isEmpty
+        ? ContentType.binary
+        : ContentType.parse(resolvedMime);
+    if (resolvedMime.isNotEmpty) {
+      request.headers.set('X-Media-Mime', resolvedMime);
+    }
     if (conversationId != null) {
       request.headers.set('X-Conversation-ID', conversationId);
     }

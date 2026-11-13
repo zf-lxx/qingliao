@@ -126,6 +126,9 @@ type mediaStoreOpts struct {
 	Waveform    string
 	ThumbnailID string
 	Require     string
+	// DeclaredMIME is the type the client claims for the body. It is only used
+	// when it agrees with the sniffed container family; see storeMedia.
+	DeclaredMIME string
 }
 
 func (a *App) storeMedia(ctx context.Context, r io.Reader, opts mediaStoreOpts) (MediaInfo, error) {
@@ -162,7 +165,17 @@ func (a *App) storeMedia(ctx context.Context, r io.Reader, opts mediaStoreOpts) 
 	if n == 0 {
 		return out, ErrInvalid
 	}
-	mime := sniffMedia(head, http.DetectContentType(head))
+	// A client-supplied MIME wins over sniffing, because sniffing cannot
+	// separate formats that share a container header (an m4a voice memo and an
+	// mp4 video both start with an ftyp box and both sniff as video/mp4).
+	// The declared type never overrides the rejection of active content: the
+	// sniffed type is still checked for html/xml/svg first, and a declaration
+	// is only honoured when it agrees with the container family.
+	sniffed := sniffMedia(head, http.DetectContentType(head))
+	mime := sniffed
+	if opts.DeclaredMIME != "" && validDeclaredMime(opts.DeclaredMIME) && mimeFamilyMatches(opts.DeclaredMIME, sniffed) {
+		mime = strings.ToLower(opts.DeclaredMIME)
+	}
 	if strings.Contains(mime, "html") || strings.Contains(mime, "xml") || strings.Contains(mime, "svg") {
 		return out, ErrInvalid
 	}
@@ -226,6 +239,7 @@ func (a *App) upload(w http.ResponseWriter, r *http.Request, p Principal) {
 		Owner: p.UserID, ChatID: cid, FileName: meta.FileName,
 		Width: meta.Width, Height: meta.Height, DurationMs: meta.DurationMs,
 		Waveform: meta.Waveform, ThumbnailID: meta.ThumbnailID,
+		DeclaredMIME: meta.MIME,
 	})
 	if e != nil {
 		switch {
@@ -301,4 +315,36 @@ func (a *App) deleteMedia(w http.ResponseWriter, r *http.Request, p Principal) {
 		return
 	}
 	respond(w, 200, map[string]bool{"ok": true})
+}
+
+// mimeFamilyMatches reports whether a client-declared MIME may replace the
+// sniffed one.
+//
+// sniffing works on the first bytes only, so it cannot separate formats that
+// share a container: an m4a voice memo and an mp4 video both start with an
+// ftyp box and both sniff as video/mp4, and an mp4 can be audio-only. audio/
+// and video/ are therefore treated as one family for declaration purposes.
+// image/ never mixes with them, so a declaration cannot turn arbitrary bytes
+// into a renderable image.
+func mimeFamilyMatches(declared, sniffed string) bool {
+	declared = strings.ToLower(declared)
+	sniffed = strings.ToLower(sniffed)
+	// An octet-stream sniff carries no family information, so any valid
+	// declaration is an improvement on it. The html/xml/svg rejection above
+	// already ran on the sniffed value for the declared case.
+	if sniffed == "application/octet-stream" {
+		return true
+	}
+	return mimeFamily(declared) == mimeFamily(sniffed)
+}
+
+func mimeFamily(mime string) string {
+	switch {
+	case strings.HasPrefix(mime, "audio/"), strings.HasPrefix(mime, "video/"):
+		return "av"
+	case strings.HasPrefix(mime, "image/"):
+		return "image"
+	default:
+		return mime
+	}
 }

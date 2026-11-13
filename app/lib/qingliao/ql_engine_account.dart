@@ -450,7 +450,10 @@ extension _QlAccount on QlTdEngine {
     if (path == null || path.isEmpty || !File(path).existsSync()) {
       return _error(400, '找不到贴纸文件');
     }
-    final uploaded = await _apiOrThrow.uploadFile(path);
+    final uploaded = await _apiOrThrow.uploadFile(
+      path,
+      mimeType: uploadMimeForPath(path),
+    );
     final mediaId = uploaded['id']?.toString() ?? '';
     if (mediaId.isEmpty) return _error(500, '贴纸上传失败');
     await _apiOrThrow.post('/sticker-packs/$packId/stickers', {

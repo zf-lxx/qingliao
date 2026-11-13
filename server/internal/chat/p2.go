@@ -283,7 +283,29 @@ func parseMediaHeaders(r *http.Request) (MediaInfo, error) {
 		}
 		info.ThumbnailID = thumb
 	}
+	if mime := strings.TrimSpace(r.Header.Get("X-Media-Mime")); mime != "" {
+		if !validDeclaredMime(mime) {
+			return info, ErrInvalid
+		}
+		info.MIME = strings.ToLower(mime)
+	}
 	return info, nil
+}
+
+// validDeclaredMime accepts only the media types the client is allowed to
+// declare. Anything else falls back to server-side sniffing, so a caller
+// cannot label an executable as image/png.
+func validDeclaredMime(mime string) bool {
+	mime = strings.ToLower(mime)
+	if len(mime) > 64 || !strings.Contains(mime, "/") {
+		return false
+	}
+	for _, prefix := range []string{"image/", "audio/", "video/"} {
+		if strings.HasPrefix(mime, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func sanitizeFileName(raw string) string {

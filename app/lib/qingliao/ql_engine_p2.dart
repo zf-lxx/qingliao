@@ -321,7 +321,10 @@ extension on QlTdEngine {
     } else if (photo is Map && photo['@type'] == 'inputChatPhotoStatic') {
       final path = _inputFilePath(photo['photo']);
       if (path == null) return _error(400, 'PHOTO_INVALID');
-      final uploaded = await _apiOrThrow.uploadFile(path);
+      final uploaded = await _apiOrThrow.uploadFile(
+        path,
+        mimeType: uploadMimeForPath(path),
+      );
       mediaId = uploaded['id']?.toString() ?? '';
       if (mediaId.isEmpty) return _error(500, 'upload_failed');
       final size = qlImageSizeOfFile(path);
@@ -1127,6 +1130,18 @@ extension on QlTdEngine {
         'is_pinned': !remove,
       });
     }
+  }
+
+  /// The MIME the server should store for an outgoing attachment.
+  ///
+  /// Returns an empty string when the type is unknown, which leaves the server
+  /// to sniff the bytes as before.
+  String _uploadMimeFor(String kind, String path) {
+    final mime = uploadMimeForPath(path);
+    if (mime.isNotEmpty) return mime;
+    // Voice notes come out of the Android recorder as OGG/Opus, and that
+    // pipeline does not always leave a usable extension.
+    return kind == 'voice' ? 'audio/ogg' : '';
   }
 
   Future<Map<String, String>> _uploadHeadersFor(String kind, String path, Map? content) async {

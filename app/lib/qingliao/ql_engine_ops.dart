@@ -1071,7 +1071,12 @@ extension on QlTdEngine {
       var mediaId = '';
       if (path != null) {
         final headers = await _uploadHeadersFor(kind, path, p.message['content'] as Map?);
-        final uploaded = await _apiOrThrow.uploadFile(path, conversationId: c.id, headers: headers);
+        final uploaded = await _apiOrThrow.uploadFile(
+          path,
+          conversationId: c.id,
+          mimeType: _uploadMimeFor(kind, path),
+          headers: headers,
+        );
         mediaId = uploaded['id']?.toString() ?? '';
         if (mediaId.isEmpty) throw const QlApiException(500, 'upload_failed');
         // Keep the local copy: no need to download what we just sent.
@@ -1438,7 +1443,10 @@ extension on QlTdEngine {
       return _unsupported('setProfilePhoto($type)');
     }
     if (path == null) return _error(400, 'PHOTO_INVALID');
-    final uploaded = await _apiOrThrow.uploadFile(path);
+    final uploaded = await _apiOrThrow.uploadFile(
+      path,
+      mimeType: uploadMimeForPath(path),
+    );
     final mediaId = uploaded['id']?.toString() ?? '';
     if (mediaId.isEmpty) return _error(500, 'upload_failed');
     final mime = uploaded['mime']?.toString() ?? guessAvatarMimeFromPath(path);
