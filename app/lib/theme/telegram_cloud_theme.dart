@@ -1063,17 +1063,20 @@ const builtInTelegramCloudThemes = <TelegramCloudTheme>[
     accentColorValue: 0x168ACD,
     outgoingColors: [0xE1FFC7],
     palette: {
-      'list.plainBg': 0xFFFFFF,
+      // Telegram lists the chat list on a lightly tinted surface and keeps
+      // white for raised blocks. Using pure white for both made this theme
+      // indistinguishable from the app default.
+      'list.plainBg': 0xF0F4F8,
       'list.itemBlocksBg': 0xFFFFFF,
-      'list.blocksBg': 0xF2F2F7,
+      'list.blocksBg': 0xE8EEF4,
       'list.primaryText': 0x000000,
       'list.secondaryText': 0x8E8E93,
       'list.accent': 0x168ACD,
-      'root.navBar.opaqueBackground': 0xF7F7F7,
+      'root.navBar.opaqueBackground': 0xF7FAFC,
       'chat.message.incoming.bubble.withWp.bg': 0xFFFFFF,
       'chat.message.incoming.primaryText': 0x171717,
       'chat.message.outgoing.primaryText': 0x171717,
-      'chats_pinnedOverlay': 0xFFFFFF,
+      'chats_pinnedOverlay': 0xEDF3F8,
     },
   ),
   TelegramCloudTheme(
@@ -1083,17 +1086,19 @@ const builtInTelegramCloudThemes = <TelegramCloudTheme>[
     accentColorValue: 0x2481CC,
     outgoingColors: [0xD8F3FF],
     palette: {
-      'list.plainBg': 0xFFFFFF,
+      // Telegram's Day theme is a cool grey-blue, not plain white; see the
+      // note on builtin:classic for why the difference matters.
+      'list.plainBg': 0xEBF0F5,
       'list.itemBlocksBg': 0xFFFFFF,
-      'list.blocksBg': 0xF2F2F7,
+      'list.blocksBg': 0xE3EAF1,
       'list.primaryText': 0x000000,
       'list.secondaryText': 0x8E8E93,
       'list.accent': 0x2481CC,
-      'root.navBar.opaqueBackground': 0xFFFFFF,
+      'root.navBar.opaqueBackground': 0xF4F8FB,
       'chat.message.incoming.bubble.withWp.bg': 0xFFFFFF,
       'chat.message.incoming.primaryText': 0x171717,
       'chat.message.outgoing.primaryText': 0x171717,
-      'chats_pinnedOverlay': 0xFFFFFF,
+      'chats_pinnedOverlay': 0xE6EDF4,
     },
   ),
   TelegramCloudTheme(
