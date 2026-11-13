@@ -31,7 +31,7 @@ type Config struct {
 }
 
 func DefaultConfig() Config {
-	return Config{ReadReceiptsEnabled: true, StorageDriver: "local", Addr: "127.0.0.1:8088", DataDir: "./data", MediaQuota: 5 << 30, MaxFile: 100 << 20, SessionTTL: 30 * 24 * time.Hour, XiaomiURL: "https://api.xmpush.xiaomi.com/v3/message/regid"}
+	return Config{ReadReceiptsEnabled: true, StorageDriver: "local", Addr: "127.0.0.1:8088", DataDir: "./data", MediaQuota: 2 << 30, MaxFile: 80 << 20, SessionTTL: 30 * 24 * time.Hour, XiaomiURL: "https://api.xmpush.xiaomi.com/v3/message/regid"}
 }
 
 type App struct {

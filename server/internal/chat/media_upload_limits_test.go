@@ -44,18 +44,18 @@ func TestUploadRejectsOversizedVideo(t *testing.T) {
 	f := setup(t)
 	cid := direct(t, f)
 
-	if f.config.MaxFile != 100<<20 {
+	if f.config.MaxFile != 80<<20 {
 		t.Fatalf("single-file cap changed to %d; update the client hint", f.config.MaxFile)
 	}
 
-	// 120 MB of mp4 — a long clip straight off a phone, above the raised cap.
-	body := append(mp4Header(), bytes.Repeat([]byte{0}, 120<<20)...)
+	// 90 MB of mp4 — above the raised cap.
+	body := append(mp4Header(), bytes.Repeat([]byte{0}, 90<<20)...)
 	code, out := uploadRaw(t, f, f.at, cid, body)
 	// MaxBytesReader truncates at the cap, so the failure surfaces from the
 	// storage write as file_too_large_or_upload_failed rather than the cleaner
 	// file_too_large branch.
 	if code != 413 {
-		t.Fatalf("120MB mp4 got %d want 413: %v", code, out)
+		t.Fatalf("90MB mp4 got %d want 413: %v", code, out)
 	}
 	if out["error"] != "file_too_large_or_upload_failed" {
 		t.Fatalf("error %v", out["error"])
