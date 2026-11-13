@@ -80,7 +80,6 @@ class _EditProfileViewState extends State<EditProfileView> {
   List<ProfilePhotoEntry> _photos = const [];
   int _currentPhotoId = 0;
   int _publicPhotoId = 0;
-  bool _isPremium = false;
   bool _isBotApi = false;
   bool _loading = true;
   bool _openedAvatarPicker = false;
@@ -105,7 +104,6 @@ class _EditProfileViewState extends State<EditProfileView> {
       _backgroundCustomEmojiId = me.int64('background_custom_emoji_id') ?? 0;
       _profileBackgroundCustomEmojiId =
           me.int64('profile_background_custom_emoji_id') ?? 0;
-      _isPremium = me.boolean('is_premium') ?? false;
       _isBotApi = await _client.activeAccountUsesBotApi();
       _photo = TDParse.smallPhoto(me.obj('profile_photo'));
       if (uid != null) {

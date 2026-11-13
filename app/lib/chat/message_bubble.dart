@@ -1360,18 +1360,13 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
     return true;
   }
 
-  String get _stampTextSource {
-    if (_translationReplacesOriginalFor(message)) {
-      return message.translationText ?? '';
-    }
-    return message.text;
-  }
-
   /// Time and delivery sit inside the text-bubble stamp; skip the overlay so
   /// the slightly wider double tick does not cover the clock.
+  ///
+  /// Emoji-only bubbles take this path too: the stamp must stay inside the
+  /// bubble for them as well, otherwise the tick renders outside the shape.
   bool get _stampCarriesMeta =>
-      _embedsBubbleStamp &&
-      formatBubbleStamp(_messageStampDate).isNotEmpty;
+      _embedsBubbleStamp && formatBubbleStamp(_messageStampDate).isNotEmpty;
 
   DateTime get _messageStampDate =>
       DateTime.fromMillisecondsSinceEpoch(message.date * 1000);

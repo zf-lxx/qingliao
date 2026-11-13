@@ -1368,25 +1368,37 @@ class ChatWallpaperController extends ChangeNotifier {
       throw UnsupportedError('Telegram is not connected');
     }
     if (wallpaper == null) {
-      await queryAccount({
-        '@type': 'deleteDefaultBackground',
-        'for_dark_theme': dark,
-      });
+      try {
+        await queryAccount({
+          '@type': 'deleteDefaultBackground',
+          'for_dark_theme': dark,
+        });
+      } on Object catch (error) {
+        // 轻聊 keeps no server-side default background; see applyWallpaper.
+        if (!_isUnsupportedMethod(error)) rethrow;
+      }
       _defaultBackgrounds[_globalId(dark)] = null;
     } else {
       if (wallpaper.kind == ChatWallpaperKind.theme) {
         throw UnsupportedError('Chat themes cannot be global wallpapers');
       }
       final payload = await _wallpaperRequestPayload(wallpaper);
-      final response = await queryAccount({
-        '@type': 'setDefaultBackground',
-        'background': payload.background,
-        'type': payload.type,
-        'for_dark_theme': dark,
-      });
-      _defaultBackgrounds[_globalId(dark)] =
-          _parseBackground(response, dimming: payload.darkThemeDimming) ??
-          wallpaper;
+      try {
+        final response = await queryAccount({
+          '@type': 'setDefaultBackground',
+          'background': payload.background,
+          'type': payload.type,
+          'for_dark_theme': dark,
+        });
+        _defaultBackgrounds[_globalId(dark)] =
+            _parseBackground(response, dimming: payload.darkThemeDimming) ??
+            wallpaper;
+      } on Object catch (error) {
+        // 轻聊 stores the default background on-device only. Keep the chosen
+        // value so the appearance screen and the chat list agree right away.
+        if (!_isUnsupportedMethod(error)) rethrow;
+        _defaultBackgrounds[_globalId(dark)] = wallpaper;
+      }
       await _rememberWallpaper(
         _defaultBackgrounds[_globalId(dark)] ?? wallpaper,
       );
@@ -1534,22 +1546,33 @@ class ChatWallpaperController extends ChangeNotifier {
     if (!access.allowed) {
       throw StateError('Chat boost level ${access.requiredLevel} is required');
     }
-    if (wallpaper == null) {
-      await _query({
-        '@type': 'deleteChatBackground',
-        'chat_id': chatId,
-        'restore_previous': false,
-      });
-    } else {
-      final payload = await _wallpaperRequestPayload(wallpaper);
-      await _query({
-        '@type': 'setChatBackground',
-        'chat_id': chatId,
-        'background': payload.background,
-        'type': payload.type,
-        'dark_theme_dimming': payload.darkThemeDimming,
-        'only_for_self': onlyForSelf,
-      });
+    try {
+      if (wallpaper == null) {
+        await _query({
+          '@type': 'deleteChatBackground',
+          'chat_id': chatId,
+          'restore_previous': false,
+        });
+      } else {
+        final payload = await _wallpaperRequestPayload(wallpaper);
+        await _query({
+          '@type': 'setChatBackground',
+          'chat_id': chatId,
+          'background': payload.background,
+          'type': payload.type,
+          'dark_theme_dimming': payload.darkThemeDimming,
+          'only_for_self': onlyForSelf,
+        });
+      }
+    } on Object catch (error) {
+      // 轻聊 has no server-side chat wallpaper store: the adapter answers
+      // setChatBackground / deleteChatBackground with QL_UNSUPPORTED. Fall
+      // back to the on-device store so choosing a background still works
+      // instead of surfacing a save failure. Any other error is a real
+      // failure and must keep propagating.
+      if (!_isUnsupportedMethod(error)) rethrow;
+      await _applyLocally(chatId, wallpaper);
+      return;
     }
     // A successful mutation is authoritative. TDLib can briefly return the old
     // chat from getChat immediately afterwards, which used to overwrite the
@@ -1561,6 +1584,11 @@ class ChatWallpaperController extends ChangeNotifier {
     if (wallpaper != null) await _rememberWallpaper(wallpaper);
     notifyListeners();
   }
+
+  /// True when a query failed only because the backend has no such method.
+  static bool _isUnsupportedMethod(Object error) => error is TdError
+      ? error.message.contains('QL_UNSUPPORTED')
+      : error.toString().contains('QL_UNSUPPORTED');
 
   Future<void> applyTheme(
     int chatId,
@@ -1576,55 +1604,33 @@ class ChatWallpaperController extends ChangeNotifier {
     final id = _id(chatId);
     final isGroup = _chatTypes[id] == 'chatTypeSupergroup';
     if (isGroup) {
-      final selection = themeName == null || themeName.isEmpty
-          ? null
-          : ChatWallpaper.theme(themeName, themeKind: kind);
-      final access = accessFor(chatId, selection);
-      if (!access.allowed) {
-        throw StateError(
-          'Chat boost level ${access.requiredLevel} is required',
-        );
-      }
-      if (selection == null) {
-        await _query({
-          '@type': 'deleteChatBackground',
-          'chat_id': chatId,
-          'restore_previous': false,
-        });
-        _serverBackgrounds[id] = null;
-      } else {
-        await _query({
-          '@type': 'setChatBackground',
-          'chat_id': chatId,
-          'background': null,
-          'type': {'@type': 'backgroundTypeChatTheme', 'theme_name': themeName},
-          'dark_theme_dimming': 0,
-          'only_for_self': false,
-        });
-        _serverBackgrounds[id] = ChatWallpaper.telegram(
-          backgroundId: 0,
-          remoteType: 'chatTheme',
-          themeName: themeName,
-        );
-      }
-      _themeNames[id] = null;
-      _themeKinds.remove(id);
-      unawaited(_discardLocalSilently(chatId, notify: false));
-      notifyListeners();
-      return;
+      // Group chat themes are a Telegram-boost feature backed by the server
+      // wallpaper store, which 轻聊 does not implement. Reject before any
+      // query so the caller sees a clear reason rather than QL_UNSUPPORTED.
+      throw UnsupportedError('Chat themes are unavailable in 轻聊');
     }
-    await _query({
-      '@type': 'setChatTheme',
-      'chat_id': chatId,
-      'theme': themeName == null || themeName.isEmpty
-          ? null
-          : {
-              '@type': kind == ChatThemeKind.gift
-                  ? 'inputChatThemeGift'
-                  : 'inputChatThemeEmoji',
-              'name': themeName,
-            },
-    });
+    try {
+      await _query({
+        '@type': 'setChatTheme',
+        'chat_id': chatId,
+        'theme': themeName == null || themeName.isEmpty
+            ? null
+            : {
+                '@type': kind == ChatThemeKind.gift
+                    ? 'inputChatThemeGift'
+                    : 'inputChatThemeEmoji',
+                'name': themeName,
+              },
+      });
+    } on Object catch (error) {
+      // 轻聊 ships no emoji theme catalogue, so the adapter rejects
+      // setChatTheme. Surface that as a domain-level UnsupportedError so
+      // callers can hide the entry instead of reporting a generic save error.
+      if (_isUnsupportedMethod(error)) {
+        throw UnsupportedError('Chat themes are unavailable in 轻聊');
+      }
+      rethrow;
+    }
     // setChatTheme returning successfully is the authoritative save result.
     // Do not turn a successful save into an error because getChat is briefly
     // stale/unavailable or local preference cleanup fails afterwards.
