@@ -76,6 +76,7 @@ import 'desktop_composer_height.dart';
 import 'desktop_voice_message_controller.dart';
 import 'desktop_voice_waveform.dart';
 import 'emoji_panel.dart';
+import 'composer_inset.dart';
 import 'emoji_panel_layout.dart';
 import 'emoji_recents_store.dart';
 import 'emoji_store.dart';
@@ -3931,6 +3932,14 @@ class _ChatInputBarState extends State<ChatInputBar>
         _pendingClipboardAttachments.isEmpty &&
         _voiceDraft == null;
     final bottomSafeArea = MediaQuery.paddingOf(context).bottom;
+    // The chat Scaffold does not resize for the keyboard (that would shift the
+    // whole page, and on a cold first open it could do so before the transcript
+    // had measured itself). The composer therefore owns the bottom inset: it
+    // takes whichever is larger, the system gesture area or the keyboard.
+    final bottomInset = composerBottomInset(
+      safeArea: bottomSafeArea,
+      keyboard: MediaQuery.viewInsetsOf(context).bottom,
+    );
     final mediaPanelVisible =
         _panel == _Panel.emoji || _panel == _Panel.sticker;
     final simpleComposer = !desktopComposer && widget.simpleMode;
@@ -3944,11 +3953,18 @@ class _ChatInputBarState extends State<ChatInputBar>
       child: Stack(
         alignment: Alignment.bottomCenter,
         children: [
-          SafeArea(
-            top: false,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
+          MediaQuery.removeViewInsets(
+            context: context,
+            removeBottom: true,
+            child: SafeArea(
+              top: false,
+              // The keyboard inset was just removed, so SafeArea must not also
+              // reserve the gesture area: the column below adds bottomInset,
+              // which already accounts for both.
+              bottom: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
                 if (editingMessage != null)
                   _editBanner(editingMessage)
                 else
@@ -4008,7 +4024,16 @@ class _ChatInputBarState extends State<ChatInputBar>
                   _mediaPanel(),
                 if (editingMessage == null && _panel == _Panel.voice)
                   _voicePanel(),
+                // Reserve the keyboard or the gesture area beneath the last
+                // row. When the IME is open this keeps the field above it; the
+                // panels themselves already close on focus.
+                if (composerReservesBottomInset(
+                  bottomInset: bottomInset,
+                  panelSurfaceVisible: panelSurfaceVisible,
+                ))
+                  SizedBox(height: bottomInset),
               ],
+            ),
             ),
           ),
           if (desktopComposer)
@@ -4025,12 +4050,12 @@ class _ChatInputBarState extends State<ChatInputBar>
           // cloud-theme colors identical above and below the home indicator.
           // The overlay extends a docked panel through the home indicator, so
           // it paints that panel's surface, not a second, recessed colour.
-          if (panelSurfaceVisible && bottomSafeArea > 0)
+          if (panelSurfaceVisible && bottomInset > 0)
             Positioned(
               left: 0,
               right: 0,
               bottom: 0,
-              height: bottomSafeArea,
+              height: bottomInset,
               child: IgnorePointer(
                 child: ColoredBox(
                   key: const ValueKey('chat-input-panel-safe-area-background'),

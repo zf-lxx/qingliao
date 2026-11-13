@@ -7468,7 +7468,12 @@ class _ChatViewState extends State<ChatView> {
           _withBackSwipe(
             Scaffold(
               backgroundColor: c.inputBarBackground,
-              resizeToAvoidBottomInset: true,
+              // Telegram does not resize the chat page for the IME: the whole
+              // page shifting on open (and, on a cold first open, doing it a
+              // frame late) is exactly the jump this avoids. The composer
+              // reserves the keyboard inset itself, and the transcript simply
+              // loses the space, so nothing above it moves.
+              resizeToAvoidBottomInset: false,
               body: ChatWallpaperBackground(
                 wallpaper: _effectiveWallpaper(),
                 fallbackColor: c.chatBackground,
