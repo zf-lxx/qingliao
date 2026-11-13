@@ -1497,11 +1497,11 @@ extension on QlTdEngine {
       ..mime = mime
       ..localPath = path
       ..size = await File(path).length();
-    final me = _users[_myId];
-    if (me != null) {
-      me['avatar_media_id'] = mediaId;
-      me['avatar_mime'] = mime;
-    }
+    // Do not write the new avatar into _users here: _patchMe -> _rememberUser
+    // compares the stored record against the server response to decide whether
+    // to emit updateUser. Pre-seeding the cache made that comparison a no-op,
+    // so the profile screen never learned about its own new photo until the
+    // app restarted. The local file entry above is enough for instant display.
     return _patchMe(avatar: mediaId);
   }
 

@@ -1730,6 +1730,24 @@ abstract class _MainRootViewState<T extends StatefulWidget> extends State<T> {
   /// return-to-latest arrow does.
   void _showMessageChat(ChatListSelection next) {
     final current = _selectedMessageChat;
+    // The compact (phone) layout pushes a full-screen chat route; the split
+    // layout renders the conversation as the detail pane. Only the split case
+    // may record the active selection: leaving it set on a phone made the chat
+    // list tint the row the user just left, and that tint survived until the
+    // app restarted.
+    if (!_usesSplitSelection(context)) {
+      pushAppChatRoute<void>(
+        context,
+        AppChatPageRoute<void>(
+          builder: (_) => ChatView(
+            chatId: next.chatId,
+            title: next.title,
+            initialMessageId: next.initialMessageId,
+          ),
+        ),
+      );
+      return;
+    }
     // A jump target always means "go to that message", so only a plain
     // request for the conversation already on screen is read as "show me the
     // newest message".
