@@ -888,6 +888,46 @@ extension on QlTdEngine {
             'caption': _formatted(plain, _tdEntities(plain, null)),
           },
         );
+      case 'inputMessageAudio':
+        // 轻聊 stores a music file as a document: the backend has no audio
+        // kind, and a document already carries the filename and MIME the
+        // player needs. Without this branch every picked audio file failed
+        // with MESSAGE_EMPTY.
+        final path = _inputFilePath(input['audio']);
+        if (path == null) return null;
+        final caption = captionOf('caption');
+        final plain = caption?['text']?.toString() ?? '';
+        final audio = input['audio'] is Map
+            ? Map<String, dynamic>.from(input['audio'] as Map)
+            : const <String, dynamic>{};
+        final local = _localFile(path)..kind = 'file';
+        final fallbackName = path.split(Platform.pathSeparator).last;
+        final title = audio['title']?.toString().trim() ?? '';
+        final performer = audio['performer']?.toString().trim() ?? '';
+        // Keep the track metadata visible in the file card instead of
+        // discarding what the picker already knows.
+        final name = title.isEmpty
+            ? fallbackName
+            : (performer.isEmpty ? title : '$performer - $title');
+        return (
+          kind: 'file',
+          text: plain,
+          entities: _backendEntities(caption),
+          path: path,
+          content: {
+            '@type': 'messageAudio',
+            'audio': {
+              '@type': 'audio',
+              'duration': QlTdEngine._int(audio['duration']) ?? 0,
+              'title': title.isEmpty ? fallbackName : title,
+              'performer': performer,
+              'file_name': name,
+              'mime_type': uploadMimeForPath(path),
+              'audio': _tdFile(local),
+            },
+            'caption': _formatted(plain, _tdEntities(plain, null)),
+          },
+        );
       case 'inputMessageVoiceNote':
         final path = _inputFilePath(input['voice_note']);
         if (path == null) return null;
@@ -969,7 +1009,7 @@ extension on QlTdEngine {
     }
     final draft = _draftContent(Map<String, dynamic>.from(input));
     if (draft == null) {
-      if (const {'inputMessageText', 'inputMessagePhoto', 'inputMessageDocument', 'inputMessageVoiceNote', 'inputMessageVideo'}.contains(type)) {
+      if (const {'inputMessageText', 'inputMessagePhoto', 'inputMessageDocument', 'inputMessageVoiceNote', 'inputMessageVideo', 'inputMessageAudio'}.contains(type)) {
         return _error(400, 'MESSAGE_EMPTY');
       }
       return _unsupported('sendMessage($type)');

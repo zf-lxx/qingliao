@@ -410,20 +410,66 @@ func (a *App) profile(w http.ResponseWriter, r *http.Request, p Principal) {
 		fail(w, ErrInvalid)
 		return
 	}
+	var avatarMIME string
 	if b.Avatar != "" {
 		var mime string
 		if e := a.DB.QueryRow("SELECT mime FROM media WHERE id=? AND owner=?", b.Avatar, p.UserID).Scan(&mime); e != nil || !isProfileAvatarMIME(mime) {
 			fail(w, ErrForbidden)
 			return
 		}
+		avatarMIME = mime
 	}
-	_, e := a.DB.Exec("UPDATE users SET name=?,avatar=? WHERE id=?", b.Name, b.Avatar, p.UserID)
+	var e error
+	e = a.transaction(func(tx *sql.Tx) error {
+		if _, e := tx.Exec("UPDATE users SET name=?,avatar=? WHERE id=?", b.Name, b.Avatar, p.UserID); e != nil {
+			return e
+		}
+		// Everyone who shares a conversation sees the old name and avatar in
+		// their chat list until they refetch. Broadcast the change so peers
+		// update without reopening the app.
+		audience, e := profileAudience(tx, p.UserID)
+		if e != nil {
+			return e
+		}
+		return emit(tx, audience, "user.updated", "", map[string]any{
+			"id":              p.UserID,
+			"display_name":    b.Name,
+			"avatar_media_id": b.Avatar,
+			"avatar_mime":     avatarMIME,
+		})
+	})
 	if e != nil {
 		fail(w, e)
 		return
 	}
 	u, _ := a.getUser(p.UserID)
 	respond(w, 200, u)
+}
+
+// profileAudience lists the user and everyone sharing a conversation with
+// them, so a profile edit reaches every client that can render it.
+func profileAudience(tx *sql.Tx, uid string) ([]string, error) {
+	rows, e := tx.Query(
+		`SELECT DISTINCT m.user_id FROM members m WHERE m.chat_id IN (SELECT chat_id FROM members WHERE user_id=?)`,
+		uid,
+	)
+	if e != nil {
+		return nil, e
+	}
+	defer rows.Close()
+	seen := map[string]bool{uid: true}
+	out := []string{uid}
+	for rows.Next() {
+		var id string
+		if e = rows.Scan(&id); e != nil {
+			return nil, e
+		}
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out, rows.Err()
 }
 func (a *App) users(w http.ResponseWriter, r *http.Request, p Principal) {
 	q := r.URL.Query().Get("q")

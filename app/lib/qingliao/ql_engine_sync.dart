@@ -519,6 +519,26 @@ extension on QlTdEngine {
       case 'folder.updated':
       case 'folder.deleted':
         unawaited(_refreshFolders());
+      case 'user.updated':
+          // A peer renamed themselves or changed their avatar. _rememberUser
+          // emits updateUser plus updateChatTitle/updateChatPhoto for every
+          // direct chat, which is what the list and the chat header listen to.
+          final uid = data['id']?.toString() ?? '';
+          if (uid.isNotEmpty) {
+            final current = Map<String, dynamic>.from(
+              _users[uid] ?? {'id': uid},
+            );
+            if (data['display_name'] != null) {
+              current['display_name'] = data['display_name'];
+            }
+            if (data['avatar_media_id'] != null) {
+              current['avatar_media_id'] = data['avatar_media_id'];
+            }
+            if (data['avatar_mime'] != null) {
+              current['avatar_mime'] = data['avatar_mime'];
+            }
+            _rememberUser(current);
+          }
       case 'block.updated':
         final uid = data['user_id']?.toString() ?? '';
         if (uid.isNotEmpty) {

@@ -5,6 +5,7 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"strings"
 	"testing"
 )
 
@@ -177,4 +178,72 @@ func TestStickerEditRequiresOwnership(t *testing.T) {
 	req(t, f.s, "PATCH", "/v1/sticker-packs/"+pid+"/stickers/"+sid, f.bt,
 		map[string]any{"emoji": "🔥"}, 403)
 	req(t, f.s, "DELETE", "/v1/sticker-packs/"+pid+"/stickers/"+sid, f.bt, nil, 403)
+}
+
+// A profile edit has to reach peers: without the broadcast they keep showing
+// the old name and avatar until the app refetches everything.
+func TestProfileChangeBroadcastsToPeers(t *testing.T) {
+	f := setup(t)
+	direct(t, f)
+
+	// Events are delivered over WebSocket and stored per user; read the store
+	// directly so the assertion is about what peers would receive.
+	countProfileEvents := func(uid string) int {
+		var n int
+		f.a.DB.QueryRow(
+			"SELECT count(*) FROM events WHERE user_id=? AND type='user.updated'",
+			uid,
+		).Scan(&n)
+		return n
+	}
+
+	req(t, f.s, "PATCH", "/v1/me", f.at, map[string]any{
+		"display_name":    "管理员改名",
+		"avatar_media_id": "",
+	}, 200)
+
+	if n := countProfileEvents(f.admin.UserID); n != 1 {
+		t.Fatalf("author got %d user.updated events, want 1", n)
+	}
+	if n := countProfileEvents(f.bob.UserID); n != 1 {
+		t.Fatalf("peer got %d user.updated events, want 1", n)
+	}
+
+	var payload string
+	f.a.DB.QueryRow(
+		"SELECT data FROM events WHERE user_id=? AND type='user.updated'",
+		f.bob.UserID,
+	).Scan(&payload)
+	if !strings.Contains(payload, "管理员改名") {
+		t.Fatalf("payload %s", payload)
+	}
+	if !strings.Contains(payload, f.admin.UserID) {
+		t.Fatalf("payload missing the author id: %s", payload)
+	}
+}
+
+// A user with no shared conversations only notifies themselves.
+func TestProfileChangeReachesOnlySelfWithoutPeers(t *testing.T) {
+	f := setup(t)
+	// bob has a chat with admin, so pick eve who shares nothing with admin.
+	req(t, f.s, "PATCH", "/v1/me", f.et, map[string]any{
+		"display_name":    "eve 改名",
+		"avatar_media_id": "",
+	}, 200)
+
+	var n int
+	f.a.DB.QueryRow(
+		"SELECT count(*) FROM events WHERE user_id=? AND type='user.updated'",
+		f.admin.UserID,
+	).Scan(&n)
+	if n != 0 {
+		t.Fatalf("admin heard about an unrelated profile change (%d events)", n)
+	}
+	f.a.DB.QueryRow(
+		"SELECT count(*) FROM events WHERE user_id=? AND type='user.updated'",
+		f.eve.UserID,
+	).Scan(&n)
+	if n != 1 {
+		t.Fatalf("author got %d events, want 1", n)
+	}
 }
