@@ -1,0 +1,81 @@
+name: Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - wip/0.4.10
+    paths:
+      - "app/**"
+      - ".github/workflows/android-apk.yml"
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.44.2"
+          channel: stable
+          cache: true
+
+      - name: Cap Gradle memory
+        run: |
+          sed -i 's|^org.gradle.jvmargs=.*|org.gradle.jvmargs=-Xmx4G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256m -Dfile.encoding=UTF-8|' app/android/gradle.properties
+
+      - name: Restore Gradle wrapper
+        working-directory: app/android
+        run: |
+          set -euo pipefail
+          if [ ! -x ./gradlew ]; then
+            tmp=$(mktemp -d)
+            curl -fsSL -o "$tmp/gradle.zip" https://services.gradle.org/distributions/gradle-9.1.0-bin.zip
+            unzip -q "$tmp/gradle.zip" -d "$tmp"
+            "$tmp"/gradle-9.1.0/bin/gradle wrapper --gradle-version 9.1.0 --distribution-type all
+            rm -rf "$tmp"
+          fi
+          test -x ./gradlew
+
+      - name: Release signing, if a keystore secret is set
+        working-directory: app/android
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${ANDROID_KEYSTORE_BASE64}" ]; then
+            echo "No ANDROID_KEYSTORE_BASE64; release APK will use the debug keystore."
+            exit 0
+          fi
+          : "${ANDROID_KEY_ALIAS:?ANDROID_KEY_ALIAS is required with the keystore}"
+          : "${ANDROID_KEYSTORE_PASSWORD:?ANDROID_KEYSTORE_PASSWORD is required with the keystore}"
+          : "${ANDROID_KEY_PASSWORD:?ANDROID_KEY_PASSWORD is required with the keystore}"
+          umask 077
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 -d > app/upload-keystore.jks
+          {
+            printf 'storePassword=%s\n' "$ANDROID_KEYSTORE_PASSWORD"
+            printf 'keyPassword=%s\n' "$ANDROID_KEY_PASSWORD"
+            printf 'keyAlias=%s\n' "$ANDROID_KEY_ALIAS"
+            printf 'storeFile=%s\n' "upload-keystore.jks"
+          } > key.properties
+
+      - name: Build arm64 release APK
+        working-directory: app
+        run: flutter build apk --release --target-platform android-arm64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qingliao-${{ github.sha }}-arm64
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14

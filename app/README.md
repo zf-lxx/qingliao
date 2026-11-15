@@ -9,6 +9,10 @@ source ~/sdk/env.sh
 flutter build apk --release --target-platform android-arm64
 ```
 
+推到 `wip/0.4.10` 且改动了 `app/` 时，GitHub Actions（`.github/workflows/android-apk.yml`）也会打这个包，可在该次运行的 Artifacts 里下载。Actions 页也能手动运行。
+
+没有仓库密钥时，包用调试签名，和本机没有 `android/key.properties` 时一样。要打正式签名，在仓库 Settings → Secrets 里放这四项：`ANDROID_KEYSTORE_BASE64`（keystore 文件的 base64）、`ANDROID_KEY_ALIAS`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_PASSWORD`。
+
 - 应用名：轻聊
 - applicationId：`xyz.qingliao.app`（可覆盖安装既有 0.x）
 - 无 `android/key.properties` 时使用 `~/.android/debug.keystore`，与此前内测包一致
