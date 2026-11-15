@@ -35,6 +35,8 @@ jobs:
         working-directory: app/android
         run: |
           set -euo pipefail
+          # settings.gradle.kts reads this before any Gradle task, including wrapper.
+          printf 'flutter.sdk=%s\nsdk.dir=%s\n' "$FLUTTER_ROOT" "${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}" > local.properties
           if [ ! -x ./gradlew ]; then
             tmp=$(mktemp -d)
             curl -fsSL -o "$tmp/gradle.zip" https://services.gradle.org/distributions/gradle-9.1.0-bin.zip
