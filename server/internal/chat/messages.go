@@ -68,7 +68,32 @@ func (a *App) CreateChat(p Principal, kind, title string, ids []string) (string,
 			e := tx.QueryRow("SELECT id FROM chats WHERE pair=?", pair).Scan(&old)
 			if e == nil {
 				cid = old
-				return nil
+				var seq int64
+				if e = tx.QueryRow("SELECT last_seq FROM chats WHERE id=?", cid).Scan(&seq); e != nil {
+					return e
+				}
+				added := false
+				for _, u := range users {
+					var n int
+					if e = tx.QueryRow("SELECT count(*) FROM members WHERE chat_id=? AND user_id=?", cid, u).Scan(&n); e != nil {
+						return e
+					}
+					if n > 0 {
+						continue
+					}
+					if _, e = tx.Exec("INSERT INTO members(chat_id,user_id,role,joined_seq,read_seq,joined_at) VALUES(?,?,'member',?,?,unixepoch())", cid, u, seq, seq); e != nil {
+						return e
+					}
+					added = true
+				}
+				if !added {
+					return nil
+				}
+				mems, e := members(tx, cid)
+				if e != nil {
+					return e
+				}
+				return emit(tx, mems, "conversation.created", cid, map[string]any{"id": cid, "kind": kind, "title": "", "members": mems})
 			}
 			if !errors.Is(e, sql.ErrNoRows) {
 				return e

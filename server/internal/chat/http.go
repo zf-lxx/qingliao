@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 var handleRE = regexp.MustCompile(`^[a-zA-Z0-9_]{3,32}$`)
@@ -77,6 +78,7 @@ func (a *App) Handler() http.Handler {
 	a.securityRoutes(mux)
 	a.albumRoutes(mux)
 	a.botManageRoutes(mux)
+	a.gapRoutes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if e := a.Ping(r.Context()); e != nil {
 			respond(w, 503, map[string]bool{"ok": false})
@@ -392,7 +394,7 @@ func isProfileAvatarMIME(mime string) bool {
 
 func (a *App) getUser(uid string) (User, error) {
 	var u User
-	e := a.DB.QueryRow("SELECT users.id,users.handle,users.name,users.avatar,users.last_seen,COALESCE(media.mime,'') FROM users LEFT JOIN media ON media.id=users.avatar WHERE users.id=?", uid).Scan(&u.ID, &u.Handle, &u.Name, &u.Avatar, &u.LastSeen, &u.AvatarMIME)
+	e := a.DB.QueryRow("SELECT users.id,users.handle,users.name,users.avatar,users.last_seen,COALESCE(media.mime,''),COALESCE(users.bio,'') FROM users LEFT JOIN media ON media.id=users.avatar WHERE users.id=?", uid).Scan(&u.ID, &u.Handle, &u.Name, &u.Avatar, &u.LastSeen, &u.AvatarMIME, &u.Bio)
 	u.Online = a.online(uid)
 	return u, e
 }
@@ -400,20 +402,38 @@ func (a *App) profile(w http.ResponseWriter, r *http.Request, p Principal) {
 	a.mediaMu.Lock()
 	defer a.mediaMu.Unlock()
 	var b struct {
-		Name   string `json:"display_name"`
-		Avatar string `json:"avatar_media_id"`
+		Name     *string `json:"display_name"`
+		Avatar   *string `json:"avatar_media_id"`
+		Bio      *string `json:"bio"`
+		Username *string `json:"username"`
 	}
 	if !decode(w, r, &b) {
 		return
 	}
-	if len(b.Name) < 1 || len(b.Name) > 120 {
+	if b.Name == nil && b.Avatar == nil && b.Bio == nil && b.Username == nil {
 		fail(w, ErrInvalid)
 		return
 	}
+	if b.Name != nil && (len(*b.Name) < 1 || len(*b.Name) > 120) {
+		fail(w, ErrInvalid)
+		return
+	}
+	if b.Bio != nil && utf8.RuneCountInString(*b.Bio) > 70 {
+		fail(w, ErrInvalid)
+		return
+	}
+	if b.Username != nil {
+		handle := strings.ToLower(strings.TrimSpace(*b.Username))
+		if !validHandle(handle) {
+			fail(w, ErrInvalid)
+			return
+		}
+		b.Username = &handle
+	}
 	var avatarMIME string
-	if b.Avatar != "" {
+	if b.Avatar != nil && *b.Avatar != "" {
 		var mime string
-		if e := a.DB.QueryRow("SELECT mime FROM media WHERE id=? AND owner=?", b.Avatar, p.UserID).Scan(&mime); e != nil || !isProfileAvatarMIME(mime) {
+		if e := a.DB.QueryRow("SELECT mime FROM media WHERE id=? AND owner=?", *b.Avatar, p.UserID).Scan(&mime); e != nil || !isProfileAvatarMIME(mime) {
 			fail(w, ErrForbidden)
 			return
 		}
@@ -421,22 +441,63 @@ func (a *App) profile(w http.ResponseWriter, r *http.Request, p Principal) {
 	}
 	var e error
 	e = a.transaction(func(tx *sql.Tx) error {
-		if _, e := tx.Exec("UPDATE users SET name=?,avatar=? WHERE id=?", b.Name, b.Avatar, p.UserID); e != nil {
-			return e
+		if b.Username != nil {
+			var n int
+			if e := tx.QueryRow("SELECT count(*) FROM users WHERE handle=? AND id<>?", *b.Username, p.UserID).Scan(&n); e != nil {
+				return e
+			}
+			if n > 0 {
+				return ErrConflict
+			}
+			if _, e := tx.Exec("UPDATE users SET handle=? WHERE id=?", *b.Username, p.UserID); e != nil {
+				return e
+			}
 		}
-		// Everyone who shares a conversation sees the old name and avatar in
-		// their chat list until they refetch. Broadcast the change so peers
-		// update without reopening the app.
+		if b.Name != nil || b.Avatar != nil {
+			name := ""
+			avatar := ""
+			if b.Name != nil {
+				name = *b.Name
+			}
+			if b.Avatar != nil {
+				avatar = *b.Avatar
+			}
+			if b.Name != nil && b.Avatar != nil {
+				if _, e := tx.Exec("UPDATE users SET name=?,avatar=? WHERE id=?", name, avatar, p.UserID); e != nil {
+					return e
+				}
+			} else if b.Name != nil {
+				if _, e := tx.Exec("UPDATE users SET name=? WHERE id=?", name, p.UserID); e != nil {
+					return e
+				}
+			} else if _, e := tx.Exec("UPDATE users SET avatar=? WHERE id=?", avatar, p.UserID); e != nil {
+				return e
+			}
+		}
+		if b.Bio != nil {
+			if _, e := tx.Exec("UPDATE users SET bio=? WHERE id=?", *b.Bio, p.UserID); e != nil {
+				return e
+			}
+		}
 		audience, e := profileAudience(tx, p.UserID)
 		if e != nil {
 			return e
 		}
-		return emit(tx, audience, "user.updated", "", map[string]any{
-			"id":              p.UserID,
-			"display_name":    b.Name,
-			"avatar_media_id": b.Avatar,
-			"avatar_mime":     avatarMIME,
-		})
+		payload := map[string]any{"id": p.UserID}
+		if b.Name != nil {
+			payload["display_name"] = *b.Name
+		}
+		if b.Avatar != nil {
+			payload["avatar_media_id"] = *b.Avatar
+			payload["avatar_mime"] = avatarMIME
+		}
+		if b.Bio != nil {
+			payload["bio"] = *b.Bio
+		}
+		if b.Username != nil {
+			payload["handle"] = *b.Username
+		}
+		return emit(tx, audience, "user.updated", "", payload)
 	})
 	if e != nil {
 		fail(w, e)
@@ -546,7 +607,12 @@ func (a *App) listMembers(w http.ResponseWriter, r *http.Request, p Principal) {
 		fail(w, ErrForbidden)
 		return
 	}
-	rows, e := a.DB.Query("SELECT b.user_id,b.role,b.joined_seq,CASE WHEN b.user_id=? OR (?=1 AND u.read_receipts_enabled=1 AND (SELECT read_receipts_enabled FROM users WHERE id=?)=1) THEN b.read_seq ELSE NULL END FROM members b JOIN users u ON u.id=b.user_id WHERE b.chat_id=? ORDER BY b.user_id", p.UserID, a.C.ReadReceiptsEnabled, p.UserID, cid)
+	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	if len(q) > 64 {
+		fail(w, ErrInvalid)
+		return
+	}
+	rows, e := a.DB.Query("SELECT b.user_id,b.role,b.joined_seq,CASE WHEN b.user_id=? OR (?=1 AND u.read_receipts_enabled=1 AND (SELECT read_receipts_enabled FROM users WHERE id=?)=1) THEN b.read_seq ELSE NULL END FROM members b JOIN users u ON u.id=b.user_id WHERE b.chat_id=? AND (?='' OR instr(lower(u.handle),?)>0 OR instr(lower(u.name),?)>0) ORDER BY b.user_id", p.UserID, a.C.ReadReceiptsEnabled, p.UserID, cid, q, q, q)
 	if e != nil {
 		fail(w, e)
 		return

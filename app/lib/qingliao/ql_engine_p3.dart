@@ -112,6 +112,50 @@ extension _QlP3 on QlTdEngine {
         return _listUserStoriesTd(r, archived: true);
       case 'getChatStoryAlbums':
         return _getChatStoryAlbums(r);
+      case 'deleteChat':
+        return _deleteChat(r);
+      case 'setBio':
+        return _setBio(r);
+      case 'setUsername':
+        return _setUsername(r);
+      case 'setChatDescription':
+        return _setChatDescription(r);
+      case 'setChatSlowModeDelay':
+        return _setChatSlowMode(r);
+      case 'setChatPermissions':
+        return _setChatPermissions(r);
+      case 'setChatBackground':
+        return _setChatBackground(r);
+      case 'deleteChatBackground':
+        return _deleteChatBackground(r);
+      case 'setDefaultBackground':
+        return _setDefaultBackground(r);
+      case 'deleteDefaultBackground':
+        return _deleteDefaultBackground(r);
+      case 'createChatInviteLink':
+        return _createChatInviteLink(r);
+      case 'editChatInviteLink':
+        return _editChatInviteLink(r);
+      case 'revokeChatInviteLink':
+        return _revokeChatInviteLink(r);
+      case 'getChatInviteLinks':
+        return _getChatInviteLinks(r);
+      case 'getChatInviteLinkCounts':
+        return _getChatInviteLinkCounts(r);
+      case 'getChatInviteLinkMembers':
+        return {'@type': 'chatInviteLinkMembers', 'total_count': 0, 'members': const <Object>[]};
+      case 'checkChatInviteLink':
+        return _checkChatInviteLink(r);
+      case 'joinChatByInviteLink':
+        return _joinChatByInviteLink(r);
+      case 'getInternalLinkType':
+        return _internalLinkType(r);
+      case 'searchChatMembers':
+        return _searchChatMembers(r);
+      case 'deleteChatMessagesBySender':
+        return _deleteChatMessagesBySender(r);
+      case 'addPollOption':
+        return _addPollOption(r);
       default:
         return null;
     }
@@ -1558,5 +1602,430 @@ extension _QlP3 on QlTdEngine {
     );
     if (packId == null) return _error(404, 'Sticker set not found');
     return {'@type': 'ok'};
+  }
+
+  Future<void> _ensureChatMeta(_Conv c) async {
+    if (c.metaLoaded || c.id.startsWith('virtual:')) return;
+    c.metaLoaded = true;
+    try {
+      final raw = await _apiOrThrow.get('/conversations/${c.id}');
+      c.description = raw['description']?.toString() ?? '';
+      c.slowMode = QlTdEngine._int(raw['slow_mode_seconds']) ?? 0;
+      final perms = raw['permissions'];
+      if (perms is Map) c.permissions = Map<String, dynamic>.from(perms);
+    } catch (_) {}
+    if (!c.isGroup || (c.role != 'owner' && c.role != 'admin')) return;
+    try {
+      final links = await _apiOrThrow.get('/conversations/${c.id}/invites');
+      final list = links['invites'];
+      if (list is List && list.isNotEmpty && list.first is Map) {
+        c.inviteLink = _tdInviteLink(Map<String, dynamic>.from(list.first as Map));
+      }
+    } catch (_) {}
+  }
+
+  Future<Map<String, dynamic>> _deleteChat(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    if (c == null) return _error(400, 'Chat not found');
+    if (!c.id.startsWith('virtual:')) {
+      await _apiOrThrow.delete('/conversations/${c.id}');
+    }
+    if (c.announced) {
+      _emit({
+        '@type': 'updateChatPosition',
+        'chat_id': c.chatId,
+        'position': _position(c, removed: true),
+      });
+    }
+    _convByChatId.remove(c.chatId);
+    _convs.remove(c.id);
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _setBio(Map<String, dynamic> r) async {
+    final bio = r['bio']?.toString() ?? '';
+    if (bio.runes.length > 70) return _error(400, 'BIO_TOO_LONG');
+    return _patchMe(bio: bio);
+  }
+
+  Future<Map<String, dynamic>> _setUsername(Map<String, dynamic> r) async {
+    final username = (r['username']?.toString() ?? '').trim();
+    if (username.isEmpty) return _error(400, 'USERNAME_INVALID');
+    return _patchMe(username: username);
+  }
+
+  Future<Map<String, dynamic>> _setChatDescription(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    final description = (r['description']?.toString() ?? '').trim();
+    if (c == null || !c.isGroup) return _error(400, 'Chat not found');
+    if (description.runes.length > 255) return _error(400, 'DESCRIPTION_TOO_LONG');
+    await _apiOrThrow.patch('/conversations/${c.id}', {'description': description});
+    c.description = description;
+    c.metaLoaded = true;
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _setChatSlowMode(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    final delay = QlTdEngine._int(r['slow_mode_delay']) ?? -1;
+    if (c == null || !c.isGroup) return _error(400, 'Chat not found');
+    if (delay < 0 || delay > 86400) return _error(400, 'SLOWMODE_INVALID');
+    await _apiOrThrow.patch('/conversations/${c.id}', {'slow_mode_seconds': delay});
+    c.slowMode = delay;
+    c.metaLoaded = true;
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _setChatPermissions(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    final perms = r['permissions'];
+    if (c == null || !c.isGroup || perms is! Map) return _error(400, 'Chat not found');
+    final body = Map<String, dynamic>.from(perms);
+    await _apiOrThrow.patch('/conversations/${c.id}', {'permissions': body});
+    c.permissions = body;
+    c.metaLoaded = true;
+    if (c.announced) {
+      _emit({
+        '@type': 'updateChatPermissions',
+        'chat_id': c.chatId,
+        'permissions': _chatPermissions(c),
+      });
+    }
+    return _ok;
+  }
+
+  Map<String, dynamic>? _normalizeBackground(Object? background, Object? type) {
+    if (type is! Map) return null;
+    Map<String, dynamic>? document;
+    if (background is Map && background['@type'] == 'inputBackgroundLocal') {
+      final path = _inputFilePath(background['background']);
+      if (path != null && path.isNotEmpty) {
+        document = {
+          '@type': 'document',
+          'file_name': 'wallpaper.jpg',
+          'mime_type': 'image/jpeg',
+          'document': {
+            '@type': 'file',
+            'id': 0,
+            'size': 0,
+            'expected_size': 0,
+            'local': {
+              '@type': 'localFile',
+              'path': path,
+              'can_be_downloaded': true,
+              'can_be_deleted': false,
+              'is_downloading_active': false,
+              'is_downloading_completed': true,
+              'download_offset': 0,
+              'downloaded_prefix_size': 0,
+              'downloaded_size': 0,
+            },
+            'remote': {
+              '@type': 'remoteFile',
+              'id': '',
+              'unique_id': '',
+              'is_uploading_active': false,
+              'is_uploading_completed': true,
+              'uploaded_size': 0,
+            },
+          },
+        };
+      }
+    }
+    return {
+      '@type': 'background',
+      'id': 0,
+      'is_default': false,
+      'is_dark': false,
+      'name': '',
+      'document': document,
+      'type': Map<String, dynamic>.from(type),
+    };
+  }
+
+  Future<Map<String, dynamic>> _setChatBackground(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    if (c == null || c.id.startsWith('virtual:')) return _error(400, 'Chat not found');
+    final background = _normalizeBackground(r['background'], r['type']);
+    if (background == null) return _error(400, 'WALLPAPER_INVALID');
+    final wrapper = {
+      '@type': 'chatBackground',
+      'background': background,
+      'dark_theme_dimming': QlTdEngine._int(r['dark_theme_dimming']) ?? 0,
+    };
+    await _apiOrThrow.put('/me/wallpapers', {'chat_id': c.id, 'background': wrapper});
+    _wallpapers[c.id] = wrapper;
+    if (c.announced) {
+      _emit({
+        '@type': 'updateChatBackground',
+        'chat_id': c.chatId,
+        'background': wrapper,
+      });
+    }
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _deleteChatBackground(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    if (c == null || c.id.startsWith('virtual:')) return _error(400, 'Chat not found');
+    await _apiOrThrow.delete('/me/wallpapers', {'chat_id': c.id});
+    _wallpapers.remove(c.id);
+    if (c.announced) {
+      _emit({
+        '@type': 'updateChatBackground',
+        'chat_id': c.chatId,
+        'background': null,
+      });
+    }
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _setDefaultBackground(Map<String, dynamic> r) async {
+    final dark = r['for_dark_theme'] == true;
+    final background = _normalizeBackground(r['background'], r['type']);
+    if (background == null) return _error(400, 'WALLPAPER_INVALID');
+    background['is_default'] = true;
+    background['is_dark'] = dark;
+    final key = dark ? '@default-dark' : '@default';
+    await _apiOrThrow.put('/me/wallpapers', {'chat_id': key, 'background': background});
+    _wallpapers[key] = background;
+    _emit({
+      '@type': 'updateDefaultBackground',
+      'for_dark_theme': dark,
+      'background': background,
+    });
+    return background;
+  }
+
+  Future<Map<String, dynamic>> _deleteDefaultBackground(Map<String, dynamic> r) async {
+    final dark = r['for_dark_theme'] == true;
+    final key = dark ? '@default-dark' : '@default';
+    await _apiOrThrow.delete('/me/wallpapers', {'chat_id': key});
+    _wallpapers.remove(key);
+    _emit({
+      '@type': 'updateDefaultBackground',
+      'for_dark_theme': dark,
+      'background': null,
+    });
+    return _ok;
+  }
+
+  String? _inviteCode(String link) {
+    final text = link.trim();
+    final uri = Uri.tryParse(text);
+    if (uri != null && uri.scheme == 'ql' && uri.host == 'join') {
+      final code = uri.pathSegments.isEmpty ? '' : uri.pathSegments.last;
+      if (RegExp(r'^[0-9a-fA-F]{32}$').hasMatch(code)) return code;
+    }
+    return RegExp(r'(?:ql://join/|join/)([0-9a-fA-F]{32})').firstMatch(text)?.group(1);
+  }
+
+  Map<String, dynamic> _tdInviteLink(Map<String, dynamic> raw) {
+    final created = DateTime.tryParse(raw['created']?.toString() ?? '');
+    return {
+      '@type': 'chatInviteLink',
+      'invite_link': raw['invite_link']?.toString() ?? '',
+      'name': raw['name']?.toString() ?? '',
+      'creator_user_id': qlUserInt(raw['creator_id']?.toString() ?? ''),
+      'date': created == null ? 0 : created.millisecondsSinceEpoch ~/ 1000,
+      'edit_date': 0,
+      'expiration_date': QlTdEngine._int(raw['expires']) ?? 0,
+      'member_limit': QlTdEngine._int(raw['member_limit']) ?? 0,
+      'member_count': QlTdEngine._int(raw['uses']) ?? 0,
+      'pending_join_request_count': 0,
+      'creates_join_request': false,
+      'is_primary': false,
+      'is_revoked': raw['revoked'] == true,
+    };
+  }
+
+  Future<Map<String, dynamic>> _createChatInviteLink(Map<String, dynamic> r) async {
+    if (r['creates_join_request'] == true) {
+      return _unsupported('createChatInviteLink(join_request)');
+    }
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    if (c == null || !c.isGroup) return _error(400, 'Chat not found');
+    final raw = await _apiOrThrow.post('/conversations/${c.id}/invites', {
+      'name': (r['name']?.toString() ?? '').trim(),
+      'expires': QlTdEngine._int(r['expiration_date']) ?? 0,
+      'member_limit': QlTdEngine._int(r['member_limit']) ?? 0,
+    });
+    final link = _tdInviteLink(raw);
+    c.inviteLink ??= link;
+    return link;
+  }
+
+  Future<Map<String, dynamic>> _editChatInviteLink(Map<String, dynamic> r) async {
+    if (r['creates_join_request'] == true) {
+      return _unsupported('editChatInviteLink(join_request)');
+    }
+    final code = _inviteCode(r['invite_link']?.toString() ?? '');
+    if (code == null) return _error(400, 'INVITE_HASH_INVALID');
+    final raw = await _apiOrThrow.patch('/invites/$code', {
+      'name': (r['name']?.toString() ?? '').trim(),
+      'expires': QlTdEngine._int(r['expiration_date']) ?? 0,
+      'member_limit': QlTdEngine._int(r['member_limit']) ?? 0,
+    });
+    return _tdInviteLink(raw);
+  }
+
+  Future<Map<String, dynamic>> _revokeChatInviteLink(Map<String, dynamic> r) async {
+    final code = _inviteCode(r['invite_link']?.toString() ?? '');
+    if (code == null) return _error(400, 'INVITE_HASH_INVALID');
+    await _apiOrThrow.delete('/invites/$code');
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _getChatInviteLinks(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    if (c == null || !c.isGroup) return _error(400, 'Chat not found');
+    final creator = _userIdByInt[QlTdEngine._int(r['creator_user_id']) ?? 0];
+    final raw = await _apiOrThrow.get('/conversations/${c.id}/invites', {
+      if (r['is_revoked'] == true) 'revoked': '1',
+    });
+    final links = <Map<String, dynamic>>[];
+    for (final item in (raw['invites'] as List? ?? const [])) {
+      if (item is! Map) continue;
+      final link = _tdInviteLink(Map<String, dynamic>.from(item));
+      if (creator != null && item['creator_id']?.toString() != creator) continue;
+      links.add(link);
+    }
+    return {'@type': 'chatInviteLinks', 'total_count': links.length, 'invite_links': links};
+  }
+
+  Future<Map<String, dynamic>> _getChatInviteLinkCounts(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    if (c == null || !c.isGroup) return _error(400, 'Chat not found');
+    final raw = await _apiOrThrow.get('/conversations/${c.id}/invites', {'revoked': 'all'});
+    final active = <String, int>{};
+    final revoked = <String, int>{};
+    for (final item in (raw['invites'] as List? ?? const [])) {
+      if (item is! Map) continue;
+      final creator = item['creator_id']?.toString() ?? '';
+      if (creator.isEmpty) continue;
+      if (item['revoked'] == true) {
+        revoked[creator] = (revoked[creator] ?? 0) + 1;
+      } else {
+        active[creator] = (active[creator] ?? 0) + 1;
+      }
+    }
+    final ids = {...active.keys, ...revoked.keys};
+    return {
+      '@type': 'chatInviteLinkCounts',
+      'invite_link_counts': [
+        for (final id in ids)
+          {
+            '@type': 'chatInviteLinkCount',
+            'user_id': qlUserInt(id),
+            'invite_link_count': active[id] ?? 0,
+            'revoked_invite_link_count': revoked[id] ?? 0,
+          },
+      ],
+    };
+  }
+
+  Future<Map<String, dynamic>> _checkChatInviteLink(Map<String, dynamic> r) async {
+    final code = _inviteCode(r['invite_link']?.toString() ?? '');
+    if (code == null) return _error(400, 'INVITE_HASH_INVALID');
+    final info = await _apiOrThrow.get('/invites/$code');
+    final cid = info['chat_id']?.toString() ?? '';
+    final existing = _convs[cid];
+    final channel = info['kind']?.toString() == 'channel';
+    return {
+      '@type': 'chatInviteLinkInfo',
+      'chat_id': existing != null && existing.announced ? existing.chatId : 0,
+      'accessible_for': 0,
+      'type': {
+        '@type': channel ? 'inviteLinkChatTypeChannel' : 'inviteLinkChatTypeBasicGroup',
+      },
+      'title': info['title']?.toString() ?? '',
+      'photo': null,
+      'description': '',
+      'member_count': QlTdEngine._int(info['member_count']) ?? 0,
+      'member_user_ids': const <int>[],
+      'creates_join_request': false,
+      'is_public': false,
+    };
+  }
+
+  Future<Map<String, dynamic>> _joinChatByInviteLink(Map<String, dynamic> r) async {
+    final code = _inviteCode(r['invite_link']?.toString() ?? '');
+    if (code == null) return _error(400, 'INVITE_HASH_INVALID');
+    final joined = await _apiOrThrow.post('/invites/$code/join');
+    final cid = joined['conversation_id']?.toString() ?? '';
+    var c = _convs[cid];
+    if (c == null || !c.announced) c = await _discoverConversation(cid);
+    if (c == null) return _error(500, 'join_failed');
+    return _tdChat(c);
+  }
+
+  Map<String, dynamic> _internalLinkType(Map<String, dynamic> r) {
+    final link = r['link']?.toString() ?? '';
+    if (_inviteCode(link) != null) {
+      return {'@type': 'internalLinkTypeChatInvite', 'invite_link': link};
+    }
+    return _unsupported('getInternalLinkType');
+  }
+
+  Future<Map<String, dynamic>> _searchChatMembers(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    if (c == null) return _error(400, 'Chat not found');
+    final limit = (QlTdEngine._int(r['limit']) ?? 50).clamp(1, 200);
+    if (c.id.startsWith('virtual:')) {
+      return {'@type': 'chatMembers', 'total_count': 0, 'members': const <Object>[]};
+    }
+    final query = (r['query']?.toString() ?? '').trim();
+    final raw = await _apiOrThrow.get('/conversations/${c.id}/members', {
+      if (query.isNotEmpty) 'q': query,
+    });
+    final members = <Map<String, dynamic>>[];
+    for (final item in (raw['members'] as List? ?? const [])) {
+      if (item is! Map) continue;
+      final member = Map<String, dynamic>.from(item);
+      await _ensureUser(member['user_id']?.toString() ?? '');
+      members.add(_chatMember(member));
+      if (members.length >= limit) break;
+    }
+    return {'@type': 'chatMembers', 'total_count': members.length, 'members': members};
+  }
+
+  Future<Map<String, dynamic>> _deleteChatMessagesBySender(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    final sender = r['sender_id'];
+    final uid = sender is Map ? _userIdByInt[QlTdEngine._int(sender['user_id']) ?? 0] : null;
+    if (c == null || uid == null || c.id.startsWith('virtual:')) {
+      return _error(400, 'Chat or sender not found');
+    }
+    await _apiOrThrow.post('/conversations/${c.id}/messages/by-sender', {'user_id': uid});
+    _onMessagesDeletedBySender(c.id, {'sender_id': uid, 'through_seq': c.lastSeq});
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _addPollOption(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    final mid = QlTdEngine._int(r['message_id']) ?? 0;
+    if (c == null) return _error(400, 'Chat not found');
+    final td = c.messages[qlSeqOf(mid)];
+    final pollId = (td?['content'] is Map ? (td!['content'] as Map)['@ql_poll_id'] : null)?.toString() ?? '';
+    final option = r['option'];
+    var text = '';
+    if (option is Map) {
+      final formatted = option['text'];
+      text = formatted is Map ? formatted['text']?.toString() ?? '' : formatted?.toString() ?? '';
+    }
+    text = text.trim();
+    if (pollId.isEmpty || text.isEmpty) return _error(400, 'POLL_OPTION_INVALID');
+    final raw = await _apiOrThrow.post('/conversations/${c.id}/polls/$pollId/options', {'text': text});
+    final updated = _tdMessage(c, raw);
+    if (updated != null) {
+      _cacheMessage(c, updated, raw);
+      _emit({
+        '@type': 'updateMessageContent',
+        'chat_id': c.chatId,
+        'message_id': updated['id'],
+        'new_content': updated['content'],
+      });
+    }
+    return _ok;
   }
 }

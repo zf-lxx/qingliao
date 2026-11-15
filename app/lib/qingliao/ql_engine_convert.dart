@@ -339,10 +339,23 @@ extension on QlTdEngine {
           previous['display_name'] != merged['display_name'] ||
           previous['avatar_media_id'] != merged['avatar_media_id'] ||
           previous['avatar_mime'] != merged['avatar_mime'] ||
-          previous['handle'] != merged['handle'];
+          previous['handle'] != merged['handle'] ||
+          previous['bio'] != merged['bio'];
       if (changed) {
         _emit({'@type': 'updateUser', 'user': _tdUser(id)});
         _schedulePersist();
+        if (previous != null && previous['bio'] != merged['bio']) {
+          final info = _userFullInfo(qlUserInt(id));
+          unawaited(info.then((full) {
+            if (full['@type'] == 'userFullInfo') {
+              _emit({
+                '@type': 'updateUserFullInfo',
+                'user_id': qlUserInt(id),
+                'user_full_info': full,
+              });
+            }
+          }));
+        }
         // Direct chats mirror the peer's name and avatar.
         for (final c in _convs.values) {
           if (c.announced && !c.isGroup && c.peerId == id) {
@@ -440,7 +453,7 @@ extension on QlTdEngine {
 
   Map<String, dynamic> _chatPermissions(_Conv c) {
     final admin = c.role == 'owner' || c.role == 'admin';
-    return {
+    final base = <String, dynamic>{
       '@type': 'chatPermissions',
       'can_send_basic_messages': !c.isChannel || admin,
       'can_send_audios': !c.isChannel || admin,
@@ -457,6 +470,14 @@ extension on QlTdEngine {
       'can_pin_messages': !c.isGroup || admin,
       'can_create_topics': false,
     };
+    final stored = c.permissions;
+    if (stored != null) {
+      for (final entry in stored.entries) {
+        if (entry.key == '@type') continue;
+        base[entry.key] = entry.value;
+      }
+    }
+    return base;
   }
 
   Map<String, dynamic> _tdChat(_Conv c) {
@@ -499,8 +520,8 @@ extension on QlTdEngine {
       'is_marked_as_unread': c.manualUnread,
       'view_as_topics': false,
       'has_scheduled_messages': false,
-      'can_be_deleted_only_for_self': false,
-      'can_be_deleted_for_all_users': false,
+      'can_be_deleted_only_for_self': !c.isGroup,
+      'can_be_deleted_for_all_users': c.isGroup && c.role == 'owner',
       'can_be_reported': true,
       'default_disable_notification': false,
       'unread_count': c.unread,
@@ -512,7 +533,7 @@ extension on QlTdEngine {
       'available_reactions': {'@type': 'chatAvailableReactionsAll', 'max_reaction_count': 11},
       'message_auto_delete_time': 0,
       'emoji_status': null,
-      'background': null,
+      'background': _wallpapers[c.id],
       'theme': null,
       'action_bar': null,
       'business_bot_manage_bar': null,

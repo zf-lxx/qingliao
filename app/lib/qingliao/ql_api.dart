@@ -89,7 +89,8 @@ class QlApi {
       _json('PUT', path, body: body ?? const <String, dynamic>{});
   Future<Map<String, dynamic>> patch(String path, [Object? body]) =>
       _json('PATCH', path, body: body ?? const <String, dynamic>{});
-  Future<Map<String, dynamic>> delete(String path) => _json('DELETE', path);
+  Future<Map<String, dynamic>> delete(String path, [Map<String, String>? q]) =>
+      _json('DELETE', path, query: q);
 
   Future<Map<String, dynamic>> _json(
     String method,

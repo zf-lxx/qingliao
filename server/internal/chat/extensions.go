@@ -10,8 +10,8 @@ func (a *App) migrateExtensions() error {
 	for table, columns := range map[string]map[string]string{
 		"messages": {"media_meta_json": "TEXT NOT NULL DEFAULT ''", "album_id": "TEXT NOT NULL DEFAULT ''", "entities_json": "TEXT NOT NULL DEFAULT '[]'", "preview_json": "TEXT NOT NULL DEFAULT ''", "reply_markup_json": "TEXT NOT NULL DEFAULT ''", "via_bot_id": "TEXT NOT NULL DEFAULT ''", "forward_origin_json": "TEXT NOT NULL DEFAULT ''"},
 		"media":    {"width": "INTEGER NOT NULL DEFAULT 0", "height": "INTEGER NOT NULL DEFAULT 0", "duration_ms": "INTEGER NOT NULL DEFAULT 0", "waveform": "TEXT NOT NULL DEFAULT ''", "file_name": "TEXT NOT NULL DEFAULT ''", "thumbnail_id": "TEXT NOT NULL DEFAULT ''"},
-		"chats":    {"last_activity": "INTEGER NOT NULL DEFAULT 0", "avatar": "TEXT NOT NULL DEFAULT ''"},
-		"users":    {"read_receipts_enabled": "INTEGER NOT NULL DEFAULT 1", "password_hint": "TEXT NOT NULL DEFAULT ''", "totp_secret": "TEXT NOT NULL DEFAULT ''", "totp_pending": "TEXT NOT NULL DEFAULT ''", "totp_recovery": "TEXT NOT NULL DEFAULT ''", "deleted": "INTEGER NOT NULL DEFAULT 0", "is_bot": "INTEGER NOT NULL DEFAULT 0"},
+		"chats":    {"last_activity": "INTEGER NOT NULL DEFAULT 0", "avatar": "TEXT NOT NULL DEFAULT ''", "description": "TEXT NOT NULL DEFAULT ''", "slow_mode": "INTEGER NOT NULL DEFAULT 0", "permissions_json": "TEXT NOT NULL DEFAULT ''"},
+		"users":    {"read_receipts_enabled": "INTEGER NOT NULL DEFAULT 1", "password_hint": "TEXT NOT NULL DEFAULT ''", "totp_secret": "TEXT NOT NULL DEFAULT ''", "totp_pending": "TEXT NOT NULL DEFAULT ''", "totp_recovery": "TEXT NOT NULL DEFAULT ''", "deleted": "INTEGER NOT NULL DEFAULT 0", "is_bot": "INTEGER NOT NULL DEFAULT 0", "bio": "TEXT NOT NULL DEFAULT ''"},
 		"devices":  {"created": "TEXT NOT NULL DEFAULT ''", "last_seen": "TEXT NOT NULL DEFAULT ''", "app_name": "TEXT NOT NULL DEFAULT ''", "app_version": "TEXT NOT NULL DEFAULT ''", "device_model": "TEXT NOT NULL DEFAULT ''", "last_ip": "TEXT NOT NULL DEFAULT ''"},
 		"members":  {"manual_unread": "INTEGER NOT NULL DEFAULT 0", "archived": "INTEGER NOT NULL DEFAULT 0", "pin_order": "INTEGER NOT NULL DEFAULT 0", "notification_mute_until": "INTEGER NOT NULL DEFAULT 0", "draft_json": "TEXT NOT NULL DEFAULT ''", "joined_at": "INTEGER NOT NULL DEFAULT 0", "muted_until": "INTEGER NOT NULL DEFAULT 0"},
 	} {
@@ -39,7 +39,7 @@ func (a *App) migrateExtensions() error {
 			}
 		}
 	}
-	_, e := a.DB.Exec(extensionSchema+discoverySchema+p2Schema+p3Schema+p4Schema+p5Schema+p6Schema)
+	_, e := a.DB.Exec(extensionSchema + discoverySchema + p2Schema + p3Schema + p4Schema + p5Schema + p6Schema + p7Schema)
 	return e
 }
 
@@ -135,4 +135,11 @@ CREATE INDEX IF NOT EXISTS bot_updates_pending ON bot_updates(bot_id,update_id) 
 CREATE TABLE IF NOT EXISTS api_ids(kind TEXT NOT NULL,id TEXT NOT NULL,api_id INTEGER NOT NULL UNIQUE,PRIMARY KEY(kind,id));
 CREATE TABLE IF NOT EXISTS bot_callbacks(id TEXT PRIMARY KEY,bot_id TEXT NOT NULL REFERENCES bots(user_id),chat_id TEXT NOT NULL,message_id TEXT NOT NULL,from_user TEXT NOT NULL,data TEXT NOT NULL,created TEXT NOT NULL,answered INTEGER NOT NULL DEFAULT 0);
 PRAGMA user_version=9;
+`
+
+const p7Schema = `
+CREATE TABLE IF NOT EXISTS chat_invites(code TEXT PRIMARY KEY,chat_id TEXT NOT NULL REFERENCES chats(id),creator TEXT NOT NULL REFERENCES users(id),name TEXT NOT NULL DEFAULT '',created TEXT NOT NULL,expires INTEGER NOT NULL DEFAULT 0,member_limit INTEGER NOT NULL DEFAULT 0,uses INTEGER NOT NULL DEFAULT 0,revoked INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS chat_invites_chat ON chat_invites(chat_id,revoked,created);
+CREATE TABLE IF NOT EXISTS chat_wallpapers(user_id TEXT NOT NULL REFERENCES users(id),chat_id TEXT NOT NULL,document TEXT NOT NULL,PRIMARY KEY(user_id,chat_id));
+PRAGMA user_version=10;
 `

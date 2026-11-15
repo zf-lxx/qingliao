@@ -57,7 +57,23 @@ extension on QlTdEngine {
       cursor = result['next_cursor']?.toString() ?? '';
       if (result['has_more'] != true || cursor.isEmpty) break;
     }
+    try {
+      await _loadWallpapers();
+    } catch (_) {}
     await _hydrate(fresh);
+  }
+
+  Future<void> _loadWallpapers() async {
+    final result = await _apiOrThrow.get('/me/wallpapers');
+    final list = result['wallpapers'];
+    if (list is! List) return;
+    for (final raw in list) {
+      if (raw is! Map) continue;
+      final cid = raw['chat_id']?.toString() ?? '';
+      final background = raw['background'];
+      if (cid.isEmpty || background is! Map) continue;
+      _wallpapers[cid] = Map<String, dynamic>.from(background);
+    }
   }
 
   /// Loads members/peers for conversations and announces them to the UI.
@@ -485,6 +501,27 @@ extension on QlTdEngine {
         if (c != null && c.announced) {
           _emit({'@type': 'updateChatPosition', 'chat_id': c.chatId, 'position': _position(c, removed: true)});
         }
+      case 'conversation.updated':
+        final updated = _convs[data['id']?.toString() ?? cid];
+        if (updated != null) {
+          if (data.containsKey('description')) {
+            updated.description = data['description']?.toString() ?? '';
+          }
+          if (data.containsKey('slow_mode_seconds')) {
+            updated.slowMode = QlTdEngine._int(data['slow_mode_seconds']) ?? updated.slowMode;
+          }
+          if (data['permissions'] is Map) {
+            updated.permissions = Map<String, dynamic>.from(data['permissions'] as Map);
+          }
+          updated.metaLoaded = true;
+          if (updated.announced && data.containsKey('permissions')) {
+            _emit({
+              '@type': 'updateChatPermissions',
+              'chat_id': updated.chatId,
+              'permissions': _chatPermissions(updated),
+            });
+          }
+        }
       case 'conversation.created':
         await _discoverConversation(cid);
       case 'membership.changed':
@@ -537,6 +574,8 @@ extension on QlTdEngine {
             if (data['avatar_mime'] != null) {
               current['avatar_mime'] = data['avatar_mime'];
             }
+            if (data['bio'] != null) current['bio'] = data['bio'];
+            if (data['handle'] != null) current['handle'] = data['handle'];
             _rememberUser(current);
           }
       case 'block.updated':

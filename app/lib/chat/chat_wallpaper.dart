@@ -1844,8 +1844,7 @@ class ChatWallpaperController extends ChangeNotifier {
     // client does not come back from an old preference. 轻聊 never stores
     // one: the local preference is the source of truth and must survive
     // getChat.
-    if (_localValues[id] != null &&
-        (background != null || !_wallpaperBackendUnsupported)) {
+    if (_localValues[id] != null && background != null) {
       unawaited(_discardLocal(chatId));
     }
     notifyListeners();

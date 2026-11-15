@@ -2,9 +2,9 @@ package chat
 
 import (
 	"database/sql"
-	"errors"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path"
 	"regexp"
@@ -80,24 +80,36 @@ func attachReplySeqs(db *sql.DB, items []Message) {
 func (a *App) patchConversation(w http.ResponseWriter, r *http.Request, p Principal) {
 	cid := r.PathValue("id")
 	var b struct {
-		Title  *string `json:"title"`
-		Avatar *string `json:"avatar_media_id"`
+		Title       *string          `json:"title"`
+		Avatar      *string          `json:"avatar_media_id"`
+		Description *string          `json:"description"`
+		Slow        *int             `json:"slow_mode_seconds"`
+		Permissions *json.RawMessage `json:"permissions"`
 	}
 	if !decode(w, r, &b) {
 		return
 	}
-	if e := a.UpdateConversation(p, cid, b.Title, b.Avatar); e != nil {
+	if e := a.UpdateConversation(p, cid, b.Title, b.Avatar, b.Description, b.Slow, b.Permissions); e != nil {
 		fail(w, e)
 		return
 	}
 	respond(w, 200, map[string]bool{"ok": true})
 }
 
-func (a *App) UpdateConversation(p Principal, cid string, title, avatar *string) error {
-	if title == nil && avatar == nil {
+func (a *App) UpdateConversation(p Principal, cid string, title, avatar, description *string, slow *int, permissions *json.RawMessage) error {
+	if title == nil && avatar == nil && description == nil && slow == nil && permissions == nil {
 		return ErrInvalid
 	}
 	if title != nil && (strings.TrimSpace(*title) == "" || len(*title) > 200) {
+		return ErrInvalid
+	}
+	if description != nil && utf8.RuneCountInString(*description) > 255 {
+		return ErrInvalid
+	}
+	if slow != nil && (*slow < 0 || *slow > 86400) {
+		return ErrInvalid
+	}
+	if permissions != nil && (len(*permissions) > 4000 || !json.Valid(*permissions)) {
 		return ErrInvalid
 	}
 	if avatar != nil && *avatar != "" {
@@ -131,6 +143,21 @@ func (a *App) UpdateConversation(p Principal, cid string, title, avatar *string)
 				return e
 			}
 		}
+		if description != nil {
+			if _, e = tx.Exec("UPDATE chats SET description=? WHERE id=?", *description, cid); e != nil {
+				return e
+			}
+		}
+		if slow != nil {
+			if _, e = tx.Exec("UPDATE chats SET slow_mode=? WHERE id=?", *slow, cid); e != nil {
+				return e
+			}
+		}
+		if permissions != nil {
+			if _, e = tx.Exec("UPDATE chats SET permissions_json=? WHERE id=?", string(*permissions), cid); e != nil {
+				return e
+			}
+		}
 		users, e := members(tx, cid)
 		if e != nil {
 			return e
@@ -141,6 +168,15 @@ func (a *App) UpdateConversation(p Principal, cid string, title, avatar *string)
 		}
 		if avatar != nil {
 			data["avatar_media_id"] = *avatar
+		}
+		if description != nil {
+			data["description"] = *description
+		}
+		if slow != nil {
+			data["slow_mode_seconds"] = *slow
+		}
+		if permissions != nil {
+			data["permissions"] = json.RawMessage(*permissions)
 		}
 		if e = audit(tx, cid, p.UserID, "conversation.updated", cid, data); e != nil {
 			return e

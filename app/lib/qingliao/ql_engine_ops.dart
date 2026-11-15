@@ -405,6 +405,7 @@ extension on QlTdEngine {
     final c = _groupByBasicId(id);
     if (c == null) return _error(400, 'Basic group not found');
     if (!c.membersLoaded) await _loadMembers(c);
+    await _ensureChatMeta(c);
     await Future.wait([
       for (final m in c.members.take(200)) _ensureUser(m['user_id']?.toString() ?? ''),
     ]);
@@ -415,12 +416,12 @@ extension on QlTdEngine {
     return {
       '@type': 'basicGroupFullInfo',
       'photo': null,
-      'description': '',
+      'description': c.description,
       'creator_user_id': qlUserInt(owner['user_id']?.toString() ?? ''),
       'members': [for (final m in c.members) _chatMember(m)],
       'can_hide_members': false,
       'can_toggle_aggressive_anti_spam': false,
-      'invite_link': null,
+      'invite_link': c.inviteLink,
       'bot_commands': const <Object>[],
     };
   }
@@ -1382,7 +1383,7 @@ extension on QlTdEngine {
       'need_phone_number_privacy_exception': false,
       'set_chat_background': false,
       'uses_unofficial_app': false,
-      'bio': _formatted(''),
+      'bio': _formatted(raw?['bio']?.toString() ?? ''),
       'birthdate': null,
       'personal_chat_id': 0,
       'gift_count': 0,
@@ -1449,12 +1450,21 @@ extension on QlTdEngine {
     };
   }
 
-  Future<Map<String, dynamic>> _patchMe({String? name, String? avatar}) async {
+  Future<Map<String, dynamic>> _patchMe({
+    String? name,
+    String? avatar,
+    String? bio,
+    String? username,
+  }) async {
     final me = _users[_myId] ?? const <String, dynamic>{};
-    final result = await _apiOrThrow.patch('/me', {
-      'display_name': name ?? _displayName(me),
-      'avatar_media_id': avatar ?? (me['avatar_media_id']?.toString() ?? ''),
-    });
+    final body = <String, dynamic>{};
+    if (name != null || avatar != null) {
+      body['display_name'] = name ?? _displayName(me);
+      body['avatar_media_id'] = avatar ?? (me['avatar_media_id']?.toString() ?? '');
+    }
+    if (bio != null) body['bio'] = bio;
+    if (username != null) body['username'] = username;
+    final result = await _apiOrThrow.patch('/me', body);
     _rememberUser(result);
     return _ok;
   }

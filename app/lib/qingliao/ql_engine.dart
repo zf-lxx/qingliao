@@ -155,6 +155,11 @@ class _Conv {
   bool announced = false;
   List<Map<String, dynamic>> members = const [];
   bool membersLoaded = false;
+  bool metaLoaded = false;
+  String description = '';
+  int slowMode = 0;
+  Map<String, dynamic>? permissions;
+  Map<String, dynamic>? inviteLink;
   String avatarMediaId = '';
   final Set<int> pinnedSeqs = {};
   final Map<int, List<Map<String, String>>> reactionsBySeq = {};
@@ -220,6 +225,7 @@ class QlTdEngine {
   final Map<int, _QlFile> _files = {};
   final Map<String, Map<String, dynamic>> _folders = {};
   final Map<int, String> _folderIdByInt = {};
+  final Map<String, Map<String, dynamic>> _wallpapers = {};
   final Set<String> _contactIds = {};
   final Map<String, Map<String, dynamic>> _scopeNotifs = {};
   bool _activeStoriesLoaded = false;
@@ -892,6 +898,18 @@ class QlTdEngine {
       if (id != _myId) {'@type': 'updateUser', 'user': _tdUser(id)},
     for (final c in _convs.values)
       if (c.announced) {'@type': 'updateNewChat', 'chat': _tdChat(c)},
+    if (_wallpapers['@default'] != null)
+      {
+        '@type': 'updateDefaultBackground',
+        'for_dark_theme': false,
+        'background': _wallpapers['@default'],
+      },
+    if (_wallpapers['@default-dark'] != null)
+      {
+        '@type': 'updateDefaultBackground',
+        'for_dark_theme': true,
+        'background': _wallpapers['@default-dark'],
+      },
     if (_folders.isNotEmpty) _chatFoldersUpdate(),
   ];
 

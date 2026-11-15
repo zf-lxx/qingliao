@@ -67,6 +67,25 @@ func (a *App) checkSend(tx *sql.Tx, p Principal, cid string, s Send) error {
 	if kind == "channel" && role != "owner" && role != "admin" {
 		return ErrForbidden
 	}
+	var slow int
+	if e := tx.QueryRow("SELECT IFNULL(slow_mode,0) FROM chats WHERE id=?", cid).Scan(&slow); e != nil {
+		return e
+	}
+	if slow > 0 && role != "owner" && role != "admin" {
+		var created string
+		e := tx.QueryRow("SELECT created FROM messages WHERE chat_id=? AND sender=? AND deleted=0 ORDER BY seq DESC LIMIT 1", cid, p.UserID).Scan(&created)
+		if e == nil {
+			sent, err := time.Parse(time.RFC3339Nano, created)
+			if err != nil {
+				sent, err = time.Parse(time.RFC3339, created)
+			}
+			if err == nil && time.Since(sent) < time.Duration(slow)*time.Second {
+				return ErrRateLimited
+			}
+		} else if !errors.Is(e, sql.ErrNoRows) {
+			return e
+		}
+	}
 	cfg, e := settings(tx, cid)
 	if e != nil {
 		return e

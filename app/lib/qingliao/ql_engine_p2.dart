@@ -237,6 +237,19 @@ extension on QlTdEngine {
       }
       return _ok;
     }
+    if (!c.isGroup && r['remove_from_chat_list'] == true) {
+      if (r['revoke'] == true) {
+        await _apiOrThrow.post('/conversations/${c.id}/clear', {'both': true});
+      }
+      await _apiOrThrow.delete('/conversations/${c.id}');
+      _applyCleared(c, throughSeq: c.lastSeq);
+      if (c.announced) {
+        _emit({'@type': 'updateChatPosition', 'chat_id': c.chatId, 'position': _position(c, removed: true)});
+      }
+      _convByChatId.remove(c.chatId);
+      _convs.remove(c.id);
+      return _ok;
+    }
     final revoke = r['revoke'] == true;
     await _apiOrThrow.post('/conversations/${c.id}/clear', {'both': revoke});
     _applyCleared(c, throughSeq: c.lastSeq);
@@ -412,10 +425,11 @@ extension on QlTdEngine {
         await _loadMembers(found);
       } catch (_) {}
     }
+    await _ensureChatMeta(found);
     return {
       '@type': 'supergroupFullInfo',
       'photo': found.avatarMediaId.isEmpty ? null : _chatPhoto(found.avatarMediaId),
-      'description': '',
+      'description': found.description,
       'member_count': found.members.length,
       'administrator_count': found.members.where((m) {
         final role = m['role']?.toString() ?? '';
@@ -424,7 +438,7 @@ extension on QlTdEngine {
       'restricted_count': 0,
       'banned_count': 0,
       'linked_chat_id': 0,
-      'slow_mode_delay': 0,
+      'slow_mode_delay': found.slowMode,
       'slow_mode_delay_expires_in': 0.0,
       'can_enable_paid_messages': false,
       'can_enable_paid_reaction': false,
@@ -449,7 +463,7 @@ extension on QlTdEngine {
       'sticker_set_id': 0,
       'custom_emoji_sticker_set_id': 0,
       'location': null,
-      'invite_link': null,
+      'invite_link': found.inviteLink,
       'bot_verification': null,
       'main_profile_tab': null,
       'upgraded_from_basic_group_id': 0,

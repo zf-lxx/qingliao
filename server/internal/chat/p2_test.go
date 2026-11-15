@@ -124,10 +124,10 @@ func TestChannelAndGroupProfile(t *testing.T) {
 		t.Fatal(hist, e)
 	}
 	title := "新公告"
-	if e = f.a.UpdateConversation(f.admin, cid, &title, nil); e != nil {
+	if e = f.a.UpdateConversation(f.admin, cid, &title, nil, nil, nil, nil); e != nil {
 		t.Fatal(e)
 	}
-	if e = f.a.UpdateConversation(f.bob, cid, &title, nil); e != ErrForbidden {
+	if e = f.a.UpdateConversation(f.bob, cid, &title, nil, nil, nil, nil); e != ErrForbidden {
 		t.Fatal(e)
 	}
 	g, e := f.a.CreateChat(f.admin, "group", "小组", []string{f.bob.UserID})
@@ -136,7 +136,7 @@ func TestChannelAndGroupProfile(t *testing.T) {
 	}
 	img := uploadMedia(t, f, f.at, "", pngHead(), map[string]string{"X-Media-Filename": "g.png"})
 	av := img["id"].(string)
-	if e = f.a.UpdateConversation(f.admin, g, nil, &av); e != nil {
+	if e = f.a.UpdateConversation(f.admin, g, nil, &av, nil, nil, nil); e != nil {
 		t.Fatal(e)
 	}
 	req(t, f.s, "PATCH", "/v1/conversations/"+g, f.at, map[string]any{"title": "新组名"}, 200)
