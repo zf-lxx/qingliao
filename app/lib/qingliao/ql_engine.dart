@@ -169,6 +169,11 @@ class _Conv {
   bool protectedContent = false;
   bool joinByRequest = false;
   int pendingJoins = 0;
+  Map<String, dynamic>? reactions;
+  bool signMessages = false;
+  bool showSender = false;
+  bool hiddenMembers = false;
+  bool joinToSend = false;
   final Set<int> pinnedSeqs = {};
   final Map<int, List<Map<String, String>>> reactionsBySeq = {};
   final SplayTreeMap<int, Map<String, dynamic>> messages = SplayTreeMap();
@@ -499,7 +504,7 @@ class QlTdEngine {
       case 'createNewSupergroupChat':
         return _createSupergroup(r);
       case 'getSupergroup':
-        return _supergroupById(_int(r['supergroup_id']) ?? 0);
+        return _getSupergroup(_int(r['supergroup_id']) ?? 0);
       case 'getSupergroupFullInfo':
         return _supergroupFullInfo(_int(r['supergroup_id']) ?? 0);
       case 'leaveChat':

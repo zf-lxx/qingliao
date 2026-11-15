@@ -27,9 +27,9 @@ func (a *App) gapRoutes(mux *http.ServeMux) {
 
 func (a *App) getConversation(w http.ResponseWriter, r *http.Request, p Principal) {
 	cid := r.PathValue("id")
-	var kind, title, description, permissions, username string
-	var slow, history, autoDelete, upgraded, protected, joinBy int
-	e := a.DB.QueryRow("SELECT c.kind,c.title,IFNULL(c.description,''),IFNULL(c.slow_mode,0),IFNULL(c.permissions_json,''),IFNULL(c.history_for_new,0),IFNULL(c.auto_delete,0),IFNULL(c.upgraded,0),IFNULL(c.username,''),IFNULL(c.protected,0),IFNULL(c.join_by_request,0) FROM chats c JOIN members b ON b.chat_id=c.id WHERE c.id=? AND b.user_id=?", cid, p.UserID).Scan(&kind, &title, &description, &slow, &permissions, &history, &autoDelete, &upgraded, &username, &protected, &joinBy)
+	var kind, title, description, permissions, username, reactions string
+	var slow, history, autoDelete, upgraded, protected, joinBy, sign, show, hidden, joinSend int
+	e := a.DB.QueryRow("SELECT c.kind,c.title,IFNULL(c.description,''),IFNULL(c.slow_mode,0),IFNULL(c.permissions_json,''),IFNULL(c.history_for_new,0),IFNULL(c.auto_delete,0),IFNULL(c.upgraded,0),IFNULL(c.username,''),IFNULL(c.protected,0),IFNULL(c.join_by_request,0),IFNULL(c.reactions_json,''),IFNULL(c.sign_messages,0),IFNULL(c.show_sender,0),IFNULL(c.hidden_members,0),IFNULL(c.join_to_send,0) FROM chats c JOIN members b ON b.chat_id=c.id WHERE c.id=? AND b.user_id=?", cid, p.UserID).Scan(&kind, &title, &description, &slow, &permissions, &history, &autoDelete, &upgraded, &username, &protected, &joinBy, &reactions, &sign, &show, &hidden, &joinSend)
 	if e != nil {
 		fail(w, ErrForbidden)
 		return
@@ -38,9 +38,13 @@ func (a *App) getConversation(w http.ResponseWriter, r *http.Request, p Principa
 	if permissions != "" {
 		_ = json.Unmarshal([]byte(permissions), &perms)
 	}
+	var reaction any
+	if reactions != "" {
+		_ = json.Unmarshal([]byte(reactions), &reaction)
+	}
 	var pending int
 	_ = a.DB.QueryRow("SELECT count(*) FROM join_requests WHERE chat_id=?", cid).Scan(&pending)
-	respond(w, 200, map[string]any{"id": cid, "kind": kind, "title": title, "description": description, "slow_mode_seconds": slow, "permissions": perms, "history_for_new": history == 1, "auto_delete_seconds": autoDelete, "upgraded": upgraded == 1, "username": username, "protected": protected == 1, "join_by_request": joinBy == 1, "pending_join_requests": pending})
+	respond(w, 200, map[string]any{"id": cid, "kind": kind, "title": title, "description": description, "slow_mode_seconds": slow, "permissions": perms, "history_for_new": history == 1, "auto_delete_seconds": autoDelete, "upgraded": upgraded == 1, "username": username, "protected": protected == 1, "join_by_request": joinBy == 1, "pending_join_requests": pending, "reactions": reaction, "sign_messages": sign == 1, "show_message_sender": show == 1, "hidden_members": hidden == 1, "join_to_send": joinSend == 1})
 }
 
 func (a *App) deleteConversation(w http.ResponseWriter, r *http.Request, p Principal) {
@@ -121,6 +125,9 @@ func (a *App) createInvite(w http.ResponseWriter, r *http.Request, p Principal) 
 			}
 			if !ok {
 				return ErrForbidden
+			}
+			if e = restrictionAllows(tx, cid, p.UserID, "can_invite_users"); e != nil {
+				return e
 			}
 		}
 		_, e = tx.Exec("INSERT INTO chat_invites(code,chat_id,creator,name,created,expires,member_limit,creates_join_request) VALUES(?,?,?,?,?,?,?,?)", code, cid, p.UserID, b.Name, now(), b.Expires, b.MemberLimit, boolInt(b.CreatesJoinRequest))

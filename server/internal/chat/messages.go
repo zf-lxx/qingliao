@@ -477,9 +477,23 @@ func (a *App) React(p Principal, mid, emoji string, remove bool) error {
 		if e := tx.QueryRow("SELECT chat_id,seq FROM messages WHERE id=? AND deleted=0", mid).Scan(&cid, &seq); e != nil {
 			return ErrForbidden
 		}
-		_, joined, e := member(tx, cid, p.UserID)
+		role, joined, e := member(tx, cid, p.UserID)
 		if e != nil || seq <= joined {
 			return ErrForbidden
+		}
+		if !remove && role != "owner" && role != "admin" {
+			if e = restrictionAllows(tx, cid, p.UserID, "can_react_to_messages"); e != nil {
+				return e
+			}
+		}
+		if !remove {
+			var reactions string
+			if e = tx.QueryRow("SELECT IFNULL(reactions_json,'') FROM chats WHERE id=?", cid).Scan(&reactions); e != nil {
+				return e
+			}
+			if !reactionAllowed(reactions, emoji) {
+				return ErrForbidden
+			}
 		}
 		if remove {
 			_, e = tx.Exec("DELETE FROM reactions WHERE message_id=? AND user_id=? AND emoji=?", mid, p.UserID, emoji)

@@ -268,7 +268,7 @@ func validateFilter(f *FolderFilter) error {
 }
 func (a *App) folders(w http.ResponseWriter, r *http.Request, p Principal) {
 	if r.Method == "GET" {
-		rows, e := a.DB.Query(dialogStatsCTE+`SELECT f.id,f.name,f.filter_json,f.sort_order,COALESCE((SELECT SUM(CASE WHEN b.notification_mute_until<=unixepoch() THEN max(x.unread_count,b.manual_unread) ELSE 0 END) FROM members b JOIN chats c ON c.id=b.chat_id JOIN counts x ON x.chat_id=c.id WHERE b.user_id=f.user_id AND `+folderPredicate+`),0) FROM folders f WHERE f.user_id=? ORDER BY sort_order,id`, p.UserID, p.UserID, p.UserID)
+		rows, e := a.DB.Query(dialogStatsCTE+`SELECT f.id,f.name,f.filter_json,f.sort_order,COALESCE((SELECT SUM(CASE WHEN b.notification_mute_until<=unixepoch() THEN max(x.unread_count,b.manual_unread) ELSE 0 END) FROM members b JOIN chats c ON c.id=b.chat_id JOIN counts x ON x.chat_id=c.id WHERE b.user_id=f.user_id AND `+folderPredicate+`),0),EXISTS(SELECT 1 FROM folder_invites i WHERE i.folder_id=f.id AND i.revoked=0) FROM folders f WHERE f.user_id=? ORDER BY sort_order,id`, p.UserID, p.UserID, p.UserID)
 		if e != nil {
 			fail(w, e)
 			return
@@ -277,12 +277,12 @@ func (a *App) folders(w http.ResponseWriter, r *http.Request, p Principal) {
 		out := []map[string]any{}
 		for rows.Next() {
 			var id, name, filter string
-			var order, unread int64
-			if e = rows.Scan(&id, &name, &filter, &order, &unread); e != nil {
+			var order, unread, invites int64
+			if e = rows.Scan(&id, &name, &filter, &order, &unread, &invites); e != nil {
 				fail(w, e)
 				return
 			}
-			out = append(out, map[string]any{"id": id, "name": name, "filter": json.RawMessage(filter), "sort_order": order, "unread_count": unread})
+			out = append(out, map[string]any{"id": id, "name": name, "filter": json.RawMessage(filter), "sort_order": order, "unread_count": unread, "has_invite_links": invites == 1})
 		}
 		respond(w, 200, map[string]any{"folders": out})
 		return

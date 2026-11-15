@@ -304,9 +304,17 @@ extension on QlTdEngine {
           ? {'@type': 'userStatusOnline', 'expires': _nowSeconds() + 300}
           : _userStatus(raw),
       'profile_photo': _profilePhoto(raw?['avatar_media_id']?.toString() ?? '', raw),
-      'accent_color_id': qlUserInt(id) % 7,
+      'accent_color_id': () {
+        final accent = raw?['accent_color_id'];
+        if (accent is num && accent >= 0 && accent <= 6) return accent.toInt();
+        return qlUserInt(id) % 7;
+      }(),
       'background_custom_emoji_id': 0,
-      'profile_accent_color_id': -1,
+      'profile_accent_color_id': () {
+        final accent = raw?['profile_accent_color_id'];
+        if (accent is num) return accent.toInt();
+        return -1;
+      }(),
       'profile_background_custom_emoji_id': 0,
       'emoji_status': null,
       'is_contact': !isMe,
@@ -340,11 +348,15 @@ extension on QlTdEngine {
           previous['avatar_media_id'] != merged['avatar_media_id'] ||
           previous['avatar_mime'] != merged['avatar_mime'] ||
           previous['handle'] != merged['handle'] ||
-          previous['bio'] != merged['bio'];
+          previous['bio'] != merged['bio'] ||
+          previous['birthdate'] != merged['birthdate'] ||
+          previous['accent_color_id'] != merged['accent_color_id'] ||
+          previous['profile_accent_color_id'] != merged['profile_accent_color_id'];
       if (changed) {
         _emit({'@type': 'updateUser', 'user': _tdUser(id)});
         _schedulePersist();
-        if (previous != null && previous['bio'] != merged['bio']) {
+        if (previous != null &&
+            (previous['bio'] != merged['bio'] || previous['birthdate'] != merged['birthdate'])) {
           final info = _userFullInfo(qlUserInt(id));
           unawaited(info.then((full) {
             if (full['@type'] == 'userFullInfo') {
@@ -530,7 +542,8 @@ extension on QlTdEngine {
       'unread_mention_count': c.mentions,
       'unread_reaction_count': 0,
       'notification_settings': _notificationSettings(c),
-      'available_reactions': {'@type': 'chatAvailableReactionsAll', 'max_reaction_count': 11},
+      'available_reactions': c.reactions ??
+          {'@type': 'chatAvailableReactionsAll', 'max_reaction_count': 11},
       'message_auto_delete_time': c.autoDelete,
       'emoji_status': null,
       'background': _wallpapers[c.id],

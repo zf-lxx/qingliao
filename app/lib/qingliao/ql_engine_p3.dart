@@ -186,6 +186,40 @@ extension _QlP3 on QlTdEngine {
         return _processJoinRequest(r);
       case 'processChatJoinRequests':
         return _processJoinRequests(r);
+      case 'getSupergroupMembers':
+        return _supergroupMembers(r);
+      case 'getChatEventLog':
+        return _chatEventLog(r);
+      case 'setChatAvailableReactions':
+        return _setAvailableReactions(r);
+      case 'toggleSupergroupHasHiddenMembers':
+        return _setSupergroupFlag(r, 'hidden_members', r['has_hidden_members'] == true);
+      case 'toggleSupergroupSignMessages':
+        return _setSignMessages(r);
+      case 'toggleSupergroupJoinToSendMessages':
+        return _setSupergroupFlag(r, 'join_to_send', r['join_to_send_messages'] == true);
+      case 'setChatMemberTag':
+        return _setChatMemberTag(r);
+      case 'setBirthdate':
+        return _setBirthdate(r);
+      case 'setAccentColor':
+        return _setAccentColor(r);
+      case 'setProfileAccentColor':
+        return _setProfileAccentColor(r);
+      case 'getChatsForChatFolderInviteLink':
+        return _chatsForFolderInvite(r);
+      case 'getChatFolderInviteLinks':
+        return _folderInviteLinks(r);
+      case 'createChatFolderInviteLink':
+        return _createFolderInvite(r);
+      case 'editChatFolderInviteLink':
+        return _editFolderInvite(r);
+      case 'deleteChatFolderInviteLink':
+        return _deleteFolderInvite(r);
+      case 'checkChatFolderInviteLink':
+        return _checkFolderInvite(r);
+      case 'addChatFolderByInviteLink':
+        return _addFolderByInvite(r);
       default:
         return null;
     }
@@ -834,8 +868,8 @@ extension _QlP3 on QlTdEngine {
       },
       'icon': {'@type': 'chatFolderIcon', 'name': 'Custom'},
       'color_id': -1,
-      'is_shareable': false,
-      'has_my_invite_links': false,
+      'is_shareable': true,
+      'has_my_invite_links': f['has_invite_links'] == true,
     };
   }
 
@@ -1692,6 +1726,12 @@ extension _QlP3 on QlTdEngine {
       c.protectedContent = raw['protected'] == true;
       c.joinByRequest = raw['join_by_request'] == true;
       c.pendingJoins = QlTdEngine._int(raw['pending_join_requests']) ?? c.pendingJoins;
+      c.signMessages = raw['sign_messages'] == true;
+      c.showSender = raw['show_message_sender'] == true;
+      c.hiddenMembers = raw['hidden_members'] == true;
+      c.joinToSend = raw['join_to_send'] == true;
+      final reactions = raw['reactions'];
+      c.reactions = reactions is Map ? Map<String, dynamic>.from(reactions) : null;
       final perms = raw['permissions'];
       if (perms is Map) c.permissions = Map<String, dynamic>.from(perms);
     } catch (_) {}
@@ -2438,6 +2478,9 @@ extension _QlP3 on QlTdEngine {
 
   Future<Map<String, dynamic>> _internalLinkType(Map<String, dynamic> r) async {
     final link = r['link']?.toString() ?? '';
+    if (_folderCode(link) != null) {
+      return {'@type': 'internalLinkTypeChatFolderInvite', 'invite_link': link};
+    }
     if (_inviteCode(link) != null) {
       return {'@type': 'internalLinkTypeChatInvite', 'invite_link': link};
     }
@@ -2454,6 +2497,10 @@ extension _QlP3 on QlTdEngine {
       return {'@type': 'chatMembers', 'total_count': 0, 'members': const <Object>[]};
     }
     final query = (r['query']?.toString() ?? '').trim();
+    await _ensureChatMeta(c);
+    if (c.hiddenMembers && c.role != 'owner' && c.role != 'admin') {
+      return {'@type': 'chatMembers', 'total_count': 0, 'members': const <Object>[]};
+    }
     final raw = await _apiOrThrow.get('/conversations/${c.id}/members', {
       if (query.isNotEmpty) 'q': query,
     });
@@ -2505,6 +2552,368 @@ extension _QlP3 on QlTdEngine {
         'new_content': updated['content'],
       });
     }
+    return _ok;
+  }
+
+  _Conv? _convByGroup(int id) {
+    for (final c in _convs.values) {
+      if ((c.isChannel || c.upgraded) && qlGroupInt(c.id) == id) return c;
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>> _supergroupMembers(Map<String, dynamic> r) async {
+    final c = _convByGroup(QlTdEngine._int(r['supergroup_id']) ?? 0);
+    if (c == null) return _error(404, 'Supergroup not found');
+    await _ensureChatMeta(c);
+    final filter = r['filter'] is Map ? (r['filter'] as Map)['@type']?.toString() : null;
+    final offset = QlTdEngine._int(r['offset']) ?? 0;
+    final limit = (QlTdEngine._int(r['limit']) ?? 50).clamp(1, 200);
+    if (filter == 'supergroupMembersFilterBanned') {
+      Map<String, dynamic> raw;
+      try {
+        raw = await _apiOrThrow.get('/conversations/${c.id}/bans');
+      } on QlApiException catch (e) {
+        return _error(_tdCode(e.statusCode), e.error);
+      }
+      final all = <Map<String, dynamic>>[];
+      for (final item in (raw['bans'] as List? ?? const [])) {
+        if (item is! Map) continue;
+        final uid = item['user_id']?.toString() ?? '';
+        if (uid.isEmpty) continue;
+        await _ensureUser(uid);
+        all.add({
+          '@type': 'chatMember',
+          'member_id': _sender(uid),
+          'tag': '',
+          'inviter_user_id': 0,
+          'joined_chat_date': 0,
+          'status': {'@type': 'chatMemberStatusBanned', 'banned_until_date': 0},
+        });
+      }
+      final page = all.skip(offset).take(limit).toList();
+      return {
+        '@type': 'chatMembers',
+        'total_count': all.length,
+        'member_count': all.length,
+        'members': page,
+      };
+    }
+    if (c.hiddenMembers && c.role != 'owner' && c.role != 'admin' && filter != 'supergroupMembersFilterAdministrators') {
+      return {'@type': 'chatMembers', 'total_count': 0, 'member_count': 0, 'members': const <Object>[]};
+    }
+    if (!c.membersLoaded) await _loadMembers(c);
+    final all = <Map<String, dynamic>>[];
+    for (final m in c.members) {
+      final role = m['role']?.toString() ?? '';
+      if (filter == 'supergroupMembersFilterAdministrators' && role != 'owner' && role != 'admin') {
+        continue;
+      }
+      await _ensureUser(m['user_id']?.toString() ?? '');
+      all.add(_chatMember(m));
+    }
+    final page = all.skip(offset).take(limit).toList();
+    return {
+      '@type': 'chatMembers',
+      'total_count': all.length,
+      'member_count': all.length,
+      'members': page,
+    };
+  }
+
+  String _auditEventType(String action, Object? details) {
+    if (action == 'conversation.updated' && details is Map) {
+      if (details.containsKey('title')) return 'chatEventTitleChanged';
+      if (details.containsKey('avatar_media_id')) return 'chatEventPhotoChanged';
+      if (details.containsKey('description')) return 'chatEventDescriptionChanged';
+      if (details.containsKey('slow_mode_seconds')) return 'chatEventSlowModeDelayChanged';
+      if (details.containsKey('permissions')) return 'chatEventPermissionsChanged';
+    }
+    final actorIsTarget = details is Map && details['user_id'] != null && details['user_id'] == details['actor_id'];
+    return switch (action) {
+      'member.add' => actorIsTarget ? 'chatEventMemberJoined' : 'chatEventMemberInvited',
+      'member.remove' || 'member.left' || 'moderation.unban' => 'chatEventMemberLeft',
+      'member.role' || 'ownership.transfer' => 'chatEventMemberPromoted',
+      'member.banned' || 'member.restricted' || 'moderation.ban' || 'moderation.mute' => 'chatEventMemberRestricted',
+      'moderation.delete_all' || 'message.delete' => 'chatEventMessageDeleted',
+      'message.pinned' => 'chatEventMessagePinned',
+      'message.unpinned' => 'chatEventMessageUnpinned',
+      'settings.update' => 'chatEventPermissionsChanged',
+      _ => 'chatEventUnknown',
+    };
+  }
+
+  Future<Map<String, dynamic>> _chatEventLog(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    if (c == null || c.id.startsWith('virtual:')) return _error(400, 'Chat not found');
+    Map<String, dynamic> raw;
+    try {
+      raw = await _apiOrThrow.get('/conversations/${c.id}/audit');
+    } on QlApiException catch (e) {
+      return _error(_tdCode(e.statusCode), e.error);
+    }
+    final query = (r['query']?.toString() ?? '').trim().toLowerCase();
+    final from = QlTdEngine._int(r['from_event_id']) ?? 0;
+    final limit = (QlTdEngine._int(r['limit']) ?? 50).clamp(1, 100);
+    final users = <int>{
+      for (final v in (r['user_ids'] as List? ?? const []))
+        if (QlTdEngine._int(v) != null) QlTdEngine._int(v)!,
+    };
+    final events = <Map<String, dynamic>>[];
+    for (final item in (raw['audit'] as List? ?? const [])) {
+      if (item is! Map) continue;
+      final id = QlTdEngine._int(item['id']) ?? 0;
+      if (from > 0 && id >= from) continue;
+      final actor = item['actor_id']?.toString() ?? '';
+      final actorInt = qlUserInt(actor);
+      if (users.isNotEmpty && !users.contains(actorInt)) continue;
+      final type = _auditEventType(item['action']?.toString() ?? '', item['details']);
+      if (query.isNotEmpty) {
+        final blob = '${item['action']} $type ${item['details']}'.toLowerCase();
+        if (!blob.contains(query)) continue;
+      }
+      if (actor.isNotEmpty) await _ensureUser(actor);
+      final created = DateTime.tryParse(item['created_at']?.toString() ?? '');
+      events.add({
+        '@type': 'chatEvent',
+        'id': id,
+        'date': created == null ? 0 : created.toUtc().millisecondsSinceEpoch ~/ 1000,
+        'member_id': {'@type': 'messageSenderUser', 'user_id': actorInt},
+        'action': {'@type': type},
+      });
+      if (events.length >= limit) break;
+    }
+    return {'@type': 'chatEvents', 'events': events};
+  }
+
+  void _emitChatFlags(_Conv c) {
+    if (!c.announced) return;
+    _emit({'@type': 'updateChat', 'chat': _tdChat(c)});
+    if (c.isChannel || c.upgraded) {
+      _emit({'@type': 'updateSupergroup', 'supergroup': _supergroup(c)});
+    }
+  }
+
+  Future<Map<String, dynamic>> _setAvailableReactions(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    final reactions = r['available_reactions'];
+    if (c == null || reactions is! Map) return _error(400, 'Chat not found');
+    await _apiOrThrow.put('/conversations/${c.id}/flags', {'reactions': reactions});
+    c.reactions = Map<String, dynamic>.from(reactions);
+    c.metaLoaded = true;
+    _emitChatFlags(c);
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _setSignMessages(Map<String, dynamic> r) async {
+    final c = _convByGroup(QlTdEngine._int(r['supergroup_id']) ?? 0);
+    if (c == null) return _error(404, 'Supergroup not found');
+    final sign = r['sign_messages'] == true;
+    final show = r['show_message_sender'] == true;
+    await _apiOrThrow.put('/conversations/${c.id}/flags', {
+      'sign_messages': sign,
+      'show_message_sender': show,
+    });
+    c.signMessages = sign;
+    c.showSender = show;
+    c.metaLoaded = true;
+    _emitChatFlags(c);
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _setSupergroupFlag(Map<String, dynamic> r, String field, bool value) async {
+    final c = _convByGroup(QlTdEngine._int(r['supergroup_id']) ?? 0);
+    if (c == null) return _error(404, 'Supergroup not found');
+    await _apiOrThrow.put('/conversations/${c.id}/flags', {field: value});
+    if (field == 'hidden_members') c.hiddenMembers = value;
+    if (field == 'join_to_send') c.joinToSend = value;
+    c.metaLoaded = true;
+    _emitChatFlags(c);
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _setChatMemberTag(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    final uid = _userIdByInt[QlTdEngine._int(r['user_id']) ?? 0];
+    if (c == null || uid == null) return _error(400, 'Chat or member not found');
+    final tag = r['tag']?.toString() ?? '';
+    await _apiOrThrow.put('/conversations/${c.id}/members/$uid/tag', {'tag': tag});
+    for (final m in c.members) {
+      if (m['user_id'] == uid) m['tag'] = tag.trim();
+    }
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _setBirthdate(Map<String, dynamic> r) async {
+    final birth = r['birthdate'];
+    Object? body;
+    if (birth == null) {
+      body = null;
+    } else if (birth is Map) {
+      body = {
+        'day': QlTdEngine._int(birth['day']) ?? 0,
+        'month': QlTdEngine._int(birth['month']) ?? 0,
+        'year': QlTdEngine._int(birth['year']) ?? 0,
+      };
+    } else {
+      return _error(400, 'BIRTHDATE_INVALID');
+    }
+    final result = await _apiOrThrow.patch('/me', {'birthdate': body});
+    _rememberUser(result);
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _setAccentColor(Map<String, dynamic> r) async {
+    final id = QlTdEngine._int(r['accent_color_id']);
+    if (id == null || id < 0 || id > 6) return _error(400, 'COLOR_INVALID');
+    final result = await _apiOrThrow.patch('/me', {'accent_color_id': id});
+    _rememberUser(result);
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _setProfileAccentColor(Map<String, dynamic> r) async {
+    final id = QlTdEngine._int(r['profile_accent_color_id']);
+    if (id == null || id < -1 || id > 6) return _error(400, 'COLOR_INVALID');
+    final result = await _apiOrThrow.patch('/me', {'profile_accent_color_id': id});
+    _rememberUser(result);
+    return _ok;
+  }
+
+  String? _folderCode(String link) {
+    final text = link.trim();
+    final uri = Uri.tryParse(text);
+    if (uri != null && uri.scheme == 'ql' && uri.host == 'folder') {
+      final code = uri.pathSegments.isEmpty ? '' : uri.pathSegments.last;
+      if (RegExp(r'^[0-9a-fA-F]{32}$').hasMatch(code)) return code;
+    }
+    return RegExp(r'(?:ql://folder/|folder/)([0-9a-fA-F]{32})').firstMatch(text)?.group(1);
+  }
+
+  List<String>? _backendChatIds(Object? list) {
+    final out = <String>[];
+    for (final v in (list as List? ?? const [])) {
+      final c = _conv(QlTdEngine._int(v) ?? 0);
+      if (c == null || c.id.startsWith('virtual:')) return null;
+      out.add(c.id);
+    }
+    return out;
+  }
+
+  Map<String, dynamic> _tdFolderInvite(Map<String, dynamic> raw) {
+    final ids = <int>[];
+    for (final id in (raw['chat_ids'] as List? ?? const [])) {
+      final c = _convs[id.toString()];
+      if (c != null && c.chatId != 0) ids.add(c.chatId);
+    }
+    return {
+      '@type': 'chatFolderInviteLink',
+      'invite_link': raw['invite_link']?.toString() ?? '',
+      'name': raw['name']?.toString() ?? '',
+      'chat_ids': ids,
+    };
+  }
+
+  Future<Map<String, dynamic>> _chatsForFolderInvite(Map<String, dynamic> r) async {
+    if (_folders.isEmpty) {
+      try {
+        await _refreshFolders();
+      } catch (_) {}
+    }
+    final id = _folderIdByInt[QlTdEngine._int(r['chat_folder_id']) ?? 0];
+    final f = id == null ? null : _folders[id];
+    if (f == null) return _error(404, 'Folder not found');
+    final filter = f['filter'];
+    final include = filter is Map ? filter['include_chat_ids'] : null;
+    final ids = <int>[];
+    for (final rawId in (include as List? ?? const [])) {
+      final c = _convs[rawId.toString()];
+      if (c == null || !c.announced || !c.isGroup || c.chatId == 0) continue;
+      ids.add(c.chatId);
+    }
+    return {'@type': 'chats', 'total_count': ids.length, 'chat_ids': ids};
+  }
+
+  Future<Map<String, dynamic>> _folderInviteLinks(Map<String, dynamic> r) async {
+    final id = _folderIdByInt[QlTdEngine._int(r['chat_folder_id']) ?? 0];
+    if (id == null) return _error(404, 'Folder not found');
+    final raw = await _apiOrThrow.get('/folders/$id/invites');
+    final links = <Map<String, dynamic>>[];
+    for (final item in (raw['invites'] as List? ?? const [])) {
+      if (item is Map) links.add(_tdFolderInvite(Map<String, dynamic>.from(item)));
+    }
+    return {'@type': 'chatFolderInviteLinks', 'invite_links': links};
+  }
+
+  Future<Map<String, dynamic>> _createFolderInvite(Map<String, dynamic> r) async {
+    final id = _folderIdByInt[QlTdEngine._int(r['chat_folder_id']) ?? 0];
+    final chats = _backendChatIds(r['chat_ids']);
+    if (id == null || chats == null || chats.isEmpty) return _error(400, 'CHAT_IDS_EMPTY');
+    final raw = await _apiOrThrow.post('/folders/$id/invites', {
+      'name': r['name']?.toString() ?? '',
+      'chat_ids': chats,
+    });
+    final folder = _folders[id];
+    if (folder != null) {
+      folder['has_invite_links'] = true;
+      _emit(_chatFoldersUpdate());
+    }
+    return _tdFolderInvite(raw);
+  }
+
+  Future<Map<String, dynamic>> _editFolderInvite(Map<String, dynamic> r) async {
+    final code = _folderCode(r['invite_link']?.toString() ?? '');
+    final chats = _backendChatIds(r['chat_ids']);
+    if (code == null || chats == null) return _error(400, 'INVITE_HASH_INVALID');
+    final raw = await _apiOrThrow.patch('/folder-invites/$code', {
+      'name': r['name']?.toString() ?? '',
+      'chat_ids': chats,
+    });
+    return _tdFolderInvite(raw);
+  }
+
+  Future<Map<String, dynamic>> _deleteFolderInvite(Map<String, dynamic> r) async {
+    final code = _folderCode(r['invite_link']?.toString() ?? '');
+    if (code == null) return _error(400, 'INVITE_HASH_INVALID');
+    await _apiOrThrow.delete('/folder-invites/$code');
+    final id = _folderIdByInt[QlTdEngine._int(r['chat_folder_id']) ?? 0];
+    if (id != null) {
+      try {
+        final left = await _apiOrThrow.get('/folders/$id/invites');
+        final list = left['invites'];
+        final folder = _folders[id];
+        if (folder != null) {
+          folder['has_invite_links'] = list is List && list.isNotEmpty;
+          _emit(_chatFoldersUpdate());
+        }
+      } catch (_) {}
+    }
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _checkFolderInvite(Map<String, dynamic> r) async {
+    final code = _folderCode(r['invite_link']?.toString() ?? '');
+    if (code == null) return _error(400, 'INVITE_HASH_INVALID');
+    final info = await _apiOrThrow.get('/folder-invites/$code');
+    final title = info['title']?.toString() ?? info['name']?.toString() ?? '';
+    return {
+      '@type': 'chatFolderInviteLinkInfo',
+      'chat_folder_info': {
+        '@type': 'chatFolderInfo',
+        'title': title,
+        'name': {
+          '@type': 'chatFolderName',
+          'text': _formatted(title),
+          'animate_custom_emoji': false,
+        },
+      },
+    };
+  }
+
+  Future<Map<String, dynamic>> _addFolderByInvite(Map<String, dynamic> r) async {
+    final code = _folderCode(r['invite_link']?.toString() ?? '');
+    if (code == null) return _error(400, 'INVITE_HASH_INVALID');
+    await _apiOrThrow.post('/folder-invites/$code/join');
+    await _refreshFolders();
     return _ok;
   }
 }

@@ -55,14 +55,17 @@ type Principal struct {
 	Admin                       bool
 }
 type User struct {
-	ID         string `json:"id"`
-	Handle     string `json:"handle"`
-	Name       string `json:"display_name"`
-	Avatar     string `json:"avatar_media_id"`
-	AvatarMIME string `json:"avatar_mime,omitempty"`
-	LastSeen   string `json:"last_seen"`
-	Online     bool   `json:"online"`
-	Bio        string `json:"bio"`
+	ID                   string          `json:"id"`
+	Handle               string          `json:"handle"`
+	Name                 string          `json:"display_name"`
+	Avatar               string          `json:"avatar_media_id"`
+	AvatarMIME           string          `json:"avatar_mime,omitempty"`
+	LastSeen             string          `json:"last_seen"`
+	Online               bool            `json:"online"`
+	Bio                  string          `json:"bio"`
+	Birthdate            json.RawMessage `json:"birthdate,omitempty"`
+	AccentColorID        *int            `json:"accent_color_id,omitempty"`
+	ProfileAccentColorID *int            `json:"profile_accent_color_id,omitempty"`
 }
 type MediaInfo struct {
 	ID          string `json:"id"`

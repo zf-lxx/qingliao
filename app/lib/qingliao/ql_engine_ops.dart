@@ -94,6 +94,7 @@ extension on QlTdEngine {
       c = _conv(chatId);
     }
     if (c == null) return _error(400, 'Chat not found');
+    await _ensureChatMeta(c);
     return _tdChat(c);
   }
 
@@ -404,7 +405,7 @@ extension on QlTdEngine {
         'can_edit_stories': false,
         'can_delete_stories': false,
         'can_manage_direct_messages': false,
-        'can_manage_tags': false,
+        'can_manage_tags': true,
         'can_send_welcome_messages': false,
         'is_anonymous': false,
       },
@@ -434,14 +435,37 @@ extension on QlTdEngine {
     return _basicGroup(c);
   }
 
-  Map<String, dynamic> _chatMember(Map<String, dynamic> m) => {
-    '@type': 'chatMember',
-    'member_id': _sender(m['user_id']?.toString() ?? ''),
-    'tag': '',
-    'inviter_user_id': 0,
-    'joined_chat_date': 0,
-    'status': _memberStatus(m['role']?.toString() ?? 'member'),
-  };
+  Map<String, dynamic> _chatMember(Map<String, dynamic> m) {
+    final role = m['role']?.toString() ?? 'member';
+    final tag = m['tag']?.toString() ?? '';
+    final until = QlTdEngine._int(m['restrict_until']) ?? 0;
+    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final active = m['permissions'] is Map && (until == 0 || until > now);
+    Map<String, dynamic> status;
+    if (active && role != 'owner' && role != 'admin') {
+      final perms = Map<String, dynamic>.from(m['permissions'] as Map);
+      perms['@type'] = 'chatPermissions';
+      status = {
+        '@type': 'chatMemberStatusRestricted',
+        'is_member': m['is_member'] != false,
+        'restricted_until_date': until,
+        'permissions': perms,
+      };
+    } else {
+      status = _memberStatus(role);
+      if (tag.isNotEmpty && (role == 'admin' || role == 'owner')) {
+        status['custom_title'] = tag;
+      }
+    }
+    return {
+      '@type': 'chatMember',
+      'member_id': _sender(m['user_id']?.toString() ?? ''),
+      'tag': tag,
+      'inviter_user_id': 0,
+      'joined_chat_date': 0,
+      'status': status,
+    };
+  }
 
   Future<Map<String, dynamic>> _basicGroupFullInfo(int id) async {
     final c = _groupByBasicId(id);
@@ -554,15 +578,53 @@ extension on QlTdEngine {
     }
     switch (status['@type']) {
       case 'chatMemberStatusLeft':
+        return _setMemberStatus(c, uid, 'left');
       case 'chatMemberStatusBanned':
-        return _changeMember(c, uid, 'remove');
+        return _setMemberStatus(c, uid, 'banned', until: QlTdEngine._int(status['banned_until_date']) ?? 0);
       case 'chatMemberStatusAdministrator':
-        return _changeMember(c, uid, 'role', 'admin');
+        return _setMemberStatus(c, uid, 'admin');
       case 'chatMemberStatusMember':
-        return _changeMember(c, uid, 'role', 'member');
+        return _setMemberStatus(c, uid, 'member');
+      case 'chatMemberStatusRestricted':
+        {
+          final perms = status['permissions'];
+          return _setMemberStatus(
+            c,
+            uid,
+            'restricted',
+            until: QlTdEngine._int(status['restricted_until_date']) ?? 0,
+            isMember: status['is_member'] != false,
+            permissions: perms is Map ? Map<String, dynamic>.from(perms) : const {},
+          );
+        }
       default:
         return _unsupported('setChatMemberStatus(${status['@type']})');
     }
+  }
+
+  Future<Map<String, dynamic>> _setMemberStatus(
+    _Conv c,
+    String uid,
+    String status, {
+    int until = 0,
+    bool? isMember,
+    Map<String, dynamic>? permissions,
+  }) async {
+    await _apiOrThrow.put('/conversations/${c.id}/members/$uid/status', {
+      'status': status,
+      'until': until,
+      if (isMember != null) 'is_member': isMember,
+      if (permissions != null) 'permissions': permissions,
+    });
+    try {
+      await _loadMembers(c);
+      if (c.isChannel || c.upgraded) {
+        _emit({'@type': 'updateSupergroup', 'supergroup': _supergroup(c)});
+      } else {
+        _emit({'@type': 'updateBasicGroup', 'basic_group': _basicGroup(c)});
+      }
+    } catch (_) {}
+    return _ok;
   }
 
   Future<Map<String, dynamic>> _leaveChat(Map<String, dynamic> r) async {
@@ -1609,7 +1671,7 @@ extension on QlTdEngine {
       'set_chat_background': false,
       'uses_unofficial_app': false,
       'bio': _formatted(raw?['bio']?.toString() ?? ''),
-      'birthdate': null,
+      'birthdate': _tdBirthdate(raw?['birthdate']),
       'personal_chat_id': 0,
       'gift_count': 0,
       'group_in_common_count': groupsInCommon,
@@ -1627,6 +1689,19 @@ extension on QlTdEngine {
       'share_theme': null,
       'business_info': null,
       'bot_info': null,
+    };
+  }
+
+  Map<String, dynamic>? _tdBirthdate(Object? raw) {
+    if (raw is! Map) return null;
+    final day = QlTdEngine._int(raw['day']) ?? 0;
+    final month = QlTdEngine._int(raw['month']) ?? 0;
+    if (day < 1 || month < 1) return null;
+    return {
+      '@type': 'birthdate',
+      'day': day,
+      'month': month,
+      'year': QlTdEngine._int(raw['year']) ?? 0,
     };
   }
 

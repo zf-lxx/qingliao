@@ -35,6 +35,9 @@ func (a *App) pin(w http.ResponseWriter, r *http.Request, p Principal) {
 			if !ok {
 				return ErrForbidden
 			}
+			if e = restrictionAllows(tx, cid, p.UserID, "can_pin_messages"); e != nil {
+				return e
+			}
 		}
 		var n int
 		if e = tx.QueryRow("SELECT count(*) FROM messages WHERE id=? AND chat_id=? AND seq>? AND deleted=0", b.MessageID, cid, joined).Scan(&n); e != nil {

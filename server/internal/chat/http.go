@@ -81,6 +81,7 @@ func (a *App) Handler() http.Handler {
 	a.gapRoutes(mux)
 	a.round2Routes(mux)
 	a.round3Routes(mux)
+	a.round4Routes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if e := a.Ping(r.Context()); e != nil {
 			respond(w, 503, map[string]bool{"ok": false})
@@ -396,23 +397,33 @@ func isProfileAvatarMIME(mime string) bool {
 
 func (a *App) getUser(uid string) (User, error) {
 	var u User
-	e := a.DB.QueryRow("SELECT users.id,users.handle,users.name,users.avatar,users.last_seen,COALESCE(media.mime,''),COALESCE(users.bio,'') FROM users LEFT JOIN media ON media.id=users.avatar WHERE users.id=?", uid).Scan(&u.ID, &u.Handle, &u.Name, &u.Avatar, &u.LastSeen, &u.AvatarMIME, &u.Bio)
+	var birth string
+	var accent, profile int
+	e := a.DB.QueryRow("SELECT users.id,users.handle,users.name,users.avatar,users.last_seen,COALESCE(media.mime,''),COALESCE(users.bio,''),COALESCE(users.birthdate,''),COALESCE(users.accent_color_id,-1),COALESCE(users.profile_accent_color_id,-1) FROM users LEFT JOIN media ON media.id=users.avatar WHERE users.id=?", uid).Scan(&u.ID, &u.Handle, &u.Name, &u.Avatar, &u.LastSeen, &u.AvatarMIME, &u.Bio, &birth, &accent, &profile)
 	u.Online = a.online(uid)
+	u.AccentColorID = intPtr(accent)
+	u.ProfileAccentColorID = intPtr(profile)
+	if birth != "" && json.Valid([]byte(birth)) {
+		u.Birthdate = json.RawMessage(birth)
+	}
 	return u, e
 }
 func (a *App) profile(w http.ResponseWriter, r *http.Request, p Principal) {
 	a.mediaMu.Lock()
 	defer a.mediaMu.Unlock()
 	var b struct {
-		Name     *string `json:"display_name"`
-		Avatar   *string `json:"avatar_media_id"`
-		Bio      *string `json:"bio"`
-		Username *string `json:"username"`
+		Name          *string         `json:"display_name"`
+		Avatar        *string         `json:"avatar_media_id"`
+		Bio           *string         `json:"bio"`
+		Username      *string         `json:"username"`
+		Birthdate     json.RawMessage `json:"birthdate"`
+		Accent        *int            `json:"accent_color_id"`
+		ProfileAccent *int            `json:"profile_accent_color_id"`
 	}
 	if !decode(w, r, &b) {
 		return
 	}
-	if b.Name == nil && b.Avatar == nil && b.Bio == nil && b.Username == nil {
+	if b.Name == nil && b.Avatar == nil && b.Bio == nil && b.Username == nil && len(b.Birthdate) == 0 && b.Accent == nil && b.ProfileAccent == nil {
 		fail(w, ErrInvalid)
 		return
 	}
@@ -421,6 +432,25 @@ func (a *App) profile(w http.ResponseWriter, r *http.Request, p Principal) {
 		return
 	}
 	if b.Bio != nil && utf8.RuneCountInString(*b.Bio) > 70 {
+		fail(w, ErrInvalid)
+		return
+	}
+	birth := ""
+	birthSet := false
+	if len(b.Birthdate) > 0 {
+		s, err := normalizeBirthdate(b.Birthdate)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		birth = s
+		birthSet = true
+	}
+	if b.Accent != nil && (*b.Accent < 0 || *b.Accent > 6) {
+		fail(w, ErrInvalid)
+		return
+	}
+	if b.ProfileAccent != nil && (*b.ProfileAccent < -1 || *b.ProfileAccent > 6) {
 		fail(w, ErrInvalid)
 		return
 	}
@@ -481,6 +511,21 @@ func (a *App) profile(w http.ResponseWriter, r *http.Request, p Principal) {
 				return e
 			}
 		}
+		if birthSet {
+			if _, e := tx.Exec("UPDATE users SET birthdate=? WHERE id=?", birth, p.UserID); e != nil {
+				return e
+			}
+		}
+		if b.Accent != nil {
+			if _, e := tx.Exec("UPDATE users SET accent_color_id=? WHERE id=?", *b.Accent, p.UserID); e != nil {
+				return e
+			}
+		}
+		if b.ProfileAccent != nil {
+			if _, e := tx.Exec("UPDATE users SET profile_accent_color_id=? WHERE id=?", *b.ProfileAccent, p.UserID); e != nil {
+				return e
+			}
+		}
 		audience, e := profileAudience(tx, p.UserID)
 		if e != nil {
 			return e
@@ -498,6 +543,19 @@ func (a *App) profile(w http.ResponseWriter, r *http.Request, p Principal) {
 		}
 		if b.Username != nil {
 			payload["handle"] = *b.Username
+		}
+		if birthSet {
+			if birth == "" {
+				payload["birthdate"] = nil
+			} else {
+				payload["birthdate"] = json.RawMessage(birth)
+			}
+		}
+		if b.Accent != nil {
+			payload["accent_color_id"] = *b.Accent
+		}
+		if b.ProfileAccent != nil {
+			payload["profile_accent_color_id"] = *b.ProfileAccent
 		}
 		return emit(tx, audience, "user.updated", "", payload)
 	})
@@ -614,7 +672,7 @@ func (a *App) listMembers(w http.ResponseWriter, r *http.Request, p Principal) {
 		fail(w, ErrInvalid)
 		return
 	}
-	rows, e := a.DB.Query("SELECT b.user_id,b.role,b.joined_seq,CASE WHEN b.user_id=? OR (?=1 AND u.read_receipts_enabled=1 AND (SELECT read_receipts_enabled FROM users WHERE id=?)=1) THEN b.read_seq ELSE NULL END FROM members b JOIN users u ON u.id=b.user_id WHERE b.chat_id=? AND (?='' OR instr(lower(u.handle),?)>0 OR instr(lower(u.name),?)>0) ORDER BY b.user_id", p.UserID, a.C.ReadReceiptsEnabled, p.UserID, cid, q, q, q)
+	rows, e := a.DB.Query("SELECT b.user_id,b.role,b.joined_seq,CASE WHEN b.user_id=? OR (?=1 AND u.read_receipts_enabled=1 AND (SELECT read_receipts_enabled FROM users WHERE id=?)=1) THEN b.read_seq ELSE NULL END,IFNULL(b.tag,''),IFNULL(r.until_unix,0),IFNULL(r.permissions_json,''),IFNULL(r.is_member,1) FROM members b JOIN users u ON u.id=b.user_id LEFT JOIN member_restrictions r ON r.chat_id=b.chat_id AND r.user_id=b.user_id WHERE b.chat_id=? AND (?='' OR instr(lower(u.handle),?)>0 OR instr(lower(u.name),?)>0) ORDER BY b.user_id", p.UserID, a.C.ReadReceiptsEnabled, p.UserID, cid, q, q, q)
 	if e != nil {
 		fail(w, e)
 		return
@@ -622,19 +680,29 @@ func (a *App) listMembers(w http.ResponseWriter, r *http.Request, p Principal) {
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
-		var u, role string
-		var j int64
+		var u, role, tag, perms string
+		var j, until int64
 		var read sql.NullInt64
-		if e = rows.Scan(&u, &role, &j, &read); e != nil {
+		var isMember int
+		if e = rows.Scan(&u, &role, &j, &read, &tag, &until, &perms, &isMember); e != nil {
 			fail(w, e)
 			return
 		}
-		out = append(out, map[string]any{"user_id": u, "role": role, "joined_seq": j, "last_read_seq": func() any {
+		item := map[string]any{"user_id": u, "role": role, "joined_seq": j, "tag": tag, "last_read_seq": func() any {
 			if read.Valid {
 				return read.Int64
 			}
 			return nil
-		}()})
+		}()}
+		if perms != "" && (until == 0 || until >= time.Now().Unix()) {
+			var obj any
+			if json.Unmarshal([]byte(perms), &obj) == nil {
+				item["permissions"] = obj
+				item["restrict_until"] = until
+				item["is_member"] = isMember == 1
+			}
+		}
+		out = append(out, item)
 	}
 	respond(w, 200, map[string]any{"members": out})
 }

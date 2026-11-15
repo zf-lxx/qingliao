@@ -622,6 +622,13 @@ extension on QlTdEngine {
             }
             if (data['bio'] != null) current['bio'] = data['bio'];
             if (data['handle'] != null) current['handle'] = data['handle'];
+            if (data.containsKey('birthdate')) current['birthdate'] = data['birthdate'];
+            if (data.containsKey('accent_color_id')) {
+              current['accent_color_id'] = data['accent_color_id'];
+            }
+            if (data.containsKey('profile_accent_color_id')) {
+              current['profile_accent_color_id'] = data['profile_accent_color_id'];
+            }
             _rememberUser(current);
           }
       case 'block.updated':

@@ -393,9 +393,9 @@ extension on QlTdEngine {
       'has_linked_chat': false,
       'has_location': false,
       'has_posted_to_profile_stories': false,
-      'sign_messages': false,
-      'show_message_sender': false,
-      'join_to_send_messages': false,
+      'sign_messages': c.signMessages,
+      'show_message_sender': c.showSender,
+      'join_to_send_messages': c.joinToSend,
       'join_by_request': c.joinByRequest,
       'is_slow_mode_enabled': false,
       'is_channel': c.isChannel,
@@ -412,6 +412,16 @@ extension on QlTdEngine {
       'has_active_stories': false,
       'has_unread_active_stories': false,
     };
+  }
+
+  Future<Map<String, dynamic>> _getSupergroup(int id) async {
+    for (final c in _convs.values) {
+      if ((c.isChannel || c.upgraded) && qlGroupInt(c.id) == id) {
+        await _ensureChatMeta(c);
+        return _supergroup(c);
+      }
+    }
+    return _error(404, 'Supergroup not found');
   }
 
   Map<String, dynamic> _supergroupById(int id) {
@@ -449,9 +459,9 @@ extension on QlTdEngine {
       'slow_mode_delay_expires_in': 0.0,
       'can_enable_paid_messages': false,
       'can_enable_paid_reaction': false,
-      'can_get_members': true,
-      'has_hidden_members': false,
-      'can_hide_members': false,
+      'can_get_members': !found.hiddenMembers || found.role == 'owner' || found.role == 'admin',
+      'has_hidden_members': found.hiddenMembers,
+      'can_hide_members': found.role == 'owner' || found.role == 'admin',
       'can_set_sticker_set': false,
       'can_set_location': false,
       'can_get_statistics': false,

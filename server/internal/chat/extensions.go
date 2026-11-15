@@ -10,10 +10,10 @@ func (a *App) migrateExtensions() error {
 	for table, columns := range map[string]map[string]string{
 		"messages": {"media_meta_json": "TEXT NOT NULL DEFAULT ''", "album_id": "TEXT NOT NULL DEFAULT ''", "entities_json": "TEXT NOT NULL DEFAULT '[]'", "preview_json": "TEXT NOT NULL DEFAULT ''", "reply_markup_json": "TEXT NOT NULL DEFAULT ''", "via_bot_id": "TEXT NOT NULL DEFAULT ''", "forward_origin_json": "TEXT NOT NULL DEFAULT ''", "extra_json": "TEXT NOT NULL DEFAULT ''", "ttl": "INTEGER NOT NULL DEFAULT 0"},
 		"media":    {"width": "INTEGER NOT NULL DEFAULT 0", "height": "INTEGER NOT NULL DEFAULT 0", "duration_ms": "INTEGER NOT NULL DEFAULT 0", "waveform": "TEXT NOT NULL DEFAULT ''", "file_name": "TEXT NOT NULL DEFAULT ''", "thumbnail_id": "TEXT NOT NULL DEFAULT ''"},
-		"chats":    {"last_activity": "INTEGER NOT NULL DEFAULT 0", "avatar": "TEXT NOT NULL DEFAULT ''", "description": "TEXT NOT NULL DEFAULT ''", "slow_mode": "INTEGER NOT NULL DEFAULT 0", "permissions_json": "TEXT NOT NULL DEFAULT ''", "history_for_new": "INTEGER NOT NULL DEFAULT 0", "auto_delete": "INTEGER NOT NULL DEFAULT 0", "upgraded": "INTEGER NOT NULL DEFAULT 0", "username": "TEXT NOT NULL DEFAULT ''", "protected": "INTEGER NOT NULL DEFAULT 0", "join_by_request": "INTEGER NOT NULL DEFAULT 0"},
-		"users":    {"read_receipts_enabled": "INTEGER NOT NULL DEFAULT 1", "password_hint": "TEXT NOT NULL DEFAULT ''", "totp_secret": "TEXT NOT NULL DEFAULT ''", "totp_pending": "TEXT NOT NULL DEFAULT ''", "totp_recovery": "TEXT NOT NULL DEFAULT ''", "deleted": "INTEGER NOT NULL DEFAULT 0", "is_bot": "INTEGER NOT NULL DEFAULT 0", "bio": "TEXT NOT NULL DEFAULT ''"},
+		"chats":    {"last_activity": "INTEGER NOT NULL DEFAULT 0", "avatar": "TEXT NOT NULL DEFAULT ''", "description": "TEXT NOT NULL DEFAULT ''", "slow_mode": "INTEGER NOT NULL DEFAULT 0", "permissions_json": "TEXT NOT NULL DEFAULT ''", "history_for_new": "INTEGER NOT NULL DEFAULT 0", "auto_delete": "INTEGER NOT NULL DEFAULT 0", "upgraded": "INTEGER NOT NULL DEFAULT 0", "username": "TEXT NOT NULL DEFAULT ''", "protected": "INTEGER NOT NULL DEFAULT 0", "join_by_request": "INTEGER NOT NULL DEFAULT 0", "reactions_json": "TEXT NOT NULL DEFAULT ''", "sign_messages": "INTEGER NOT NULL DEFAULT 0", "show_sender": "INTEGER NOT NULL DEFAULT 0", "hidden_members": "INTEGER NOT NULL DEFAULT 0", "join_to_send": "INTEGER NOT NULL DEFAULT 0"},
+		"users":    {"read_receipts_enabled": "INTEGER NOT NULL DEFAULT 1", "password_hint": "TEXT NOT NULL DEFAULT ''", "totp_secret": "TEXT NOT NULL DEFAULT ''", "totp_pending": "TEXT NOT NULL DEFAULT ''", "totp_recovery": "TEXT NOT NULL DEFAULT ''", "deleted": "INTEGER NOT NULL DEFAULT 0", "is_bot": "INTEGER NOT NULL DEFAULT 0", "bio": "TEXT NOT NULL DEFAULT ''", "birthdate": "TEXT NOT NULL DEFAULT ''", "accent_color_id": "INTEGER NOT NULL DEFAULT -1", "profile_accent_color_id": "INTEGER NOT NULL DEFAULT -1"},
 		"devices":  {"created": "TEXT NOT NULL DEFAULT ''", "last_seen": "TEXT NOT NULL DEFAULT ''", "app_name": "TEXT NOT NULL DEFAULT ''", "app_version": "TEXT NOT NULL DEFAULT ''", "device_model": "TEXT NOT NULL DEFAULT ''", "last_ip": "TEXT NOT NULL DEFAULT ''"},
-		"members":  {"manual_unread": "INTEGER NOT NULL DEFAULT 0", "archived": "INTEGER NOT NULL DEFAULT 0", "pin_order": "INTEGER NOT NULL DEFAULT 0", "notification_mute_until": "INTEGER NOT NULL DEFAULT 0", "draft_json": "TEXT NOT NULL DEFAULT ''", "joined_at": "INTEGER NOT NULL DEFAULT 0", "muted_until": "INTEGER NOT NULL DEFAULT 0", "delivered_seq": "INTEGER NOT NULL DEFAULT 0", "delivered_at": "INTEGER NOT NULL DEFAULT 0", "read_at": "INTEGER NOT NULL DEFAULT 0"},
+		"members":  {"manual_unread": "INTEGER NOT NULL DEFAULT 0", "archived": "INTEGER NOT NULL DEFAULT 0", "pin_order": "INTEGER NOT NULL DEFAULT 0", "notification_mute_until": "INTEGER NOT NULL DEFAULT 0", "draft_json": "TEXT NOT NULL DEFAULT ''", "joined_at": "INTEGER NOT NULL DEFAULT 0", "muted_until": "INTEGER NOT NULL DEFAULT 0", "delivered_seq": "INTEGER NOT NULL DEFAULT 0", "delivered_at": "INTEGER NOT NULL DEFAULT 0", "read_at": "INTEGER NOT NULL DEFAULT 0", "tag": "TEXT NOT NULL DEFAULT ''"},
 	} {
 		var exists int
 		if e := a.DB.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&exists); e != nil {
@@ -46,7 +46,7 @@ func (a *App) migrateExtensions() error {
 			}
 		}
 	}
-	_, e := a.DB.Exec(extensionSchema + discoverySchema + p2Schema + p3Schema + p4Schema + p5Schema + p6Schema + p7Schema + p8Schema + p9Schema)
+	_, e := a.DB.Exec(extensionSchema + discoverySchema + p2Schema + p3Schema + p4Schema + p5Schema + p6Schema + p7Schema + p8Schema + p9Schema + p10Schema)
 	if e != nil {
 		return e
 	}
@@ -195,4 +195,11 @@ CREATE TABLE IF NOT EXISTS join_requests(chat_id TEXT NOT NULL REFERENCES chats(
 CREATE INDEX IF NOT EXISTS join_requests_chat ON join_requests(chat_id,created);
 CREATE UNIQUE INDEX IF NOT EXISTS chats_username ON chats(username) WHERE username<>'';
 PRAGMA user_version=12;
+`
+
+const p10Schema = `
+CREATE TABLE IF NOT EXISTS member_restrictions(chat_id TEXT NOT NULL REFERENCES chats(id),user_id TEXT NOT NULL REFERENCES users(id),until_unix INTEGER NOT NULL DEFAULT 0,permissions_json TEXT NOT NULL DEFAULT '{}',is_member INTEGER NOT NULL DEFAULT 1,PRIMARY KEY(chat_id,user_id));
+CREATE TABLE IF NOT EXISTS folder_invites(code TEXT PRIMARY KEY,folder_id TEXT NOT NULL REFERENCES folders(id) ON DELETE CASCADE,creator TEXT NOT NULL REFERENCES users(id),name TEXT NOT NULL DEFAULT '',chat_ids_json TEXT NOT NULL DEFAULT '[]',created TEXT NOT NULL,revoked INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX IF NOT EXISTS folder_invites_folder ON folder_invites(folder_id,revoked);
+PRAGMA user_version=13;
 `

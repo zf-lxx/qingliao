@@ -75,6 +75,9 @@ func (a *App) checkSend(tx *sql.Tx, p Principal, cid string, s Send) error {
 		if !ok {
 			return ErrForbidden
 		}
+		if e := restrictionAllows(tx, cid, p.UserID, permForKind(s.Kind)); e != nil {
+			return e
+		}
 		if s.LinkPreviewID != "" || linkPattern.MatchString(s.Text) {
 			ok, err = memberCan(tx, cid, role, "can_add_link_previews")
 			if err != nil {
@@ -82,6 +85,9 @@ func (a *App) checkSend(tx *sql.Tx, p Principal, cid string, s Send) error {
 			}
 			if !ok {
 				return ErrForbidden
+			}
+			if e := restrictionAllows(tx, cid, p.UserID, "can_add_link_previews"); e != nil {
+				return e
 			}
 		}
 	}
