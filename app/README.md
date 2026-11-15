@@ -9,7 +9,7 @@ source ~/sdk/env.sh
 flutter build apk --release --target-platform android-arm64
 ```
 
-推到 `wip/0.4.10` 且改动了 `app/` 时，GitHub Actions（`.github/workflows/android-apk.yml`）也会打这个包，可在该次运行的 Artifacts 里下载。Actions 页也能手动运行。
+推到 `wip/0.4.10` 且改动了 `app/` 时，GitHub Actions（`.github/workflows/android-apk.yml`）用 Flutter 3.47.9 打这个包，可在该次运行的 Artifacts 里下载。Actions 页也能手动运行。3.44 把 `intl` 钉死在 0.20.2，和当前锁文件的 0.20.3 解不开。
 
 没有仓库密钥时，包用调试签名，和本机没有 `android/key.properties` 时一样。要打正式签名，在仓库 Settings → Secrets 里放这四项：`ANDROID_KEYSTORE_BASE64`（keystore 文件的 base64）、`ANDROID_KEY_ALIAS`、`ANDROID_KEYSTORE_PASSWORD`、`ANDROID_KEY_PASSWORD`。
 
