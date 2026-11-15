@@ -27,9 +27,9 @@ func (a *App) gapRoutes(mux *http.ServeMux) {
 
 func (a *App) getConversation(w http.ResponseWriter, r *http.Request, p Principal) {
 	cid := r.PathValue("id")
-	var kind, title, description, permissions string
-	var slow, history, autoDelete, upgraded int
-	e := a.DB.QueryRow("SELECT c.kind,c.title,IFNULL(c.description,''),IFNULL(c.slow_mode,0),IFNULL(c.permissions_json,''),IFNULL(c.history_for_new,0),IFNULL(c.auto_delete,0),IFNULL(c.upgraded,0) FROM chats c JOIN members b ON b.chat_id=c.id WHERE c.id=? AND b.user_id=?", cid, p.UserID).Scan(&kind, &title, &description, &slow, &permissions, &history, &autoDelete, &upgraded)
+	var kind, title, description, permissions, username string
+	var slow, history, autoDelete, upgraded, protected, joinBy int
+	e := a.DB.QueryRow("SELECT c.kind,c.title,IFNULL(c.description,''),IFNULL(c.slow_mode,0),IFNULL(c.permissions_json,''),IFNULL(c.history_for_new,0),IFNULL(c.auto_delete,0),IFNULL(c.upgraded,0),IFNULL(c.username,''),IFNULL(c.protected,0),IFNULL(c.join_by_request,0) FROM chats c JOIN members b ON b.chat_id=c.id WHERE c.id=? AND b.user_id=?", cid, p.UserID).Scan(&kind, &title, &description, &slow, &permissions, &history, &autoDelete, &upgraded, &username, &protected, &joinBy)
 	if e != nil {
 		fail(w, ErrForbidden)
 		return
@@ -38,7 +38,9 @@ func (a *App) getConversation(w http.ResponseWriter, r *http.Request, p Principa
 	if permissions != "" {
 		_ = json.Unmarshal([]byte(permissions), &perms)
 	}
-	respond(w, 200, map[string]any{"id": cid, "kind": kind, "title": title, "description": description, "slow_mode_seconds": slow, "permissions": perms, "history_for_new": history == 1, "auto_delete_seconds": autoDelete, "upgraded": upgraded == 1})
+	var pending int
+	_ = a.DB.QueryRow("SELECT count(*) FROM join_requests WHERE chat_id=?", cid).Scan(&pending)
+	respond(w, 200, map[string]any{"id": cid, "kind": kind, "title": title, "description": description, "slow_mode_seconds": slow, "permissions": perms, "history_for_new": history == 1, "auto_delete_seconds": autoDelete, "upgraded": upgraded == 1, "username": username, "protected": protected == 1, "join_by_request": joinBy == 1, "pending_join_requests": pending})
 }
 
 func (a *App) deleteConversation(w http.ResponseWriter, r *http.Request, p Principal) {
@@ -83,9 +85,10 @@ func (a *App) DeleteConversation(p Principal, cid string) error {
 func (a *App) createInvite(w http.ResponseWriter, r *http.Request, p Principal) {
 	cid := r.PathValue("id")
 	var b struct {
-		Name        string `json:"name"`
-		Expires     int64  `json:"expires"`
-		MemberLimit int    `json:"member_limit"`
+		Name               string `json:"name"`
+		Expires            int64  `json:"expires"`
+		MemberLimit        int    `json:"member_limit"`
+		CreatesJoinRequest bool   `json:"creates_join_request"`
 	}
 	if !decode(w, r, &b) {
 		return
@@ -120,7 +123,7 @@ func (a *App) createInvite(w http.ResponseWriter, r *http.Request, p Principal) 
 				return ErrForbidden
 			}
 		}
-		_, e = tx.Exec("INSERT INTO chat_invites(code,chat_id,creator,name,created,expires,member_limit) VALUES(?,?,?,?,?,?,?)", code, cid, p.UserID, b.Name, now(), b.Expires, b.MemberLimit)
+		_, e = tx.Exec("INSERT INTO chat_invites(code,chat_id,creator,name,created,expires,member_limit,creates_join_request) VALUES(?,?,?,?,?,?,?,?)", code, cid, p.UserID, b.Name, now(), b.Expires, b.MemberLimit, boolInt(b.CreatesJoinRequest))
 		return e
 	})
 	if e != nil {
@@ -173,9 +176,10 @@ func (a *App) listInvites(w http.ResponseWriter, r *http.Request, p Principal) {
 func (a *App) editInvite(w http.ResponseWriter, r *http.Request, p Principal) {
 	code := r.PathValue("code")
 	var b struct {
-		Name        *string `json:"name"`
-		Expires     *int64  `json:"expires"`
-		MemberLimit *int    `json:"member_limit"`
+		Name               *string `json:"name"`
+		Expires            *int64  `json:"expires"`
+		MemberLimit        *int    `json:"member_limit"`
+		CreatesJoinRequest *bool   `json:"creates_join_request"`
 	}
 	if !decode(w, r, &b) {
 		return
@@ -208,6 +212,11 @@ func (a *App) editInvite(w http.ResponseWriter, r *http.Request, p Principal) {
 				return ErrInvalid
 			}
 			if _, e = tx.Exec("UPDATE chat_invites SET member_limit=? WHERE code=?", *b.MemberLimit, code); e != nil {
+				return e
+			}
+		}
+		if b.CreatesJoinRequest != nil {
+			if _, e = tx.Exec("UPDATE chat_invites SET creates_join_request=? WHERE code=?", boolInt(*b.CreatesJoinRequest), code); e != nil {
 				return e
 			}
 		}
@@ -251,7 +260,7 @@ func (a *App) previewInvite(w http.ResponseWriter, r *http.Request, p Principal)
 	var n int
 	_ = a.DB.QueryRow("SELECT title,kind FROM chats WHERE id=?", inv.ChatID).Scan(&title, &kind)
 	_ = a.DB.QueryRow("SELECT count(*) FROM members WHERE chat_id=?", inv.ChatID).Scan(&n)
-	respond(w, 200, map[string]any{"code": inv.Code, "chat_id": inv.ChatID, "title": title, "kind": kind, "member_count": n, "name": inv.Name})
+	respond(w, 200, map[string]any{"code": inv.Code, "chat_id": inv.ChatID, "title": title, "kind": kind, "member_count": n, "name": inv.Name, "creates_join_request": inv.CreatesJoinRequest == 1})
 }
 
 func (a *App) joinInvite(w http.ResponseWriter, r *http.Request, p Principal) {
@@ -277,9 +286,20 @@ func (a *App) joinInvite(w http.ResponseWriter, r *http.Request, p Principal) {
 			return ErrForbidden
 		}
 		var seq int64
-		var history int
-		if e = tx.QueryRow("SELECT last_seq,IFNULL(history_for_new,0) FROM chats WHERE id=?", inv.ChatID).Scan(&seq, &history); e != nil {
+		var history, joinBy int
+		if e = tx.QueryRow("SELECT last_seq,IFNULL(history_for_new,0),IFNULL(join_by_request,0) FROM chats WHERE id=?", inv.ChatID).Scan(&seq, &history, &joinBy); e != nil {
 			return e
+		}
+		if inv.CreatesJoinRequest == 1 || joinBy == 1 {
+			if _, e = tx.Exec("INSERT INTO join_requests(chat_id,user_id,invite_code,created) VALUES(?,?,?,unixepoch()) ON CONFLICT(chat_id,user_id) DO UPDATE SET invite_code=excluded.invite_code,created=excluded.created", inv.ChatID, p.UserID, code); e != nil {
+				return e
+			}
+			cid = ""
+			users, e := members(tx, inv.ChatID)
+			if e != nil {
+				return e
+			}
+			return a.emitPendingJoins(tx, users, inv.ChatID)
 		}
 		joined := seq
 		if history == 1 {
@@ -302,13 +322,18 @@ func (a *App) joinInvite(w http.ResponseWriter, r *http.Request, p Principal) {
 		fail(w, e)
 		return
 	}
-	respond(w, 200, map[string]string{"conversation_id": cid})
+	if cid == "" {
+		respond(w, 200, map[string]string{"status": "requested"})
+		return
+	}
+	respond(w, 200, map[string]string{"status": "joined", "conversation_id": cid})
 }
 
 type chatInvite struct {
 	Code, ChatID, Creator, Name, Created string
 	Expires                              int64
 	MemberLimit, Uses, Revoked           int
+	CreatesJoinRequest                   int
 }
 
 func (a *App) loadInvite(code string) (chatInvite, error) {
@@ -321,7 +346,7 @@ type rowQuery interface {
 
 func loadInviteTx(q rowQuery, code string) (chatInvite, error) {
 	var inv chatInvite
-	e := q.QueryRow("SELECT code,chat_id,creator,name,created,expires,member_limit,uses,revoked FROM chat_invites WHERE code=?", code).Scan(&inv.Code, &inv.ChatID, &inv.Creator, &inv.Name, &inv.Created, &inv.Expires, &inv.MemberLimit, &inv.Uses, &inv.Revoked)
+	e := q.QueryRow("SELECT code,chat_id,creator,name,created,expires,member_limit,uses,revoked,IFNULL(creates_join_request,0) FROM chat_invites WHERE code=?", code).Scan(&inv.Code, &inv.ChatID, &inv.Creator, &inv.Name, &inv.Created, &inv.Expires, &inv.MemberLimit, &inv.Uses, &inv.Revoked, &inv.CreatesJoinRequest)
 	if e != nil || inv.Revoked == 1 {
 		return inv, ErrForbidden
 	}
@@ -336,10 +361,13 @@ func (a *App) inviteJSON(code string) map[string]any {
 	if e != nil {
 		return map[string]any{"code": code, "revoked": true}
 	}
+	var pending int
+	_ = a.DB.QueryRow("SELECT count(*) FROM join_requests WHERE invite_code=?", code).Scan(&pending)
 	return map[string]any{
 		"code": inv.Code, "invite_link": "ql://join/" + inv.Code, "chat_id": inv.ChatID,
 		"creator_id": inv.Creator, "name": inv.Name, "created": inv.Created,
 		"expires": inv.Expires, "member_limit": inv.MemberLimit, "uses": inv.Uses, "revoked": false,
+		"creates_join_request": inv.CreatesJoinRequest == 1, "pending_join_request_count": pending,
 	}
 }
 

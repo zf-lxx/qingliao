@@ -218,6 +218,13 @@ func (a *App) ForwardMessage(p Principal, mid, dest, clientID string) (Message, 
 		if e != nil || src.Seq <= joined {
 			return ErrForbidden
 		}
+		var protected int
+		if e = tx.QueryRow("SELECT IFNULL(protected,0) FROM chats WHERE id=?", src.ChatID).Scan(&protected); e != nil {
+			return e
+		}
+		if protected == 1 {
+			return ErrForbidden
+		}
 		if e = a.checkSend(tx, p, dest, Send{ClientID: clientID, Kind: src.Kind, Text: src.Text, MediaID: src.MediaID}); e != nil {
 			return e
 		}

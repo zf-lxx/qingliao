@@ -80,6 +80,7 @@ func (a *App) Handler() http.Handler {
 	a.botManageRoutes(mux)
 	a.gapRoutes(mux)
 	a.round2Routes(mux)
+	a.round3Routes(mux)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		if e := a.Ping(r.Context()); e != nil {
 			respond(w, 503, map[string]bool{"ok": false})

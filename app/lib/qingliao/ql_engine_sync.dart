@@ -143,7 +143,7 @@ extension on QlTdEngine {
     if (_isSelfConv(c)) return;
     if (!c.announced) {
       c.announced = true;
-      if (c.isChannel) {
+      if (c.isChannel || c.upgraded) {
         _emit({'@type': 'updateSupergroup', 'supergroup': _supergroup(c)});
       } else if (c.isGroup) {
         _emit({'@type': 'updateBasicGroup', 'basic_group': _basicGroup(c)});
@@ -176,6 +176,17 @@ extension on QlTdEngine {
     }
     if (d['last_read_seq'] != null) c.readSeq = QlTdEngine._int(d['last_read_seq']) ?? c.readSeq;
     if (d['role'] != null) c.role = d['role'].toString();
+    if (d.containsKey('username')) c.username = d['username']?.toString() ?? '';
+    if (d.containsKey('protected')) c.protectedContent = d['protected'] == true;
+    if (d.containsKey('join_by_request')) c.joinByRequest = d['join_by_request'] == true;
+    if (d.containsKey('pending_join_requests')) {
+      c.pendingJoins = QlTdEngine._int(d['pending_join_requests']) ?? 0;
+    }
+    if (d.containsKey('upgraded')) c.upgraded = d['upgraded'] == true;
+    if (d.containsKey('history_for_new')) c.historyForNew = d['history_for_new'] == true;
+    if (d.containsKey('auto_delete_seconds')) {
+      c.autoDelete = QlTdEngine._int(d['auto_delete_seconds']) ?? c.autoDelete;
+    }
     if (d['archived'] != null) c.archived = d['archived'] == true;
     if (d['pinned_order'] != null) c.pinnedOrder = QlTdEngine._int(d['pinned_order']) ?? 0;
     if (d['notification_mute_until'] != null) {
@@ -519,16 +530,42 @@ extension on QlTdEngine {
           if (data.containsKey('upgraded')) {
             updated.upgraded = data['upgraded'] == true;
           }
+          if (data.containsKey('username')) {
+            updated.username = data['username']?.toString() ?? '';
+          }
+          if (data.containsKey('protected')) {
+            updated.protectedContent = data['protected'] == true;
+          }
+          if (data.containsKey('join_by_request')) {
+            updated.joinByRequest = data['join_by_request'] == true;
+          }
+          if (data.containsKey('pending_join_requests')) {
+            updated.pendingJoins = QlTdEngine._int(data['pending_join_requests']) ?? 0;
+          }
           if (data['permissions'] is Map) {
             updated.permissions = Map<String, dynamic>.from(data['permissions'] as Map);
           }
           updated.metaLoaded = true;
-          if (updated.announced && data.containsKey('permissions')) {
-            _emit({
-              '@type': 'updateChatPermissions',
-              'chat_id': updated.chatId,
-              'permissions': _chatPermissions(updated),
-            });
+          if (updated.announced) {
+            final visual = data.containsKey('permissions') ||
+                data.containsKey('protected') ||
+                data.containsKey('username') ||
+                data.containsKey('upgraded') ||
+                data.containsKey('pending_join_requests') ||
+                data.containsKey('join_by_request');
+            if (data.containsKey('permissions')) {
+              _emit({
+                '@type': 'updateChatPermissions',
+                'chat_id': updated.chatId,
+                'permissions': _chatPermissions(updated),
+              });
+            }
+            if (visual) {
+              _emit({'@type': 'updateChat', 'chat': _tdChat(updated)});
+              if (updated.isChannel || updated.upgraded) {
+                _emit({'@type': 'updateSupergroup', 'supergroup': _supergroup(updated)});
+              }
+            }
           }
         }
       case 'conversation.created':
@@ -541,7 +578,7 @@ extension on QlTdEngine {
           try {
             await _loadMembers(c);
           } catch (_) {}
-          if (c.isChannel) {
+          if (c.isChannel || c.upgraded) {
             _emit({'@type': 'updateSupergroup', 'supergroup': _supergroup(c)});
           } else if (c.isGroup) {
             _emit({'@type': 'updateBasicGroup', 'basic_group': _basicGroup(c)});

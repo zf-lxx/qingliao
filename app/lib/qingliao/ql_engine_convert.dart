@@ -515,7 +515,7 @@ extension on QlTdEngine {
       ],
       'message_sender_id': null,
       'block_list': blocked ? {'@type': 'blockListMain'} : null,
-      'has_protected_content': false,
+      'has_protected_content': c.protectedContent,
       'is_translatable': false,
       'is_marked_as_unread': c.manualUnread,
       'view_as_topics': false,
@@ -543,7 +543,13 @@ extension on QlTdEngine {
         'has_participants': false,
         'default_participant_id': null,
       },
-      'pending_join_requests': null,
+      'pending_join_requests': c.pendingJoins <= 0 || (c.role != 'owner' && c.role != 'admin')
+          ? null
+          : {
+              '@type': 'chatJoinRequestsInfo',
+              'total_count': c.pendingJoins,
+              'user_ids': const <int>[],
+            },
       'reply_markup_message_id': 0,
       'draft_message': draft,
       'client_data': '',
@@ -565,6 +571,7 @@ extension on QlTdEngine {
     final sender = m['sender_id']?.toString() ?? '';
     final outgoing = sender == _myId;
     final id = scheduled ? qlPackInt('sched:${m['id']}') : qlMessageId(seq);
+    if (scheduled) _scheduledBackend[id] = m['id']?.toString() ?? '';
     final ttl = QlTdEngine._int(m['ttl']) ?? 0;
     Map<String, dynamic>? scheduling;
     if (scheduled) {

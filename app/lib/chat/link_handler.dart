@@ -2760,6 +2760,10 @@ Future<void> _joinInvite(
       sourceChat: sourceChat,
       query: queryAccount,
     );
+  } on TdError catch (error) {
+    if (error.message.contains('INVITE_REQUEST_SENT') && context.mounted) {
+      showToast(context, AppStrings.t(AppStringKeys.chatJoinRequestSent));
+    }
   } catch (_) {}
 }
 

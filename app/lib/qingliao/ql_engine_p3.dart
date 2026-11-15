@@ -174,6 +174,18 @@ extension _QlP3 on QlTdEngine {
         return _customEmojiStickers(r);
       case 'getChatScheduledMessages':
         return _scheduledMessages(r);
+      case 'setSupergroupUsername':
+        return _setSupergroupUsername(r);
+      case 'toggleChatHasProtectedContent':
+        return _setProtected(r);
+      case 'toggleSupergroupJoinByRequest':
+        return _setJoinByRequest(r);
+      case 'getChatJoinRequests':
+        return _joinRequests(r);
+      case 'processChatJoinRequest':
+        return _processJoinRequest(r);
+      case 'processChatJoinRequests':
+        return _processJoinRequests(r);
       default:
         return null;
     }
@@ -1676,6 +1688,10 @@ extension _QlP3 on QlTdEngine {
       c.autoDelete = QlTdEngine._int(raw['auto_delete_seconds']) ?? 0;
       c.historyForNew = raw['history_for_new'] == true;
       c.upgraded = raw['upgraded'] == true;
+      c.username = raw['username']?.toString() ?? c.username;
+      c.protectedContent = raw['protected'] == true;
+      c.joinByRequest = raw['join_by_request'] == true;
+      c.pendingJoins = QlTdEngine._int(raw['pending_join_requests']) ?? c.pendingJoins;
       final perms = raw['permissions'];
       if (perms is Map) c.permissions = Map<String, dynamic>.from(perms);
     } catch (_) {}
@@ -1809,6 +1825,283 @@ extension _QlP3 on QlTdEngine {
     }
     c.hasScheduled = messages.isNotEmpty;
     return {'@type': 'messages', 'total_count': messages.length, 'messages': messages};
+  }
+
+  _Conv? _convBySupergroup(int id) {
+    for (final c in _convs.values) {
+      if ((c.isChannel || c.upgraded) && qlGroupInt(c.id) == id) return c;
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>> _setSupergroupUsername(Map<String, dynamic> r) async {
+    final c = _convBySupergroup(QlTdEngine._int(r['supergroup_id']) ?? 0);
+    if (c == null) return _error(404, 'Supergroup not found');
+    final name = (r['username']?.toString() ?? '').trim();
+    try {
+      final raw = await _apiOrThrow.put('/conversations/${c.id}/username', {'username': name});
+      c.username = raw['username']?.toString() ?? '';
+    } on QlApiException catch (e) {
+      return _error(_tdCode(e.statusCode), e.statusCode == 409 ? 'USERNAME_NOT_MODIFIED' : e.error);
+    }
+    if (c.announced) {
+      _emit({'@type': 'updateChat', 'chat': _tdChat(c)});
+      _emit({'@type': 'updateSupergroup', 'supergroup': _supergroup(c)});
+    }
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _setProtected(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    if (c == null || !c.isGroup) return _error(400, 'Chat not found');
+    final enabled = r['has_protected_content'] == true;
+    await _apiOrThrow.put('/conversations/${c.id}/protected', {'enabled': enabled});
+    c.protectedContent = enabled;
+    if (c.announced) _emit({'@type': 'updateChat', 'chat': _tdChat(c)});
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _setJoinByRequest(Map<String, dynamic> r) async {
+    final c = _convBySupergroup(QlTdEngine._int(r['supergroup_id']) ?? 0);
+    if (c == null) return _error(404, 'Supergroup not found');
+    final enabled = r['join_by_request'] == true;
+    await _apiOrThrow.put('/conversations/${c.id}/join-by-request', {
+      'enabled': enabled,
+      'apply_to_invite_links': r['apply_to_invite_links'] == true,
+    });
+    c.joinByRequest = enabled;
+    if (c.announced) {
+      _emit({'@type': 'updateChat', 'chat': _tdChat(c)});
+      _emit({'@type': 'updateSupergroup', 'supergroup': _supergroup(c)});
+    }
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _joinRequests(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    if (c == null) return _error(400, 'Chat not found');
+    final limit = (QlTdEngine._int(r['limit']) ?? 100).clamp(1, 100);
+    final raw = await _apiOrThrow.get('/conversations/${c.id}/join-requests');
+    final all = <Map<String, dynamic>>[];
+    for (final item in (raw['requests'] as List? ?? const [])) {
+      if (item is! Map) continue;
+      final uid = item['user_id']?.toString() ?? '';
+      all.add({
+        '@type': 'chatJoinRequest',
+        'chat_id': c.chatId,
+        'user_id': qlUserInt(uid),
+        'date': QlTdEngine._int(item['date']) ?? 0,
+        'bio': '',
+      });
+    }
+    var start = 0;
+    final offset = r['offset_request'];
+    if (offset is Map) {
+      final uid = QlTdEngine._int(offset['user_id']) ?? 0;
+      final date = QlTdEngine._int(offset['date']) ?? 0;
+      final at = all.indexWhere((q) => q['user_id'] == uid && q['date'] == date);
+      if (at >= 0) start = at + 1;
+    }
+    final page = all.skip(start).take(limit).toList();
+    return {'@type': 'chatJoinRequests', 'total_count': all.length, 'requests': page};
+  }
+
+  Future<Map<String, dynamic>> _processJoinRequest(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    final uid = _userIdByInt[QlTdEngine._int(r['user_id']) ?? 0];
+    if (c == null || uid == null) return _error(400, 'Chat or user not found');
+    await _apiOrThrow.post('/conversations/${c.id}/join-requests/$uid', {'approve': r['approve'] == true});
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _processJoinRequests(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    if (c == null) return _error(400, 'Chat not found');
+    await _apiOrThrow.post('/conversations/${c.id}/join-requests', {'approve': r['approve'] == true});
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _messageLink(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    final id = QlTdEngine._int(r['message_id']) ?? 0;
+    final seq = qlSeqOf(id);
+    if (c == null || seq <= 0) return _error(400, 'Message not found');
+    final public = c.username.isNotEmpty;
+    final link = public ? 'https://t.me/${c.username}/$seq' : 'mk://msg?chat=${c.chatId}&message=$id';
+    return {'@type': 'messageLink', 'link': link, 'is_public': public};
+  }
+
+  Map<String, dynamic>? _classifyLink(String link) {
+    final uri = Uri.tryParse(link.trim());
+    if (uri == null) return null;
+    final scheme = uri.scheme.toLowerCase();
+    final host = uri.host.toLowerCase();
+    if (scheme == 'tg' && host == 'msg') {
+      return {'@type': 'internalLinkTypeMessage', 'url': link};
+    }
+    if (scheme == 'tg' && host == 'resolve') {
+      final domain = uri.queryParameters['domain'] ?? '';
+      if (domain.isEmpty) return null;
+      final post = uri.queryParameters['post'];
+      if (post != null && post.isNotEmpty) {
+        return {'@type': 'internalLinkTypeMessage', 'url': link};
+      }
+      return {'@type': 'internalLinkTypePublicChat', 'chat_username': domain};
+    }
+    if (host == 't.me' || host == 'telegram.me' || host == 'www.t.me' || host == 'www.telegram.me') {
+      final segs = [for (final s in uri.pathSegments) if (s.isNotEmpty) s];
+      if (segs.isEmpty) return null;
+      const reserved = {'share', 'addstickers', 'login', 'proxy', 'joinchat', 'iv', 'bg', 'socks', 'addtheme', 'confirmphone'};
+      if (reserved.contains(segs.first.toLowerCase()) || segs.first.startsWith('+')) return null;
+      if (segs.length >= 2 && int.tryParse(segs[1]) != null) {
+        return {'@type': 'internalLinkTypeMessage', 'url': link};
+      }
+      if (RegExp(r'^[A-Za-z0-9_]{3,32}$').hasMatch(segs.first)) {
+        return {'@type': 'internalLinkTypePublicChat', 'chat_username': segs.first};
+      }
+    }
+    return null;
+  }
+
+  Future<Map<String, dynamic>> _messageLinkInfo(Map<String, dynamic> r) async {
+    final url = r['url']?.toString() ?? '';
+    final uri = Uri.tryParse(url.trim());
+    if (uri == null) return _error(400, 'LINK_INVALID');
+    int? chatId;
+    int? messageId;
+    var isPublic = false;
+    final host = uri.host.toLowerCase();
+    if (uri.scheme.toLowerCase() == 'tg' && host == 'msg') {
+      chatId = int.tryParse(uri.queryParameters['chat'] ?? '');
+      messageId = int.tryParse(uri.queryParameters['message'] ?? '');
+    } else if (uri.scheme.toLowerCase() == 'tg' && host == 'resolve') {
+      final domain = uri.queryParameters['domain'] ?? '';
+      final post = int.tryParse(uri.queryParameters['post'] ?? '');
+      if (domain.isNotEmpty && post != null) {
+        final chat = await _searchPublicChat(domain);
+        if (chat['@type'] != 'chat') return chat;
+        chatId = QlTdEngine._int(chat['id']);
+        messageId = qlMessageId(post);
+        isPublic = true;
+      }
+    } else if (host == 't.me' || host == 'telegram.me' || host == 'www.t.me' || host == 'www.telegram.me') {
+      final segs = [for (final s in uri.pathSegments) if (s.isNotEmpty) s];
+      if (segs.length >= 2 && segs.first != 'c') {
+        final seq = int.tryParse(segs[1]);
+        if (seq != null) {
+          final chat = await _searchPublicChat(segs.first);
+          if (chat['@type'] != 'chat') return chat;
+          chatId = QlTdEngine._int(chat['id']);
+          messageId = qlMessageId(seq);
+          isPublic = true;
+        }
+      }
+    }
+    if (chatId == null || messageId == null) return _error(400, 'LINK_INVALID');
+    final message = await _getMessage(chatId, messageId);
+    if (message['@type'] != 'message') return message;
+    return {
+      '@type': 'messageLinkInfo',
+      'is_public': isPublic,
+      'chat_id': chatId,
+      'message': message,
+      'media_timestamp': 0,
+      'for_album': false,
+    };
+  }
+
+  Future<Map<String, dynamic>> _messageByDate(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    final at = QlTdEngine._int(r['date']) ?? 0;
+    if (c == null || at <= 0) return _error(400, 'Chat not found');
+    final raw = await _apiOrThrow.get('/conversations/${c.id}/by-date', {'at': '$at'});
+    final td = _tdMessage(c, Map<String, dynamic>.from(raw));
+    if (td == null) return _error(404, 'Not Found');
+    _cacheMessage(c, td, Map<String, dynamic>.from(raw));
+    return td;
+  }
+
+  Future<Map<String, dynamic>> _pollVoters(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    final messageId = QlTdEngine._int(r['message_id']) ?? 0;
+    if (c == null) return _error(400, 'Chat not found');
+    var td = c.messages[qlSeqOf(messageId)];
+    td ??= await _getMessage(c.chatId, messageId);
+    final pollId = ((td['content'] as Map?)?['@ql_poll_id'])?.toString() ?? '';
+    if (pollId.isEmpty) return _error(400, 'Poll not found');
+    final raw = await _apiOrThrow.get('/conversations/${c.id}/polls/$pollId/voters', {
+      'option_id': '${QlTdEngine._int(r['option_id']) ?? 0}',
+      'offset': '${QlTdEngine._int(r['offset']) ?? 0}',
+      'limit': '${QlTdEngine._int(r['limit']) ?? 50}',
+    });
+    final voters = <Map<String, dynamic>>[];
+    for (final item in (raw['voters'] as List? ?? const [])) {
+      if (item is! Map) continue;
+      final uid = item['user_id']?.toString() ?? '';
+      if (uid.isNotEmpty) {
+        try {
+          await _ensureUser(uid);
+        } catch (_) {}
+      }
+      voters.add({'@type': 'messageSenderUser', 'user_id': qlUserInt(uid)});
+    }
+    return {
+      '@type': 'messageSenders',
+      'total_count': QlTdEngine._int(raw['total_count']) ?? voters.length,
+      'senders': voters,
+      'voters': voters,
+    };
+  }
+
+  Future<Map<String, dynamic>> _editScheduling(Map<String, dynamic> r) async {
+    final id = QlTdEngine._int(r['message_id']) ?? 0;
+    final sid = _scheduledBackend[id];
+    if (sid == null || sid.isEmpty) return _error(404, 'Message not found');
+    final state = r['scheduling_state'];
+    if (state == null) {
+      await _apiOrThrow.post('/scheduled/$sid/send', {});
+    } else if (state is Map && state['@type'] == 'messageSchedulingStateSendWhenOnline') {
+      await _apiOrThrow.patch('/scheduled/$sid', {'when_online': true, 'send_at': 0});
+    } else if (state is Map) {
+      await _apiOrThrow.patch('/scheduled/$sid', {
+        'when_online': false,
+        'send_at': QlTdEngine._int(state['send_date']) ?? 0,
+      });
+    } else {
+      return _error(400, 'SCHEDULING_STATE_INVALID');
+    }
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _editMedia(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    final id = QlTdEngine._int(r['message_id']) ?? 0;
+    if (c == null) return _error(400, 'Chat not found');
+    final backendId = c.messages[qlSeqOf(id)]?['@ql_id']?.toString() ?? '';
+    final input = r['input_message_content'];
+    if (backendId.isEmpty || input is! Map) return _error(400, 'Message not found');
+    final draft = _draftContent(Map<String, dynamic>.from(input));
+    if (draft == null || draft.path == null) return _unsupported('editMessageMedia');
+    final headers = await _uploadHeadersFor(draft.kind, draft.path!, draft.content);
+    final uploaded = await _apiOrThrow.uploadFile(
+      draft.path!,
+      conversationId: c.id,
+      mimeType: _uploadMimeFor(draft.kind, draft.path!),
+      headers: headers,
+    );
+    final mediaId = uploaded['id']?.toString() ?? '';
+    if (mediaId.isEmpty) return _error(500, 'upload_failed');
+    final result = await _apiOrThrow.patch('/messages/$backendId/media', {
+      'kind': draft.kind,
+      'text': draft.text,
+      'media_id': mediaId,
+      if (draft.entities.isNotEmpty) 'entities': draft.entities,
+      if (draft.extra != null) 'extra': draft.extra,
+    });
+    final td = _tdMessage(c, result);
+    if (td == null) return _error(400, 'Message was deleted');
+    await _onMessageEdited(c.id, result);
+    return td;
   }
 
   Future<Map<String, dynamic>> _deleteChat(Map<String, dynamic> r) async {
@@ -2019,23 +2312,21 @@ extension _QlP3 on QlTdEngine {
       'expiration_date': QlTdEngine._int(raw['expires']) ?? 0,
       'member_limit': QlTdEngine._int(raw['member_limit']) ?? 0,
       'member_count': QlTdEngine._int(raw['uses']) ?? 0,
-      'pending_join_request_count': 0,
-      'creates_join_request': false,
+      'pending_join_request_count': QlTdEngine._int(raw['pending_join_request_count']) ?? 0,
+      'creates_join_request': raw['creates_join_request'] == true,
       'is_primary': false,
       'is_revoked': raw['revoked'] == true,
     };
   }
 
   Future<Map<String, dynamic>> _createChatInviteLink(Map<String, dynamic> r) async {
-    if (r['creates_join_request'] == true) {
-      return _unsupported('createChatInviteLink(join_request)');
-    }
     final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
     if (c == null || !c.isGroup) return _error(400, 'Chat not found');
     final raw = await _apiOrThrow.post('/conversations/${c.id}/invites', {
       'name': (r['name']?.toString() ?? '').trim(),
       'expires': QlTdEngine._int(r['expiration_date']) ?? 0,
       'member_limit': QlTdEngine._int(r['member_limit']) ?? 0,
+      'creates_join_request': r['creates_join_request'] == true,
     });
     final link = _tdInviteLink(raw);
     c.inviteLink ??= link;
@@ -2043,15 +2334,13 @@ extension _QlP3 on QlTdEngine {
   }
 
   Future<Map<String, dynamic>> _editChatInviteLink(Map<String, dynamic> r) async {
-    if (r['creates_join_request'] == true) {
-      return _unsupported('editChatInviteLink(join_request)');
-    }
     final code = _inviteCode(r['invite_link']?.toString() ?? '');
     if (code == null) return _error(400, 'INVITE_HASH_INVALID');
     final raw = await _apiOrThrow.patch('/invites/$code', {
       'name': (r['name']?.toString() ?? '').trim(),
       'expires': QlTdEngine._int(r['expiration_date']) ?? 0,
       'member_limit': QlTdEngine._int(r['member_limit']) ?? 0,
+      'creates_join_request': r['creates_join_request'] == true,
     });
     return _tdInviteLink(raw);
   }
@@ -2130,7 +2419,7 @@ extension _QlP3 on QlTdEngine {
       'description': '',
       'member_count': QlTdEngine._int(info['member_count']) ?? 0,
       'member_user_ids': const <int>[],
-      'creates_join_request': false,
+      'creates_join_request': info['creates_join_request'] == true,
       'is_public': false,
     };
   }
@@ -2139,6 +2428,7 @@ extension _QlP3 on QlTdEngine {
     final code = _inviteCode(r['invite_link']?.toString() ?? '');
     if (code == null) return _error(400, 'INVITE_HASH_INVALID');
     final joined = await _apiOrThrow.post('/invites/$code/join');
+    if (joined['status'] == 'requested') return _error(400, 'INVITE_REQUEST_SENT');
     final cid = joined['conversation_id']?.toString() ?? '';
     var c = _convs[cid];
     if (c == null || !c.announced) c = await _discoverConversation(cid);
@@ -2146,12 +2436,14 @@ extension _QlP3 on QlTdEngine {
     return _tdChat(c);
   }
 
-  Map<String, dynamic> _internalLinkType(Map<String, dynamic> r) {
+  Future<Map<String, dynamic>> _internalLinkType(Map<String, dynamic> r) async {
     final link = r['link']?.toString() ?? '';
     if (_inviteCode(link) != null) {
       return {'@type': 'internalLinkTypeChatInvite', 'invite_link': link};
     }
-    return _unsupported('getInternalLinkType');
+    final parsed = _classifyLink(link);
+    if (parsed == null) return _unsupported('getInternalLinkType');
+    return parsed;
   }
 
   Future<Map<String, dynamic>> _searchChatMembers(Map<String, dynamic> r) async {

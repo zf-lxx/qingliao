@@ -315,7 +315,7 @@ extension on QlTdEngine {
     c.title = title;
     if (c.announced) {
       _emit({'@type': 'updateChatTitle', 'chat_id': c.chatId, 'title': title});
-      if (c.isChannel) {
+      if (c.isChannel || c.upgraded) {
         _emit({'@type': 'updateSupergroup', 'supergroup': _supergroup(c)});
       } else {
         _emit({'@type': 'updateBasicGroup', 'basic_group': _basicGroup(c)});
@@ -377,7 +377,14 @@ extension on QlTdEngine {
     return {
       '@type': 'supergroup',
       'id': qlGroupInt(c.id),
-      'usernames': null,
+      'usernames': c.username.isEmpty
+          ? null
+          : {
+              '@type': 'usernames',
+              'active_usernames': [c.username],
+              'disabled_usernames': const <String>[],
+              'editable_username': c.username,
+            },
       'date': 0,
       'status': _memberStatus(c.role),
       'member_count': c.members.length,
@@ -389,7 +396,7 @@ extension on QlTdEngine {
       'sign_messages': false,
       'show_message_sender': false,
       'join_to_send_messages': false,
-      'join_by_request': false,
+      'join_by_request': c.joinByRequest,
       'is_slow_mode_enabled': false,
       'is_channel': c.isChannel,
       'is_broadcast_group': c.isChannel,
@@ -508,12 +515,10 @@ extension on QlTdEngine {
       'searchMessagesFilterVoiceNote' || 'searchMessagesFilterVoiceAndVideoNote' => 'voice',
       'searchMessagesFilterUrl' => 'link',
       'searchMessagesFilterAudio' => 'audio',
-      'searchMessagesFilterAnimation' ||
-      'searchMessagesFilterVideoNote' ||
-      'searchMessagesFilterPoll' ||
-      'searchMessagesFilterChatPhoto' ||
-      'searchMessagesFilterPinned' =>
-        'unsupported-empty',
+      'searchMessagesFilterAnimation' => 'animation',
+      'searchMessagesFilterVideoNote' => 'video_note',
+      'searchMessagesFilterPoll' => 'poll',
+      'searchMessagesFilterChatPhoto' || 'searchMessagesFilterPinned' => 'unsupported-empty',
       _ => 'unsupported-empty',
     };
     if (filter == 'searchMessagesFilterPinned') {
@@ -555,6 +560,9 @@ extension on QlTdEngine {
           'voice' => QlTdEngine._int(counts['voice']) ?? found['total_count'],
           'link' => QlTdEngine._int(counts['link']) ?? found['total_count'],
           'audio' => QlTdEngine._int(counts['audio']) ?? found['total_count'],
+          'animation' => QlTdEngine._int(counts['animation']) ?? found['total_count'],
+          'video_note' => QlTdEngine._int(counts['video_note']) ?? found['total_count'],
+          'poll' => QlTdEngine._int(counts['poll']) ?? found['total_count'],
           _ => (QlTdEngine._int(counts['image']) ?? 0) +
               (QlTdEngine._int(counts['video']) ?? 0) +
               (found['total_count'] as int? ?? 0),
@@ -728,6 +736,9 @@ extension on QlTdEngine {
           'voice' => QlTdEngine._int(counts['voice']) ?? 0,
           'link' => QlTdEngine._int(counts['link']) ?? 0,
           'audio' => QlTdEngine._int(counts['audio']) ?? 0,
+          'animation' => QlTdEngine._int(counts['animation']) ?? 0,
+          'video_note' => QlTdEngine._int(counts['video_note']) ?? 0,
+          'poll' => QlTdEngine._int(counts['poll']) ?? 0,
           _ => (QlTdEngine._int(counts['image']) ?? 0) +
               (QlTdEngine._int(counts['video']) ?? 0) +
               (QlTdEngine._int(counts['file']) ?? 0) +
@@ -760,7 +771,10 @@ extension on QlTdEngine {
         'voice',
       'searchMessagesFilterUrl' => 'link',
       'searchMessagesFilterAudio' => 'audio',
-      _ => null, // animation / video-note / poll / etc: do not fake an empty stored type
+      'searchMessagesFilterAnimation' => 'animation',
+      'searchMessagesFilterVideoNote' => 'video_note',
+      'searchMessagesFilterPoll' => 'poll',
+      _ => null, // chat-photo and the rest: do not fake an empty stored type
     };
   }
 

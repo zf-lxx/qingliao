@@ -165,6 +165,10 @@ class _Conv {
   int autoDelete = 0;
   bool historyForNew = false;
   bool hasScheduled = false;
+  String username = '';
+  bool protectedContent = false;
+  bool joinByRequest = false;
+  int pendingJoins = 0;
   final Set<int> pinnedSeqs = {};
   final Map<int, List<Map<String, String>>> reactionsBySeq = {};
   final SplayTreeMap<int, Map<String, dynamic>> messages = SplayTreeMap();
@@ -211,6 +215,7 @@ class QlTdEngine {
   int _proxySeq = 0;
   final Map<int, String> _deviceByInt = {};
   final Map<int, String> _albumByInt = {};
+  final Map<int, String> _scheduledBackend = {};
 
   // ---- state
   final Set<String> _blockedUserIds = {};
@@ -580,7 +585,17 @@ class QlTdEngine {
       case 'getMessageProperties':
         return _messageProperties(r);
       case 'getMessageLink':
-        return _unsupported(type);
+        return _messageLink(r);
+      case 'getMessageLinkInfo':
+        return _messageLinkInfo(r);
+      case 'getChatMessageByDate':
+        return _messageByDate(r);
+      case 'editMessageMedia':
+        return _editMedia(r);
+      case 'editMessageSchedulingState':
+        return _editScheduling(r);
+      case 'getPollVoters':
+        return _pollVoters(r);
       // --- users
       case 'getUser':
         return _getUser(_int(r['user_id']) ?? 0);

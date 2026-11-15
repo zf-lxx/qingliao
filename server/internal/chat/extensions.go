@@ -10,7 +10,7 @@ func (a *App) migrateExtensions() error {
 	for table, columns := range map[string]map[string]string{
 		"messages": {"media_meta_json": "TEXT NOT NULL DEFAULT ''", "album_id": "TEXT NOT NULL DEFAULT ''", "entities_json": "TEXT NOT NULL DEFAULT '[]'", "preview_json": "TEXT NOT NULL DEFAULT ''", "reply_markup_json": "TEXT NOT NULL DEFAULT ''", "via_bot_id": "TEXT NOT NULL DEFAULT ''", "forward_origin_json": "TEXT NOT NULL DEFAULT ''", "extra_json": "TEXT NOT NULL DEFAULT ''", "ttl": "INTEGER NOT NULL DEFAULT 0"},
 		"media":    {"width": "INTEGER NOT NULL DEFAULT 0", "height": "INTEGER NOT NULL DEFAULT 0", "duration_ms": "INTEGER NOT NULL DEFAULT 0", "waveform": "TEXT NOT NULL DEFAULT ''", "file_name": "TEXT NOT NULL DEFAULT ''", "thumbnail_id": "TEXT NOT NULL DEFAULT ''"},
-		"chats":    {"last_activity": "INTEGER NOT NULL DEFAULT 0", "avatar": "TEXT NOT NULL DEFAULT ''", "description": "TEXT NOT NULL DEFAULT ''", "slow_mode": "INTEGER NOT NULL DEFAULT 0", "permissions_json": "TEXT NOT NULL DEFAULT ''", "history_for_new": "INTEGER NOT NULL DEFAULT 0", "auto_delete": "INTEGER NOT NULL DEFAULT 0", "upgraded": "INTEGER NOT NULL DEFAULT 0"},
+		"chats":    {"last_activity": "INTEGER NOT NULL DEFAULT 0", "avatar": "TEXT NOT NULL DEFAULT ''", "description": "TEXT NOT NULL DEFAULT ''", "slow_mode": "INTEGER NOT NULL DEFAULT 0", "permissions_json": "TEXT NOT NULL DEFAULT ''", "history_for_new": "INTEGER NOT NULL DEFAULT 0", "auto_delete": "INTEGER NOT NULL DEFAULT 0", "upgraded": "INTEGER NOT NULL DEFAULT 0", "username": "TEXT NOT NULL DEFAULT ''", "protected": "INTEGER NOT NULL DEFAULT 0", "join_by_request": "INTEGER NOT NULL DEFAULT 0"},
 		"users":    {"read_receipts_enabled": "INTEGER NOT NULL DEFAULT 1", "password_hint": "TEXT NOT NULL DEFAULT ''", "totp_secret": "TEXT NOT NULL DEFAULT ''", "totp_pending": "TEXT NOT NULL DEFAULT ''", "totp_recovery": "TEXT NOT NULL DEFAULT ''", "deleted": "INTEGER NOT NULL DEFAULT 0", "is_bot": "INTEGER NOT NULL DEFAULT 0", "bio": "TEXT NOT NULL DEFAULT ''"},
 		"devices":  {"created": "TEXT NOT NULL DEFAULT ''", "last_seen": "TEXT NOT NULL DEFAULT ''", "app_name": "TEXT NOT NULL DEFAULT ''", "app_version": "TEXT NOT NULL DEFAULT ''", "device_model": "TEXT NOT NULL DEFAULT ''", "last_ip": "TEXT NOT NULL DEFAULT ''"},
 		"members":  {"manual_unread": "INTEGER NOT NULL DEFAULT 0", "archived": "INTEGER NOT NULL DEFAULT 0", "pin_order": "INTEGER NOT NULL DEFAULT 0", "notification_mute_until": "INTEGER NOT NULL DEFAULT 0", "draft_json": "TEXT NOT NULL DEFAULT ''", "joined_at": "INTEGER NOT NULL DEFAULT 0", "muted_until": "INTEGER NOT NULL DEFAULT 0", "delivered_seq": "INTEGER NOT NULL DEFAULT 0", "delivered_at": "INTEGER NOT NULL DEFAULT 0", "read_at": "INTEGER NOT NULL DEFAULT 0"},
@@ -46,11 +46,14 @@ func (a *App) migrateExtensions() error {
 			}
 		}
 	}
-	_, e := a.DB.Exec(extensionSchema + discoverySchema + p2Schema + p3Schema + p4Schema + p5Schema + p6Schema + p7Schema + p8Schema)
+	_, e := a.DB.Exec(extensionSchema + discoverySchema + p2Schema + p3Schema + p4Schema + p5Schema + p6Schema + p7Schema + p8Schema + p9Schema)
 	if e != nil {
 		return e
 	}
-	return a.ensureColumn("stickers", "format", "TEXT NOT NULL DEFAULT ''")
+	if e = a.ensureColumn("stickers", "format", "TEXT NOT NULL DEFAULT ''"); e != nil {
+		return e
+	}
+	return a.ensureColumn("chat_invites", "creates_join_request", "INTEGER NOT NULL DEFAULT 0")
 }
 
 func (a *App) ensureColumn(table, name, typ string) error {
@@ -185,4 +188,11 @@ const p8Schema = `
 CREATE TABLE IF NOT EXISTS scheduled_messages(id TEXT PRIMARY KEY,chat_id TEXT NOT NULL,sender TEXT NOT NULL,client_id TEXT NOT NULL,kind TEXT NOT NULL,text TEXT NOT NULL DEFAULT '',media_id TEXT NOT NULL DEFAULT '',reply_to TEXT NOT NULL DEFAULT '',extra_json TEXT NOT NULL DEFAULT '',ttl INTEGER NOT NULL DEFAULT 0,send_at INTEGER NOT NULL DEFAULT 0,when_online INTEGER NOT NULL DEFAULT 0,payload_hash TEXT NOT NULL DEFAULT '',created TEXT NOT NULL,UNIQUE(sender,client_id));
 CREATE INDEX IF NOT EXISTS scheduled_due ON scheduled_messages(send_at,when_online);
 PRAGMA user_version=11;
+`
+
+const p9Schema = `
+CREATE TABLE IF NOT EXISTS join_requests(chat_id TEXT NOT NULL REFERENCES chats(id),user_id TEXT NOT NULL REFERENCES users(id),invite_code TEXT NOT NULL DEFAULT '',created INTEGER NOT NULL,PRIMARY KEY(chat_id,user_id));
+CREATE INDEX IF NOT EXISTS join_requests_chat ON join_requests(chat_id,created);
+CREATE UNIQUE INDEX IF NOT EXISTS chats_username ON chats(username) WHERE username<>'';
+PRAGMA user_version=12;
 `

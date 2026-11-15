@@ -215,22 +215,37 @@ extension on QlTdEngine {
 
   Future<Map<String, dynamic>> _searchPublicChat(String username) async {
     final handle = username.trim().replaceFirst('@', '').toLowerCase();
-    if (handle.length < 2) return _error(400, 'USERNAME_INVALID');
-    final result = await _apiOrThrow.get('/users', {'q': handle});
-    final list = result['users'];
-    if (list is List) {
-      for (final u in list) {
-        if (u is Map && u['handle']?.toString() == handle) {
-          final raw = Map<String, dynamic>.from(u);
-          _rememberUser(raw);
-          if (raw['id']?.toString() == _myId) {
-            return _error(400, 'USERNAME_NOT_OCCUPIED');
-          }
-          return _createPrivateChat(qlUserInt(raw['id'].toString()));
-        }
+    if (handle.length < 3) return _error(400, 'USERNAME_INVALID');
+    final result = await _apiOrThrow.get('/public/$handle');
+    if (result['kind'] == 'user') {
+      final raw = result['user'];
+      if (raw is! Map) return _error(400, 'USERNAME_NOT_OCCUPIED');
+      final user = Map<String, dynamic>.from(raw);
+      _rememberUser(user);
+      if (user['id']?.toString() == _myId) return _error(400, 'USERNAME_NOT_OCCUPIED');
+      return _createPrivateChat(qlUserInt(user['id'].toString()));
+    }
+    final chat = result['chat'];
+    if (chat is! Map) return _error(400, 'USERNAME_NOT_OCCUPIED');
+    final cid = chat['id']?.toString() ?? '';
+    if (cid.isEmpty) return _error(400, 'USERNAME_NOT_OCCUPIED');
+    var c = _convs[cid];
+    if (c == null || !c.announced) {
+      try {
+        c = await _discoverConversation(cid);
+      } catch (_) {
+        c = null;
       }
     }
-    return _error(400, 'USERNAME_NOT_OCCUPIED');
+    if (c == null) {
+      final joined = await _apiOrThrow.post('/public/$handle/join');
+      if (joined['status'] == 'requested') return _error(400, 'INVITE_REQUEST_SENT');
+      c = await _discoverConversation(cid);
+    }
+    if (c == null) return _error(400, 'USERNAME_NOT_OCCUPIED');
+    c.username = chat['username']?.toString() ?? c.username;
+    c.joinByRequest = chat['join_by_request'] == true;
+    return _tdChat(c);
   }
 
   // MARK: Per-chat state
@@ -502,7 +517,11 @@ extension on QlTdEngine {
     });
     try {
       await _loadMembers(c);
-      _emit({'@type': 'updateBasicGroup', 'basic_group': _basicGroup(c)});
+      if (c.isChannel || c.upgraded) {
+        _emit({'@type': 'updateSupergroup', 'supergroup': _supergroup(c)});
+      } else {
+        _emit({'@type': 'updateBasicGroup', 'basic_group': _basicGroup(c)});
+      }
     } catch (_) {}
     return _ok;
   }
@@ -776,20 +795,23 @@ extension on QlTdEngine {
       'can_be_deleted_only_for_self': false,
       'can_be_deleted_for_all_users': outgoing || (c.isGroup && admin),
       'can_be_edited': editable,
-      'can_be_forwarded': !pending,
+      'can_be_forwarded': !pending && !c.protectedContent,
       'can_be_paid': false,
       'can_be_pinned': !pending && (admin || !c.isGroup || c.permissions?['can_pin_messages'] != false),
       'can_be_replied': !pending,
       'can_be_replied_in_another_chat': false,
-      'can_be_saved': true,
+      'can_be_saved': !c.protectedContent,
       'can_be_shared_in_story': false,
       'can_delete_reactions': false,
-      'can_edit_media': false,
-      'can_edit_scheduling_state': false,
+      'can_edit_media': outgoing && !pending &&
+          (contentType == 'messagePhoto' || contentType == 'messageVideo' ||
+              contentType == 'messageDocument' || contentType == 'messageAnimation' ||
+              contentType == 'messageVideoNote'),
+      'can_edit_scheduling_state': _scheduledBackend.containsKey(id),
       'can_edit_suggested_post_info': false,
       'can_get_author': false,
       'can_get_embedding_code': false,
-      'can_get_link': false,
+      'can_get_link': !pending,
       'can_get_media_timestamp_links': false,
       'can_get_message_thread': false,
       'can_get_poll_vote_statistics': false,
@@ -804,8 +826,8 @@ extension on QlTdEngine {
       'can_report_supergroup_spam': false,
       'can_set_fact_check': false,
       'custom_emoji_ids': const <int>[],
-      'has_protected_content_by_current_user': false,
-      'has_protected_content_by_other_user': false,
+      'has_protected_content_by_current_user': c.protectedContent,
+      'has_protected_content_by_other_user': c.protectedContent,
       'need_show_statistics': false,
     };
   }
@@ -1521,6 +1543,9 @@ extension on QlTdEngine {
       'searchMessagesFilterPhotoAndVideo' => const {'messagePhoto', 'messageVideo'},
       'searchMessagesFilterDocument' => const {'messageDocument'},
       'searchMessagesFilterVoiceNote' || 'searchMessagesFilterVoiceAndVideoNote' => const {'messageVoiceNote'},
+      'searchMessagesFilterAnimation' => const {'messageAnimation'},
+      'searchMessagesFilterVideoNote' => const {'messageVideoNote'},
+      'searchMessagesFilterPoll' => const {'messagePoll'},
       _ => const <String>{'-'},
     };
     if (wanted != null && wanted.contains('-')) {

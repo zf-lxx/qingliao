@@ -15,6 +15,9 @@ List<String> mediaKindsForSearchFilter(String filter) => switch (filter) {
   'searchMessagesFilterVoiceAndVideoNote' => const ['voice'],
   'searchMessagesFilterUrl' => const ['link'],
   'searchMessagesFilterAudio' => const ['audio'],
+  'searchMessagesFilterAnimation' => const ['animation'],
+  'searchMessagesFilterVideoNote' => const ['video_note'],
+  'searchMessagesFilterPoll' => const ['poll'],
   _ => const [],
 };
 

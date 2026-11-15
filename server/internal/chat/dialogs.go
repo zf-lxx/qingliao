@@ -430,6 +430,15 @@ func (a *App) dialogs(w http.ResponseWriter, r *http.Request, p Principal) {
 		}
 		last = dialogCursor{class, order, -activity, cid}
 	}
+	if e = rows.Err(); e != nil {
+		fail(w, e)
+		return
+	}
+	rows.Close()
+	if e = a.attachDialogFlags(out); e != nil {
+		fail(w, e)
+		return
+	}
 	cursor := ""
 	if hasMore {
 		b, _ := json.Marshal(last)

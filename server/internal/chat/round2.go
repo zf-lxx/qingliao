@@ -256,11 +256,11 @@ func saveScheduled(tx *sql.Tx, p Principal, cid string, s Send, digest string, s
 	return loadScheduled(tx, sid)
 }
 
-func loadScheduled(tx *sql.Tx, sid string) (Message, error) {
+func loadScheduled(q rowQuery, sid string) (Message, error) {
 	var m Message
 	var extra string
 	var online int
-	e := tx.QueryRow("SELECT id,chat_id,sender,client_id,kind,text,media_id,reply_to,extra_json,ttl,send_at,when_online,created FROM scheduled_messages WHERE id=?", sid).Scan(&m.ID, &m.ChatID, &m.Sender, &m.ClientID, &m.Kind, &m.Text, &m.MediaID, &m.ReplyTo, &extra, &m.TTL, &m.SendAt, &online, &m.Created)
+	e := q.QueryRow("SELECT id,chat_id,sender,client_id,kind,text,media_id,reply_to,extra_json,ttl,send_at,when_online,created FROM scheduled_messages WHERE id=?", sid).Scan(&m.ID, &m.ChatID, &m.Sender, &m.ClientID, &m.Kind, &m.Text, &m.MediaID, &m.ReplyTo, &extra, &m.TTL, &m.SendAt, &online, &m.Created)
 	if e != nil {
 		return Message{}, e
 	}

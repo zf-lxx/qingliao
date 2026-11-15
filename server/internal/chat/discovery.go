@@ -187,7 +187,7 @@ func (a *App) SharedMedia(p Principal, cid, kind string, before int64, date stri
 	switch kind {
 	case "", "all":
 		filter = " AND (m.media_id<>'' OR m.preview_json<>'')"
-	case "image", "video", "file", "voice":
+	case "image", "video", "file", "voice", "animation", "video_note", "poll":
 		filter = " AND m.kind='" + kind + "'"
 	case "link":
 		filter = " AND m.preview_json<>''"
@@ -440,7 +440,6 @@ func (a *App) reports(w http.ResponseWriter, r *http.Request, p Principal) {
 	respond(w, 200, map[string]any{"reports": out})
 }
 
-
 // GlobalMedia lists media (and link / voice / audio) messages across every
 // conversation the caller can still see. Used by the drawer-level 「文件」
 // browser. The cursor is an opaque "created|message-id" string so the page
@@ -503,7 +502,7 @@ func globalMediaFilter(kind string) (string, error) {
 	switch kind {
 	case "all":
 		return " AND (m.media_id<>'' OR m.preview_json<>'')", nil
-	case "image", "video", "file", "voice":
+	case "image", "video", "file", "voice", "animation", "video_note", "poll":
 		return " AND m.kind='" + kind + "'", nil
 	case "link":
 		return " AND m.preview_json<>''", nil
