@@ -404,6 +404,16 @@ func TestBotMultipartUploadAndFileID(t *testing.T) {
 	audio := botMultipart(t, f.s, token, "sendAudio", map[string]string{"chat_id": "@bob"}, map[string][]byte{"audio": song}, map[string]string{"audio": "song.mp3"}, 200)
 	_ = botFileID(t, audio["result"].(map[string]any), "audio")
 
+	gif := []byte("GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff!\xf9\x04\x01\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;")
+	anim := botMultipart(t, f.s, token, "sendAnimation", map[string]string{"chat_id": "@bob"}, map[string][]byte{"animation": gif}, map[string]string{"animation": "a.gif"}, 200)
+	if anim["result"].(map[string]any)["animation"] == nil {
+		t.Fatalf("sendAnimation: %v", anim)
+	}
+	note := botMultipart(t, f.s, token, "sendVideoNote", map[string]string{"chat_id": "@bob"}, map[string][]byte{"video_note": ftyp}, map[string]string{"video_note": "note.mp4"}, 200)
+	if note["result"].(map[string]any)["video_note"] == nil {
+		t.Fatalf("sendVideoNote: %v", note)
+	}
+
 	// Auth failure: bad token, no leak.
 	bad := "0:notarealtokenvalueatallxxxx"
 	botMultipart(t, f.s, bad, "sendPhoto", map[string]string{"chat_id": "@bob"}, map[string][]byte{"photo": png}, map[string]string{"photo": "x.png"}, 401)
@@ -416,8 +426,4 @@ func TestBotMultipartUploadAndFileID(t *testing.T) {
 	f.a.C.MaxFile = 32
 	big := append(pngHead(), bytes.Repeat([]byte{0}, 64)...)
 	botMultipart(t, f.s, token, "sendDocument", map[string]string{"chat_id": "@bob"}, map[string][]byte{"document": big}, map[string]string{"document": "big.bin"}, 413)
-
-	// Animation / video notes are not message types on this server.
-	botCall(t, f.s, token, "sendAnimation", map[string]any{"chat_id": "@bob", "animation": fileID}, 404)
-	botCall(t, f.s, token, "sendVideoNote", map[string]any{"chat_id": "@bob", "video_note": fileID}, 404)
 }

@@ -156,6 +156,24 @@ extension _QlP3 on QlTdEngine {
         return _deleteChatMessagesBySender(r);
       case 'addPollOption':
         return _addPollOption(r);
+      case 'canTransferOwnership':
+        return {'@type': 'canTransferOwnershipResultOk'};
+      case 'transferChatOwnership':
+        return _transferChatOwnership(r);
+      case 'upgradeBasicGroupChatToSupergroupChat':
+        return _upgradeBasicGroup(r);
+      case 'setChatMessageAutoDeleteTime':
+        return _setAutoDelete(r);
+      case 'toggleSupergroupIsAllHistoryAvailable':
+        return _toggleHistory(r);
+      case 'getMessageReadDate':
+        return _messageReadDate(r);
+      case 'getMessageViewers':
+        return _messageViewers(r);
+      case 'getCustomEmojiStickers':
+        return _customEmojiStickers(r);
+      case 'getChatScheduledMessages':
+        return _scheduledMessages(r);
       default:
         return null;
     }
@@ -180,6 +198,7 @@ extension _QlP3 on QlTdEngine {
     String mediaId = '',
     String fileId = '',
     int size = 0,
+    String format = '',
   }) {
     final key = mediaId.isNotEmpty ? mediaId : 'sticker:$stickerId:${fileId.isEmpty ? stickerId : fileId}';
     final id = mediaId.isNotEmpty ? qlMediaFileId(mediaId) : qlStickerFileId(key);
@@ -187,13 +206,19 @@ extension _QlP3 on QlTdEngine {
     f.stickerId = stickerId;
     f.mediaId = mediaId;
     f.stickerFileId = fileId.isNotEmpty ? fileId : (mediaId.isEmpty ? stickerId : '');
-    f.kind = 'image';
-    f.fileName = '$stickerId.png';
+    final ext = switch (format) {
+      'webm' => '.webm',
+      'tgs' => '.tgs',
+      'png' => '.png',
+      _ => '.webp',
+    };
+    f.kind = format == 'webm' ? 'video' : 'image';
+    f.fileName = '$stickerId$ext';
     if (size > 0) f.size = size;
     if (f.localPath.isEmpty && _filesDir.isNotEmpty) {
       final path = f.mediaId.isNotEmpty
-          ? _mediaPath(f.mediaId, 'image', f.fileName)
-          : '$_filesDir/qingliao/stickers/${f.stickerFileId}.png';
+          ? _mediaPath(f.mediaId, f.kind, f.fileName)
+          : '$_filesDir/qingliao/stickers/${f.stickerFileId}$ext';
       final file = File(path);
       if (file.existsSync()) {
         f.localPath = path;
@@ -204,22 +229,32 @@ extension _QlP3 on QlTdEngine {
     return _tdFile(f);
   }
 
-  Map<String, dynamic> _tdSticker(Map<String, dynamic> raw, {String packId = ''}) {
+  Map<String, dynamic> _tdSticker(Map<String, dynamic> raw, {String packId = '', bool emoji = false}) {
     final sid = raw['id']?.toString() ?? '';
     final pack = raw['pack_id']?.toString() ?? packId;
-    final emoji = raw['emoji']?.toString() ?? '';
+    final emojiText = raw['emoji']?.toString() ?? '';
     final mediaId = raw['media_id']?.toString() ?? '';
     final fileId = raw['file_id']?.toString() ?? '';
-    final file = _fileForSticker(stickerId: sid, mediaId: mediaId, fileId: fileId);
+    final format = raw['format']?.toString() ?? '';
+    final isEmoji = emoji || raw['is_emoji'] == true;
+    final file = _fileForSticker(stickerId: sid, mediaId: mediaId, fileId: fileId, format: format);
+    final formatType = switch (format) {
+      'webm' => 'stickerFormatWebm',
+      'tgs' => 'stickerFormatTgs',
+      'png' => 'stickerFormatPng',
+      _ => 'stickerFormatWebp',
+    };
     return {
       '@type': 'sticker',
       'id': qlPackInt('sticker:$sid'),
       'set_id': pack.isEmpty ? 0 : qlPackInt(pack),
       'width': 96,
       'height': 96,
-      'emoji': emoji,
-      'format': {'@type': 'stickerFormatWebp'},
-      'full_type': {'@type': 'stickerFullTypeRegular'},
+      'emoji': emojiText,
+      'format': {'@type': formatType},
+      'full_type': isEmoji
+          ? {'@type': 'stickerFullTypeCustomEmoji', 'custom_emoji_id': qlPackInt('emoji:$sid'), 'needs_repainting': false}
+          : {'@type': 'stickerFullTypeRegular'},
       'thumbnail': {
         '@type': 'thumbnail',
         'format': {'@type': 'thumbnailFormatJpeg'},
@@ -244,27 +279,25 @@ extension _QlP3 on QlTdEngine {
       'is_installed': true,
       'is_archived': false,
       'is_official': (pack['owner']?.toString() ?? '').isEmpty,
-      'sticker_type': {'@type': 'stickerTypeRegular'},
+      'sticker_type': {'@type': pack['is_emoji'] == true ? 'stickerTypeCustomEmoji' : 'stickerTypeRegular'},
       'needs_repainting': false,
       'is_allowed_as_chat_emoji_status': false,
       'is_viewed': true,
       'size': covers?.length ?? 0,
-      'covers': [for (final s in (covers ?? const []).take(1)) if (s is Map) _tdSticker(Map<String, dynamic>.from(s), packId: id)],
+      'covers': [for (final s in (covers ?? const []).take(1)) if (s is Map) _tdSticker(Map<String, dynamic>.from(s), packId: id, emoji: pack['is_emoji'] == true)],
     };
   }
 
   Future<Map<String, dynamic>> _installedStickerSets(Map<String, dynamic> r) async {
     final typ = r['sticker_type'];
-    if (typ is Map && typ['@type'] == 'stickerTypeCustomEmoji') {
-      return {'@type': 'stickerSets', 'total_count': 0, 'sets': const <Object>[]};
-    }
+    final wantEmoji = typ is Map && typ['@type'] == 'stickerTypeCustomEmoji';
     final raw = await _apiOrThrow.get('/sticker-packs');
     final packs = raw['packs'] is List ? raw['packs'] as List : const [];
     final sets = <Map<String, dynamic>>[];
     for (final p in packs) {
       if (p is! Map) continue;
       final pack = Map<String, dynamic>.from(p);
-      if (pack['is_emoji'] == true) continue;
+      if ((pack['is_emoji'] == true) != wantEmoji) continue;
       List? covers;
       try {
         final detail = await _apiOrThrow.get('/sticker-packs/${pack['id']}');
@@ -294,7 +327,7 @@ extension _QlP3 on QlTdEngine {
     final detail = await _apiOrThrow.get('/sticker-packs/$packId');
     final stickers = [
       for (final s in (detail['stickers'] as List? ?? const []))
-        if (s is Map) _tdSticker(Map<String, dynamic>.from(s), packId: packId),
+        if (s is Map) _tdSticker(Map<String, dynamic>.from(s), packId: packId, emoji: pack['is_emoji'] == true),
     ];
     return {
       '@type': 'stickerSet',
@@ -307,7 +340,7 @@ extension _QlP3 on QlTdEngine {
       'is_installed': true,
       'is_archived': false,
       'is_official': (pack['owner']?.toString() ?? '').isEmpty,
-      'sticker_type': {'@type': 'stickerTypeRegular'},
+      'sticker_type': {'@type': pack['is_emoji'] == true ? 'stickerTypeCustomEmoji' : 'stickerTypeRegular'},
       'needs_repainting': false,
       'is_allowed_as_chat_emoji_status': false,
       'is_viewed': true,
@@ -1073,6 +1106,31 @@ extension _QlP3 on QlTdEngine {
 
   Map<String, dynamic> _tdLinkPreview(Map raw) {
     final url = raw['url']?.toString() ?? '';
+    final image = raw['image']?.toString() ?? '';
+    final previewId = raw['id']?.toString() ?? '';
+    Map<String, dynamic>? photo;
+    if (image.isNotEmpty && previewId.isNotEmpty) {
+      final id = qlMediaFileId('preview:$previewId');
+      final f = _files.putIfAbsent(id, () => _QlFile(id));
+      f.previewId = previewId;
+      f.kind = 'image';
+      f.fileName = '$previewId.jpg';
+      photo = {
+        '@type': 'photo',
+        'has_stickers': false,
+        'minithumbnail': null,
+        'sizes': [
+          {
+            '@type': 'photoSize',
+            'type': 'x',
+            'photo': _tdFile(f),
+            'width': 0,
+            'height': 0,
+            'progressive_sizes': const <int>[],
+          },
+        ],
+      };
+    }
     return {
       '@type': 'linkPreview',
       'url': url,
@@ -1081,7 +1139,11 @@ extension _QlP3 on QlTdEngine {
       'title': raw['title'] ?? '',
       'description': _formatted(raw['description']?.toString() ?? ''),
       'author': '',
-      'type': {'@type': 'linkPreviewTypeArticle', 'has_large_media': false, 'photo': null},
+      'type': {
+        '@type': 'linkPreviewTypeArticle',
+        'has_large_media': image.isNotEmpty,
+        'photo': photo,
+      },
       'has_large_media': false,
       'show_large_media': false,
       'show_media_above_description': false,
@@ -1611,6 +1673,9 @@ extension _QlP3 on QlTdEngine {
       final raw = await _apiOrThrow.get('/conversations/${c.id}');
       c.description = raw['description']?.toString() ?? '';
       c.slowMode = QlTdEngine._int(raw['slow_mode_seconds']) ?? 0;
+      c.autoDelete = QlTdEngine._int(raw['auto_delete_seconds']) ?? 0;
+      c.historyForNew = raw['history_for_new'] == true;
+      c.upgraded = raw['upgraded'] == true;
       final perms = raw['permissions'];
       if (perms is Map) c.permissions = Map<String, dynamic>.from(perms);
     } catch (_) {}
@@ -1622,6 +1687,128 @@ extension _QlP3 on QlTdEngine {
         c.inviteLink = _tdInviteLink(Map<String, dynamic>.from(list.first as Map));
       }
     } catch (_) {}
+  }
+
+  Future<Map<String, dynamic>> _transferChatOwnership(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    final userId = _userIdByInt[QlTdEngine._int(r['user_id']) ?? 0];
+    final password = r['password']?.toString() ?? '';
+    if (c == null || userId == null || password.isEmpty) return _error(400, 'PASSWORD_HASH_INVALID');
+    try {
+      await _apiOrThrow.post('/conversations/${c.id}/transfer', {'user_id': userId, 'password': password});
+    } on QlApiException catch (e) {
+      return _error(_tdCode(e.statusCode), e.statusCode == 403 ? 'PASSWORD_HASH_INVALID' : e.error);
+    }
+    c.role = 'admin';
+    for (final m in c.members) {
+      if (m['user_id'] == userId) m['role'] = 'owner';
+      if (m['user_id'] == _myId) m['role'] = 'admin';
+    }
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _upgradeBasicGroup(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    if (c == null || c.kind != 'group') return _error(400, 'Chat not found');
+    final raw = await _apiOrThrow.post('/conversations/${c.id}/upgrade', {});
+    c.upgraded = raw['upgraded'] == true;
+    c.metaLoaded = true;
+    final chat = _tdChat(c);
+    if (c.announced) _emit({'@type': 'updateChat', 'chat': chat});
+    return chat;
+  }
+
+  Future<Map<String, dynamic>> _setAutoDelete(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    if (c == null) return _error(400, 'Chat not found');
+    final nested = r['message_auto_delete_time'];
+    final seconds = nested is Map ? (QlTdEngine._int(nested['time']) ?? 0) : (QlTdEngine._int(r['message_auto_delete_time']) ?? 0);
+    await _apiOrThrow.put('/conversations/${c.id}/auto-delete', {'seconds': seconds});
+    c.autoDelete = seconds;
+    if (c.announced) {
+      _emit({
+        '@type': 'updateChatMessageAutoDeleteTime',
+        'chat_id': c.chatId,
+        'message_auto_delete_time': {'@type': 'messageAutoDeleteTime', 'time': seconds},
+      });
+    }
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _toggleHistory(Map<String, dynamic> r) async {
+    final id = QlTdEngine._int(r['supergroup_id']) ?? 0;
+    _Conv? found;
+    for (final c in _convs.values) {
+      if ((c.isChannel || c.upgraded) && qlGroupInt(c.id) == id) found = c;
+    }
+    if (found == null) return _error(404, 'Supergroup not found');
+    final on = r['is_all_history_available'] == true;
+    await _apiOrThrow.put('/conversations/${found.id}/history', {'history_for_new': on});
+    found.historyForNew = on;
+    return _ok;
+  }
+
+  Future<Map<String, dynamic>> _messageReadDate(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    final seq = qlSeqOf(QlTdEngine._int(r['message_id']) ?? 0);
+    if (c == null || seq <= 0) return _error(404, 'Not Found');
+    return _apiOrThrow.get('/conversations/${c.id}/messages/$seq/read-date');
+  }
+
+  Future<Map<String, dynamic>> _messageViewers(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    final seq = qlSeqOf(QlTdEngine._int(r['message_id']) ?? 0);
+    if (c == null || seq <= 0) return _error(404, 'Not Found');
+    final raw = await _apiOrThrow.get('/conversations/${c.id}/messages/$seq/viewers');
+    final viewers = <Map<String, dynamic>>[];
+    for (final item in (raw['viewers'] as List? ?? const [])) {
+      if (item is! Map) continue;
+      final uid = item['user_id']?.toString() ?? '';
+      if (uid.isNotEmpty && !_users.containsKey(uid)) {
+        try {
+          await _ensureUser(uid);
+        } catch (_) {}
+      }
+      viewers.add({
+        '@type': 'messageViewer',
+        'user_id': qlUserInt(uid),
+        'view_date': QlTdEngine._int(item['view_date']) ?? 0,
+      });
+    }
+    return {'@type': 'messageViewers', 'viewers': viewers};
+  }
+
+  Future<Map<String, dynamic>> _customEmojiStickers(Map<String, dynamic> r) async {
+    final wanted = <int>{
+      for (final v in (r['custom_emoji_ids'] as List? ?? const []))
+        if (QlTdEngine._int(v) != null) QlTdEngine._int(v)!,
+    };
+    final raw = await _apiOrThrow.get('/custom-emoji');
+    final stickers = <Map<String, dynamic>>[];
+    for (final item in (raw['stickers'] as List? ?? const [])) {
+      if (item is! Map) continue;
+      final sticker = _tdSticker(Map<String, dynamic>.from(item), emoji: true);
+      final id = QlTdEngine._int((sticker['full_type'] as Map)['custom_emoji_id']) ?? 0;
+      if (wanted.isEmpty || wanted.contains(id)) stickers.add(sticker);
+    }
+    return {'@type': 'stickers', 'stickers': stickers};
+  }
+
+  Future<Map<String, dynamic>> _scheduledMessages(Map<String, dynamic> r) async {
+    final c = _conv(QlTdEngine._int(r['chat_id']) ?? 0);
+    if (c == null) return _error(400, 'Chat not found');
+    if (c.id.startsWith('virtual:')) {
+      return {'@type': 'messages', 'total_count': 0, 'messages': const <Object>[]};
+    }
+    final raw = await _apiOrThrow.get('/conversations/${c.id}/scheduled');
+    final messages = <Map<String, dynamic>>[];
+    for (final item in (raw['messages'] as List? ?? const [])) {
+      if (item is! Map) continue;
+      final td = _tdMessage(c, Map<String, dynamic>.from(item));
+      if (td != null) messages.add(td);
+    }
+    c.hasScheduled = messages.isNotEmpty;
+    return {'@type': 'messages', 'total_count': messages.length, 'messages': messages};
   }
 
   Future<Map<String, dynamic>> _deleteChat(Map<String, dynamic> r) async {

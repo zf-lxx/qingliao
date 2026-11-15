@@ -11,6 +11,7 @@ class _QlFile {
   String mime = '';
   String stickerId = '';
   String stickerFileId = '';
+  String previewId = '';
   int size = 0;
   int downloaded = 0;
   bool downloading = false;
@@ -126,7 +127,7 @@ extension on QlTdEngine {
     final f = _files[id];
     if (f == null) return _error(404, 'File not found');
     if (f.localPath.isNotEmpty && !f.downloading) return _tdFile(f);
-    if (f.mediaId.isEmpty && f.stickerFileId.isEmpty) return _error(400, 'File can not be downloaded');
+    if (f.mediaId.isEmpty && f.stickerFileId.isEmpty && f.previewId.isEmpty) return _error(400, 'File can not be downloaded');
     f.download ??= _runDownload(f);
     if (r['synchronous'] == true) {
       await f.download;
@@ -143,13 +144,24 @@ extension on QlTdEngine {
     }
     f.downloading = true;
     _emitFile(f);
-    final path = f.mediaId.isNotEmpty
+    final stickerExt = f.fileName.endsWith('.webm')
+        ? '.webm'
+        : f.fileName.endsWith('.tgs')
+        ? '.tgs'
+        : '.png';
+    final path = f.previewId.isNotEmpty
+        ? _mediaPath('preview-${f.previewId}', f.kind, f.fileName)
+        : f.mediaId.isNotEmpty
         ? _mediaPath(f.mediaId, f.kind, f.fileName)
-        : '$_filesDir/qingliao/stickers/${f.stickerFileId}.png';
+        : '$_filesDir/qingliao/stickers/${f.stickerFileId}$stickerExt';
     var lastEmit = DateTime.now();
     try {
       final bytes = await api.downloadPath(
-        f.mediaId.isNotEmpty ? '/media/${f.mediaId}' : '/sticker-files/${f.stickerFileId}',
+        f.previewId.isNotEmpty
+            ? '/link-previews/${f.previewId}/image'
+            : f.mediaId.isNotEmpty
+            ? '/media/${f.mediaId}'
+            : '/sticker-files/${f.stickerFileId}',
         path,
         onProgress: (received, total) {
           f.downloaded = received;

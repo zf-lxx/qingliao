@@ -163,9 +163,9 @@ func (a *App) serveBotAPI(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		botOK(w, true)
-	case "sendPhoto", "sendDocument", "sendAudio", "sendVideo", "sendVoice":
-		kind := map[string]string{"sendPhoto": "image", "sendDocument": "file", "sendAudio": "file", "sendVideo": "video", "sendVoice": "voice"}[method]
-		field := map[string]string{"sendPhoto": "photo", "sendDocument": "document", "sendAudio": "audio", "sendVideo": "video", "sendVoice": "voice"}[method]
+	case "sendPhoto", "sendDocument", "sendAudio", "sendVideo", "sendVoice", "sendAnimation", "sendVideoNote":
+		kind := map[string]string{"sendPhoto": "image", "sendDocument": "file", "sendAudio": "file", "sendVideo": "video", "sendVoice": "voice", "sendAnimation": "animation", "sendVideoNote": "video_note"}[method]
+		field := map[string]string{"sendPhoto": "photo", "sendDocument": "document", "sendAudio": "audio", "sendVideo": "video", "sendVoice": "voice", "sendAnimation": "animation", "sendVideoNote": "video_note"}[method]
 		msg, err := a.botSend(bot, params, files, kind, field)
 		if err != nil {
 			botFail(w, err)
@@ -674,6 +674,10 @@ func botMediaRequire(kind, field string) string {
 		return "image/"
 	case "video":
 		return "video/"
+	case "animation":
+		return "animation"
+	case "video_note":
+		return "video/"
 	case "voice", "audio":
 		return "audio/"
 	}
@@ -750,7 +754,7 @@ func (a *App) lookupOrStoreBotFile(bot botRow, cid string, p map[string]any, fil
 	if e := a.DB.QueryRow("SELECT mime FROM media WHERE id=?", raw).Scan(&mime); e != nil {
 		return "", false, botAPIError{400, "unknown file_id"}
 	}
-	if require != "" && !strings.HasPrefix(mime, require) {
+	if require != "" && !mediaMatches(require, mime) {
 		return "", false, errUnsupportedMedia
 	}
 	return raw, false, nil

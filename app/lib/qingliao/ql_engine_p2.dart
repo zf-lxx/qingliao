@@ -409,7 +409,7 @@ extension on QlTdEngine {
 
   Map<String, dynamic> _supergroupById(int id) {
     for (final c in _convs.values) {
-      if (c.isChannel && qlGroupInt(c.id) == id) return _supergroup(c);
+      if ((c.isChannel || c.upgraded) && qlGroupInt(c.id) == id) return _supergroup(c);
     }
     return _error(404, 'Supergroup not found');
   }
@@ -417,7 +417,7 @@ extension on QlTdEngine {
   Future<Map<String, dynamic>> _supergroupFullInfo(int id) async {
     _Conv? found;
     for (final c in _convs.values) {
-      if (c.isChannel && qlGroupInt(c.id) == id) found = c;
+      if ((c.isChannel || c.upgraded) && qlGroupInt(c.id) == id) found = c;
     }
     if (found == null) return _error(404, 'Supergroup not found');
     if (!found.membersLoaded) {
@@ -452,7 +452,7 @@ extension on QlTdEngine {
       'can_get_star_revenue_statistics': false,
       'can_send_gift': false,
       'can_toggle_aggressive_anti_spam': false,
-      'is_all_history_available': true,
+      'is_all_history_available': found.historyForNew,
       'can_have_sponsored_messages': false,
       'has_aggressive_anti_spam_enabled': false,
       'has_paid_media_allowed': false,

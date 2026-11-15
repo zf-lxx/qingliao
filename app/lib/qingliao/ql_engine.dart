@@ -161,6 +161,10 @@ class _Conv {
   Map<String, dynamic>? permissions;
   Map<String, dynamic>? inviteLink;
   String avatarMediaId = '';
+  bool upgraded = false;
+  int autoDelete = 0;
+  bool historyForNew = false;
+  bool hasScheduled = false;
   final Set<int> pinnedSeqs = {};
   final Map<int, List<Map<String, String>>> reactionsBySeq = {};
   final SplayTreeMap<int, Map<String, dynamic>> messages = SplayTreeMap();

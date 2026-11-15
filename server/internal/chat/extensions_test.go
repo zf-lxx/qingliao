@@ -113,6 +113,7 @@ func TestPreviewCacheAndAttachment(t *testing.T) {
 func TestMultiplePinsAndPollStubs(t *testing.T) {
 	f := setup(t)
 	cid, _ := f.a.CreateChat(f.admin, "group", "pins", []string{f.bob.UserID})
+	req(t, f.s, "PATCH", "/v1/conversations/"+cid, f.at, map[string]any{"permissions": map[string]any{"can_pin_messages": false}}, 200)
 	for i := 0; i < 2; i++ {
 		m, e := f.a.SendMessage(f.admin, cid, Send{ClientID: fmt.Sprint("pin", i), Text: "pinned"})
 		if e != nil {
@@ -368,7 +369,7 @@ func TestStateMigrationFromV1(t *testing.T) {
 	defer a.Close()
 	var version int
 	a.DB.QueryRow("PRAGMA user_version").Scan(&version)
-	if version != 10 {
+	if version != 11 {
 		t.Fatal(version)
 	}
 }

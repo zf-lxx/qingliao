@@ -28,8 +28,8 @@ func (a *App) gapRoutes(mux *http.ServeMux) {
 func (a *App) getConversation(w http.ResponseWriter, r *http.Request, p Principal) {
 	cid := r.PathValue("id")
 	var kind, title, description, permissions string
-	var slow int
-	e := a.DB.QueryRow("SELECT c.kind,c.title,IFNULL(c.description,''),IFNULL(c.slow_mode,0),IFNULL(c.permissions_json,'') FROM chats c JOIN members b ON b.chat_id=c.id WHERE c.id=? AND b.user_id=?", cid, p.UserID).Scan(&kind, &title, &description, &slow, &permissions)
+	var slow, history, autoDelete, upgraded int
+	e := a.DB.QueryRow("SELECT c.kind,c.title,IFNULL(c.description,''),IFNULL(c.slow_mode,0),IFNULL(c.permissions_json,''),IFNULL(c.history_for_new,0),IFNULL(c.auto_delete,0),IFNULL(c.upgraded,0) FROM chats c JOIN members b ON b.chat_id=c.id WHERE c.id=? AND b.user_id=?", cid, p.UserID).Scan(&kind, &title, &description, &slow, &permissions, &history, &autoDelete, &upgraded)
 	if e != nil {
 		fail(w, ErrForbidden)
 		return
@@ -38,7 +38,7 @@ func (a *App) getConversation(w http.ResponseWriter, r *http.Request, p Principa
 	if permissions != "" {
 		_ = json.Unmarshal([]byte(permissions), &perms)
 	}
-	respond(w, 200, map[string]any{"id": cid, "kind": kind, "title": title, "description": description, "slow_mode_seconds": slow, "permissions": perms})
+	respond(w, 200, map[string]any{"id": cid, "kind": kind, "title": title, "description": description, "slow_mode_seconds": slow, "permissions": perms, "history_for_new": history == 1, "auto_delete_seconds": autoDelete, "upgraded": upgraded == 1})
 }
 
 func (a *App) deleteConversation(w http.ResponseWriter, r *http.Request, p Principal) {
@@ -108,8 +108,17 @@ func (a *App) createInvite(w http.ResponseWriter, r *http.Request, p Principal) 
 		if e = tx.QueryRow("SELECT kind FROM chats WHERE id=?", cid).Scan(&kind); e != nil {
 			return e
 		}
-		if (kind != "group" && kind != "channel") || (role != "owner" && role != "admin") {
+		if kind != "group" && kind != "channel" {
 			return ErrForbidden
+		}
+		if role != "owner" && role != "admin" {
+			ok, err := memberCan(tx, cid, role, "can_invite_users")
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return ErrForbidden
+			}
 		}
 		_, e = tx.Exec("INSERT INTO chat_invites(code,chat_id,creator,name,created,expires,member_limit) VALUES(?,?,?,?,?,?,?)", code, cid, p.UserID, b.Name, now(), b.Expires, b.MemberLimit)
 		return e
@@ -268,10 +277,15 @@ func (a *App) joinInvite(w http.ResponseWriter, r *http.Request, p Principal) {
 			return ErrForbidden
 		}
 		var seq int64
-		if e = tx.QueryRow("SELECT last_seq FROM chats WHERE id=?", inv.ChatID).Scan(&seq); e != nil {
+		var history int
+		if e = tx.QueryRow("SELECT last_seq,IFNULL(history_for_new,0) FROM chats WHERE id=?", inv.ChatID).Scan(&seq, &history); e != nil {
 			return e
 		}
-		if _, e = tx.Exec("INSERT INTO members(chat_id,user_id,role,joined_seq,read_seq,joined_at) VALUES(?,?,'member',?,?,unixepoch())", inv.ChatID, p.UserID, seq, seq); e != nil {
+		joined := seq
+		if history == 1 {
+			joined = 0
+		}
+		if _, e = tx.Exec("INSERT INTO members(chat_id,user_id,role,joined_seq,read_seq,joined_at) VALUES(?,?,'member',?,?,unixepoch())", inv.ChatID, p.UserID, joined, joined); e != nil {
 			return e
 		}
 		if _, e = tx.Exec("UPDATE chat_invites SET uses=uses+1 WHERE code=?", code); e != nil {
@@ -282,7 +296,7 @@ func (a *App) joinInvite(w http.ResponseWriter, r *http.Request, p Principal) {
 			return e
 		}
 		cid = inv.ChatID
-		return emit(tx, users, "membership.changed", cid, map[string]any{"user_id": p.UserID, "action": "add", "role": "member", "joined_seq": seq})
+		return emit(tx, users, "membership.changed", cid, map[string]any{"user_id": p.UserID, "action": "add", "role": "member", "joined_seq": joined})
 	})
 	if e != nil {
 		fail(w, e)

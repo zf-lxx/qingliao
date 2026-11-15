@@ -67,6 +67,24 @@ func (a *App) checkSend(tx *sql.Tx, p Principal, cid string, s Send) error {
 	if kind == "channel" && role != "owner" && role != "admin" {
 		return ErrForbidden
 	}
+	if kind == "group" && role != "owner" && role != "admin" {
+		ok, err := memberCan(tx, cid, role, permForKind(s.Kind))
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return ErrForbidden
+		}
+		if s.LinkPreviewID != "" || linkPattern.MatchString(s.Text) {
+			ok, err = memberCan(tx, cid, role, "can_add_link_previews")
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return ErrForbidden
+			}
+		}
+	}
 	var slow int
 	if e := tx.QueryRow("SELECT IFNULL(slow_mode,0) FROM chats WHERE id=?", cid).Scan(&slow); e != nil {
 		return e

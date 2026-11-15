@@ -505,6 +505,10 @@ func telegramMessage(tx *sql.Tx, botID string, m Message) (map[string]any, error
 			out["photo"] = []any{file}
 		case "video":
 			out["video"] = file
+		case "animation":
+			out["animation"] = file
+		case "video_note":
+			out["video_note"] = file
 		case "voice":
 			out["voice"] = file
 		default:

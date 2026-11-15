@@ -460,14 +460,14 @@ extension on QlTdEngine {
       'can_send_documents': !c.isChannel || admin,
       'can_send_photos': !c.isChannel || admin,
       'can_send_videos': !c.isChannel || admin,
-      'can_send_video_notes': false,
+      'can_send_video_notes': !c.isChannel || admin,
       'can_send_voice_notes': !c.isChannel || admin,
       'can_send_polls': !c.isChannel || admin,
       'can_send_other_messages': !c.isChannel || admin,
       'can_add_link_previews': !c.isChannel || admin,
       'can_change_info': c.isGroup && admin,
-      'can_invite_users': c.isGroup && admin,
-      'can_pin_messages': !c.isGroup || admin,
+      'can_invite_users': c.isGroup,
+      'can_pin_messages': true,
       'can_create_topics': false,
     };
     final stored = c.permissions;
@@ -487,8 +487,8 @@ extension on QlTdEngine {
     final blocked = !c.isGroup && c.peerId != null && _blockedUserIds.contains(c.peerId);
     final draft = c.draft['td'];
     Map<String, dynamic> type;
-    if (c.isChannel) {
-      type = {'@type': 'chatTypeSupergroup', 'supergroup_id': qlGroupInt(c.id), 'is_channel': true};
+    if (c.isChannel || c.upgraded) {
+      type = {'@type': 'chatTypeSupergroup', 'supergroup_id': qlGroupInt(c.id), 'is_channel': c.isChannel};
     } else if (c.isGroup) {
       type = {'@type': 'chatTypeBasicGroup', 'basic_group_id': qlGroupInt(c.id)};
     } else {
@@ -519,7 +519,7 @@ extension on QlTdEngine {
       'is_translatable': false,
       'is_marked_as_unread': c.manualUnread,
       'view_as_topics': false,
-      'has_scheduled_messages': false,
+      'has_scheduled_messages': c.hasScheduled,
       'can_be_deleted_only_for_self': !c.isGroup,
       'can_be_deleted_for_all_users': c.isGroup && c.role == 'owner',
       'can_be_reported': true,
@@ -531,7 +531,7 @@ extension on QlTdEngine {
       'unread_reaction_count': 0,
       'notification_settings': _notificationSettings(c),
       'available_reactions': {'@type': 'chatAvailableReactionsAll', 'max_reaction_count': 11},
-      'message_auto_delete_time': 0,
+      'message_auto_delete_time': c.autoDelete,
       'emoji_status': null,
       'background': _wallpapers[c.id],
       'theme': null,
@@ -561,9 +561,23 @@ extension on QlTdEngine {
   Map<String, dynamic>? _tdMessage(_Conv c, Map<String, dynamic> m) {
     if (m['deleted'] == true) return null;
     final seq = QlTdEngine._int(m['conversation_seq']) ?? 0;
+    final scheduled = m['scheduled'] == true;
     final sender = m['sender_id']?.toString() ?? '';
     final outgoing = sender == _myId;
-    final id = qlMessageId(seq);
+    final id = scheduled ? qlPackInt('sched:${m['id']}') : qlMessageId(seq);
+    final ttl = QlTdEngine._int(m['ttl']) ?? 0;
+    Map<String, dynamic>? scheduling;
+    if (scheduled) {
+      scheduling = m['when_online'] == true
+          ? {'@type': 'messageSchedulingStateSendWhenOnline'}
+          : {'@type': 'messageSchedulingStateSendAtDate', 'send_date': QlTdEngine._int(m['send_at']) ?? 0, 'repeat_period': 0};
+    }
+    Map<String, dynamic>? destruct;
+    if (ttl == -1) {
+      destruct = {'@type': 'messageSelfDestructTypeImmediately'};
+    } else if (ttl > 0) {
+      destruct = {'@type': 'messageSelfDestructTypeTimer', 'self_destruct_time': ttl};
+    }
     final date = _parseDate(m['created_at']);
     final edited = _parseDate(m['edited_at']);
     final replyTo = m['reply_to']?.toString() ?? '';
@@ -590,7 +604,7 @@ extension on QlTdEngine {
       'sender_id': _sender(sender),
       'chat_id': c.chatId,
       'sending_state': null,
-      'scheduling_state': null,
+      'scheduling_state': scheduling,
       'is_outgoing': outgoing,
       'is_pinned': c.pinnedSeqs.contains(seq),
       'is_from_offline': false,
@@ -610,7 +624,7 @@ extension on QlTdEngine {
       'suggested_post_info': null,
       'reply_to': reply,
       'topic_id': null,
-      'self_destruct_type': null,
+      'self_destruct_type': destruct,
       'self_destruct_in': 0.0,
       'auto_delete_in': 0.0,
       'via_bot_user_id': 0,
@@ -722,6 +736,96 @@ extension on QlTdEngine {
       case 'checklist':
         final list = m['checklist'] is Map ? Map<String, dynamic>.from(m['checklist'] as Map) : <String, dynamic>{};
         return _checklistContent(list);
+      case 'location':
+        final extra = m['extra'] is Map ? Map<String, dynamic>.from(m['extra'] as Map) : <String, dynamic>{};
+        final title = extra['title']?.toString() ?? '';
+        final location = {
+          '@type': 'location',
+          'latitude': extra['latitude'] ?? 0,
+          'longitude': extra['longitude'] ?? 0,
+          'horizontal_accuracy': 0,
+        };
+        if (title.isNotEmpty) {
+          return {
+            '@type': 'messageVenue',
+            'venue': {
+              '@type': 'venue',
+              'location': location,
+              'title': title,
+              'address': extra['address']?.toString() ?? '',
+              'provider': '',
+              'id': '',
+              'type': '',
+            },
+          };
+        }
+        return {
+          '@type': 'messageLocation',
+          'location': location,
+          'live_period': 0,
+          'expires_in': 0,
+          'heading': 0,
+          'proximity_alert_radius': 0,
+        };
+      case 'contact':
+        final extra = m['extra'] is Map ? Map<String, dynamic>.from(m['extra'] as Map) : <String, dynamic>{};
+        final userRaw = extra['user_id'];
+        final userId = userRaw is num ? userRaw.toInt() : qlUserInt(userRaw?.toString() ?? '');
+        return {
+          '@type': 'messageContact',
+          'contact': {
+            '@type': 'contact',
+            'phone_number': extra['phone_number']?.toString() ?? '',
+            'first_name': extra['first_name']?.toString() ?? text,
+            'last_name': extra['last_name']?.toString() ?? '',
+            'vcard': extra['vcard']?.toString() ?? '',
+            'user_id': userId,
+          },
+        };
+      case 'dice':
+        final extra = m['extra'] is Map ? Map<String, dynamic>.from(m['extra'] as Map) : <String, dynamic>{};
+        return {
+          '@type': 'messageDice',
+          'emoji': extra['emoji']?.toString().isNotEmpty == true ? extra['emoji'].toString() : text,
+          'value': QlTdEngine._int(extra['value']) ?? 0,
+          'success_animation_frame_number': 0,
+        };
+      case 'video_note':
+        return {
+          '@type': 'messageVideoNote',
+          'video_note': {
+            '@type': 'videoNote',
+            'duration': _durationSec(meta),
+            'length': QlTdEngine._int(meta['width']) ?? 0,
+            'thumbnail': null,
+            'minithumbnail': null,
+            'video': _fileForMedia(mediaId, kind: 'video', size: QlTdEngine._int(meta['bytes']) ?? 0),
+            'speech_recognition_result': null,
+          },
+          'is_viewed': false,
+          'is_secret': (QlTdEngine._int(m['ttl']) ?? 0) == -1,
+        };
+      case 'animation':
+        final mime = meta['mime']?.toString() ?? 'image/gif';
+        return {
+          '@type': 'messageAnimation',
+          'animation': {
+            '@type': 'animation',
+            'duration': _durationSec(meta),
+            'width': QlTdEngine._int(meta['width']) ?? 0,
+            'height': QlTdEngine._int(meta['height']) ?? 0,
+            'file_name': (meta['file_name']?.toString().isNotEmpty ?? false) ? meta['file_name'].toString() : 'animation',
+            'mime_type': mime,
+            'has_stickers': false,
+            'minithumbnail': null,
+            'thumbnail': null,
+            'animation': _fileForMedia(mediaId, kind: mime.startsWith('video/') ? 'video' : 'image', size: QlTdEngine._int(meta['bytes']) ?? 0),
+          },
+          'caption': caption,
+          'show_caption_above_media': false,
+          'has_spoiler': false,
+          'is_secret': false,
+        };
       default:
         // Unknown future kinds stay visible as their text instead of crashing.
         return {

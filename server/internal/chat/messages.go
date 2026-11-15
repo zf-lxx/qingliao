@@ -10,15 +10,16 @@ import (
 	"unicode/utf8"
 )
 
-const msgColumns = "id,chat_id,seq,sender,client_id,kind,text,media_id,reply_to,created,edited,deleted,entities_json,preview_json,reply_markup_json,via_bot_id,forward_origin_json,media_meta_json,album_id"
+const msgColumns = "id,chat_id,seq,sender,client_id,kind,text,media_id,reply_to,created,edited,deleted,entities_json,preview_json,reply_markup_json,via_bot_id,forward_origin_json,media_meta_json,album_id,extra_json,ttl"
 
 type scanner interface{ Scan(...any) error }
 
 func scanMessage(row scanner) (Message, error) {
 	var m Message
 	var d int
-	var entities, preview, markup, origin, meta, album string
-	e := row.Scan(&m.ID, &m.ChatID, &m.Seq, &m.Sender, &m.ClientID, &m.Kind, &m.Text, &m.MediaID, &m.ReplyTo, &m.Created, &m.Edited, &d, &entities, &preview, &markup, &m.ViaBotID, &origin, &meta, &album)
+	var entities, preview, markup, origin, meta, album, extra string
+	var ttl int
+	e := row.Scan(&m.ID, &m.ChatID, &m.Seq, &m.Sender, &m.ClientID, &m.Kind, &m.Text, &m.MediaID, &m.ReplyTo, &m.Created, &m.Edited, &d, &entities, &preview, &markup, &m.ViaBotID, &origin, &meta, &album, &extra, &ttl)
 	m.Deleted = d == 1
 	m.AlbumID = album
 	m.Entities = []Entity{}
@@ -41,6 +42,10 @@ func scanMessage(row scanner) (Message, error) {
 			m.Media = &info
 		}
 	}
+	if extra != "" {
+		m.Extra = json.RawMessage(extra)
+	}
+	m.TTL = ttl
 	return m, e
 }
 func (a *App) CreateChat(p Principal, kind, title string, ids []string) (string, error) {
@@ -123,7 +128,8 @@ func (a *App) ChangeMember(p Principal, cid, user, action, role string) error {
 		}
 		var kind string
 		var seq int64
-		if e = tx.QueryRow("SELECT kind,last_seq FROM chats WHERE id=?", cid).Scan(&kind, &seq); e != nil {
+		var history int
+		if e = tx.QueryRow("SELECT kind,last_seq,IFNULL(history_for_new,0) FROM chats WHERE id=?", cid).Scan(&kind, &seq, &history); e != nil {
 			return e
 		}
 		if kind != "group" && kind != "channel" {
@@ -134,7 +140,15 @@ func (a *App) ChangeMember(p Principal, cid, user, action, role string) error {
 			return te
 		}
 		if caller != "owner" && caller != "admin" {
-			if action != "remove" || user != p.UserID {
+			if action == "add" {
+				ok, err := memberCan(tx, cid, caller, "can_invite_users")
+				if err != nil {
+					return err
+				}
+				if !ok {
+					return ErrForbidden
+				}
+			} else if action != "remove" || user != p.UserID {
 				return ErrForbidden
 			}
 		}
@@ -163,8 +177,13 @@ func (a *App) ChangeMember(p Principal, cid, user, action, role string) error {
 			if te == nil {
 				return nil
 			}
-			_, e = tx.Exec("INSERT INTO members(chat_id,user_id,role,joined_seq,read_seq,joined_at) VALUES(?,?,'member',?,?,unixepoch())", cid, user, seq, seq)
+			joined := seq
+			if history == 1 {
+				joined = 0
+			}
+			_, e = tx.Exec("INSERT INTO members(chat_id,user_id,role,joined_seq,read_seq,joined_at) VALUES(?,?,'member',?,?,unixepoch())", cid, user, joined, joined)
 			before = append(before, user)
+			seq = joined
 		case "remove":
 			if te != nil {
 				return te
@@ -200,16 +219,17 @@ func (a *App) SendMessage(p Principal, cid string, s Send) (Message, error) {
 	if len(s.ClientID) < 1 || len(s.ClientID) > 128 || len(s.Text) > 16384 || !utf8.ValidString(s.Text) {
 		return Message{}, ErrInvalid
 	}
-	if s.Kind != "text" && s.Kind != "image" && s.Kind != "voice" && s.Kind != "file" && s.Kind != "video" && s.Kind != "sticker" && s.Kind != "poll" && s.Kind != "checklist" {
-		return Message{}, ErrInvalid
+	if e := prepareSend(&s); e != nil {
+		return Message{}, e
 	}
-	if s.AlbumID != "" && (len(s.AlbumID) > 64 || !albumIDRE.MatchString(s.AlbumID) || s.Kind == "text") {
+	structured := s.Kind == "location" || s.Kind == "contact" || s.Kind == "dice"
+	if s.AlbumID != "" && (len(s.AlbumID) > 64 || !albumIDRE.MatchString(s.AlbumID) || s.Kind == "text" || structured) {
 		return Message{}, ErrInvalid
 	}
 	if s.Kind == "text" && (strings.TrimSpace(s.Text) == "" || s.MediaID != "") {
 		return Message{}, ErrInvalid
 	}
-	if s.Kind != "text" && s.Kind != "poll" && s.Kind != "checklist" && s.MediaID == "" && s.StickerID == "" {
+	if !structured && s.Kind != "text" && s.Kind != "poll" && s.Kind != "checklist" && s.MediaID == "" && s.StickerID == "" {
 		return Message{}, ErrInvalid
 	}
 	var ve error
@@ -223,6 +243,8 @@ func (a *App) SendMessage(p Principal, cid string, s Send) (Message, error) {
 	if s.ViaBotID != "" {
 		return Message{}, ErrForbidden
 	}
+	sendAt, whenOnline := s.SendAt, s.WhenOnline
+	s.SendAt, s.WhenOnline = 0, false
 	body, _ := json.Marshal(struct {
 		Chat    string
 		Payload Send
@@ -278,6 +300,12 @@ func (a *App) SendMessage(p Principal, cid string, s Send) (Message, error) {
 			if s.Kind == "video" && !strings.HasPrefix(mime, "video/") {
 				return ErrInvalid
 			}
+			if s.Kind == "video_note" && !strings.HasPrefix(mime, "video/") {
+				return ErrInvalid
+			}
+			if s.Kind == "animation" && mime != "image/gif" && !strings.HasPrefix(mime, "video/") {
+				return ErrInvalid
+			}
 		}
 		if s.Kind == "sticker" {
 			if s.StickerID == "" {
@@ -291,6 +319,11 @@ func (a *App) SendMessage(p Principal, cid string, s Send) (Message, error) {
 			if s.Text == "" {
 				s.Text = emoji
 			}
+		}
+		if whenOnline || sendAt > time.Now().Unix() {
+			var err error
+			out, err = saveScheduled(tx, p, cid, s, digest, sendAt, whenOnline)
+			return err
 		}
 		var seq int64
 		if e = tx.QueryRow("UPDATE chats SET last_seq=last_seq+1,last_activity=? WHERE id=? RETURNING last_seq", time.Now().UnixMicro(), cid).Scan(&seq); e != nil {
@@ -317,7 +350,33 @@ func (a *App) SendMessage(p Principal, cid string, s Send) (Message, error) {
 		if s.ReplyTo != "" {
 			_ = tx.QueryRow("SELECT seq FROM messages WHERE id=?", s.ReplyTo).Scan(&out.ReplyToSeq)
 		}
-		_, e = tx.Exec("INSERT INTO messages(id,chat_id,seq,sender,client_id,kind,text,media_id,reply_to,payload_hash,created,entities_json,preview_json,reply_markup_json,via_bot_id,forward_origin_json,media_meta_json,album_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", out.ID, cid, seq, p.UserID, s.ClientID, s.Kind, s.Text, s.MediaID, s.ReplyTo, digest, out.Created, jsonText(s.Entities, "[]"), jsonText(preview, ""), jsonText(s.ReplyMarkup, ""), s.ViaBotID, "", jsonText(out.Media, ""), s.AlbumID)
+		if s.Kind == "dice" {
+			value, ok := rollDice(s.Text)
+			if !ok {
+				return ErrInvalid
+			}
+			raw, err := json.Marshal(map[string]any{"emoji": s.Text, "value": value})
+			if err != nil {
+				return err
+			}
+			s.Extra = raw
+		}
+		if s.TTL == 0 {
+			var auto int
+			if e = tx.QueryRow("SELECT IFNULL(auto_delete,0) FROM chats WHERE id=?", cid).Scan(&auto); e != nil {
+				return e
+			}
+			if auto > 0 {
+				s.TTL = auto
+			}
+		}
+		out.Extra = s.Extra
+		out.TTL = s.TTL
+		extraText := ""
+		if len(s.Extra) > 0 {
+			extraText = string(s.Extra)
+		}
+		_, e = tx.Exec("INSERT INTO messages(id,chat_id,seq,sender,client_id,kind,text,media_id,reply_to,payload_hash,created,entities_json,preview_json,reply_markup_json,via_bot_id,forward_origin_json,media_meta_json,album_id,extra_json,ttl) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", out.ID, cid, seq, p.UserID, s.ClientID, s.Kind, s.Text, s.MediaID, s.ReplyTo, digest, out.Created, jsonText(s.Entities, "[]"), jsonText(preview, ""), jsonText(s.ReplyMarkup, ""), s.ViaBotID, "", jsonText(out.Media, ""), s.AlbumID, extraText, s.TTL)
 		if e != nil {
 			return e
 		}
@@ -386,7 +445,7 @@ func (a *App) AlterMessage(p Principal, mid, action, text string) error {
 					return e
 				}
 			}
-			_, e = tx.Exec("UPDATE messages SET text='',media_id='',media_meta_json='',album_id='',entities_json='[]',preview_json='',reply_markup_json='',deleted=1 WHERE id=?", mid)
+			_, e = tx.Exec("UPDATE messages SET text='',media_id='',media_meta_json='',album_id='',entities_json='[]',preview_json='',reply_markup_json='',extra_json='',ttl=0,deleted=1 WHERE id=?", mid)
 		} else {
 			return ErrInvalid
 		}
@@ -469,7 +528,10 @@ func (a *App) Read(p Principal, cid string, seq int64) error {
 			}
 			return a.emitDialogStates(tx, []string{p.UserID}, cid)
 		}
-		if _, e = tx.Exec("UPDATE members SET read_seq=?,manual_unread=0 WHERE chat_id=? AND user_id=?", seq, cid, p.UserID); e != nil {
+		if _, e = tx.Exec("UPDATE members SET read_seq=?,read_at=unixepoch(),manual_unread=0 WHERE chat_id=? AND user_id=?", seq, cid, p.UserID); e != nil {
+			return e
+		}
+		if e = burnViewOnce(tx, cid, p.UserID, old, seq); e != nil {
 			return e
 		}
 		users, e := members(tx, cid)

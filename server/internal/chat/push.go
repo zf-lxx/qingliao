@@ -73,6 +73,11 @@ func (a *App) pushWorker() {
 			return
 		case <-tick.C:
 			a.expireNotificationMutes()
+			a.releaseScheduled()
+			a.expireMessages()
+			if time.Now().Unix()%30 == 0 {
+				a.gcOrphanMedia()
+			}
 			a.processPush()
 			a.processBotWebhooks()
 		}

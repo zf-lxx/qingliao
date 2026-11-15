@@ -216,6 +216,7 @@ func TestGroupPermissionsHistoryBoundary(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	req(t, f.s, "PATCH", "/v1/conversations/"+c, f.at, map[string]any{"permissions": map[string]any{"can_invite_users": false}}, 200)
 	old, _ := f.a.SendMessage(f.admin, c, Send{ClientID: "old", Text: "before"})
 	if e = f.a.ChangeMember(f.bob, c, f.eve.UserID, "add", ""); e != ErrForbidden {
 		t.Fatal(e)

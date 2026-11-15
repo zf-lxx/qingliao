@@ -8,13 +8,20 @@ import (
 
 func (a *App) migrateExtensions() error {
 	for table, columns := range map[string]map[string]string{
-		"messages": {"media_meta_json": "TEXT NOT NULL DEFAULT ''", "album_id": "TEXT NOT NULL DEFAULT ''", "entities_json": "TEXT NOT NULL DEFAULT '[]'", "preview_json": "TEXT NOT NULL DEFAULT ''", "reply_markup_json": "TEXT NOT NULL DEFAULT ''", "via_bot_id": "TEXT NOT NULL DEFAULT ''", "forward_origin_json": "TEXT NOT NULL DEFAULT ''"},
+		"messages": {"media_meta_json": "TEXT NOT NULL DEFAULT ''", "album_id": "TEXT NOT NULL DEFAULT ''", "entities_json": "TEXT NOT NULL DEFAULT '[]'", "preview_json": "TEXT NOT NULL DEFAULT ''", "reply_markup_json": "TEXT NOT NULL DEFAULT ''", "via_bot_id": "TEXT NOT NULL DEFAULT ''", "forward_origin_json": "TEXT NOT NULL DEFAULT ''", "extra_json": "TEXT NOT NULL DEFAULT ''", "ttl": "INTEGER NOT NULL DEFAULT 0"},
 		"media":    {"width": "INTEGER NOT NULL DEFAULT 0", "height": "INTEGER NOT NULL DEFAULT 0", "duration_ms": "INTEGER NOT NULL DEFAULT 0", "waveform": "TEXT NOT NULL DEFAULT ''", "file_name": "TEXT NOT NULL DEFAULT ''", "thumbnail_id": "TEXT NOT NULL DEFAULT ''"},
-		"chats":    {"last_activity": "INTEGER NOT NULL DEFAULT 0", "avatar": "TEXT NOT NULL DEFAULT ''", "description": "TEXT NOT NULL DEFAULT ''", "slow_mode": "INTEGER NOT NULL DEFAULT 0", "permissions_json": "TEXT NOT NULL DEFAULT ''"},
+		"chats":    {"last_activity": "INTEGER NOT NULL DEFAULT 0", "avatar": "TEXT NOT NULL DEFAULT ''", "description": "TEXT NOT NULL DEFAULT ''", "slow_mode": "INTEGER NOT NULL DEFAULT 0", "permissions_json": "TEXT NOT NULL DEFAULT ''", "history_for_new": "INTEGER NOT NULL DEFAULT 0", "auto_delete": "INTEGER NOT NULL DEFAULT 0", "upgraded": "INTEGER NOT NULL DEFAULT 0"},
 		"users":    {"read_receipts_enabled": "INTEGER NOT NULL DEFAULT 1", "password_hint": "TEXT NOT NULL DEFAULT ''", "totp_secret": "TEXT NOT NULL DEFAULT ''", "totp_pending": "TEXT NOT NULL DEFAULT ''", "totp_recovery": "TEXT NOT NULL DEFAULT ''", "deleted": "INTEGER NOT NULL DEFAULT 0", "is_bot": "INTEGER NOT NULL DEFAULT 0", "bio": "TEXT NOT NULL DEFAULT ''"},
 		"devices":  {"created": "TEXT NOT NULL DEFAULT ''", "last_seen": "TEXT NOT NULL DEFAULT ''", "app_name": "TEXT NOT NULL DEFAULT ''", "app_version": "TEXT NOT NULL DEFAULT ''", "device_model": "TEXT NOT NULL DEFAULT ''", "last_ip": "TEXT NOT NULL DEFAULT ''"},
-		"members":  {"manual_unread": "INTEGER NOT NULL DEFAULT 0", "archived": "INTEGER NOT NULL DEFAULT 0", "pin_order": "INTEGER NOT NULL DEFAULT 0", "notification_mute_until": "INTEGER NOT NULL DEFAULT 0", "draft_json": "TEXT NOT NULL DEFAULT ''", "joined_at": "INTEGER NOT NULL DEFAULT 0", "muted_until": "INTEGER NOT NULL DEFAULT 0"},
+		"members":  {"manual_unread": "INTEGER NOT NULL DEFAULT 0", "archived": "INTEGER NOT NULL DEFAULT 0", "pin_order": "INTEGER NOT NULL DEFAULT 0", "notification_mute_until": "INTEGER NOT NULL DEFAULT 0", "draft_json": "TEXT NOT NULL DEFAULT ''", "joined_at": "INTEGER NOT NULL DEFAULT 0", "muted_until": "INTEGER NOT NULL DEFAULT 0", "delivered_seq": "INTEGER NOT NULL DEFAULT 0", "delivered_at": "INTEGER NOT NULL DEFAULT 0", "read_at": "INTEGER NOT NULL DEFAULT 0"},
 	} {
+		var exists int
+		if e := a.DB.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&exists); e != nil {
+			return e
+		}
+		if exists == 0 {
+			continue
+		}
 		rows, e := a.DB.Query("PRAGMA table_info(" + table + ")")
 		if e != nil {
 			return e
@@ -39,7 +46,37 @@ func (a *App) migrateExtensions() error {
 			}
 		}
 	}
-	_, e := a.DB.Exec(extensionSchema + discoverySchema + p2Schema + p3Schema + p4Schema + p5Schema + p6Schema + p7Schema)
+	_, e := a.DB.Exec(extensionSchema + discoverySchema + p2Schema + p3Schema + p4Schema + p5Schema + p6Schema + p7Schema + p8Schema)
+	if e != nil {
+		return e
+	}
+	return a.ensureColumn("stickers", "format", "TEXT NOT NULL DEFAULT ''")
+}
+
+func (a *App) ensureColumn(table, name, typ string) error {
+	rows, e := a.DB.Query("PRAGMA table_info(" + table + ")")
+	if e != nil {
+		return e
+	}
+	found := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var col, colType string
+		var def any
+		if e = rows.Scan(&cid, &col, &colType, &notnull, &def, &pk); e != nil {
+			rows.Close()
+			return e
+		}
+		if col == name {
+			found = true
+		}
+	}
+	e = rows.Err()
+	rows.Close()
+	if e != nil || found {
+		return e
+	}
+	_, e = a.DB.Exec("ALTER TABLE " + table + " ADD COLUMN " + name + " " + typ)
 	return e
 }
 
@@ -101,7 +138,7 @@ CREATE TABLE IF NOT EXISTS checklists(id TEXT PRIMARY KEY,chat_id TEXT NOT NULL 
 CREATE TABLE IF NOT EXISTS checklist_tasks(id TEXT PRIMARY KEY,checklist_id TEXT NOT NULL REFERENCES checklists(id),task_no INTEGER NOT NULL,text TEXT NOT NULL,completed_by TEXT NOT NULL DEFAULT '',completed_at TEXT NOT NULL DEFAULT '',UNIQUE(checklist_id,task_no));
 CREATE TABLE IF NOT EXISTS sticker_packs(id TEXT PRIMARY KEY,owner TEXT NOT NULL DEFAULT '',title TEXT NOT NULL,is_emoji INTEGER NOT NULL DEFAULT 0,created TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sticker_files(id TEXT PRIMARY KEY,mime TEXT NOT NULL,bytes INTEGER NOT NULL,sha256 TEXT NOT NULL,data BLOB NOT NULL);
-CREATE TABLE IF NOT EXISTS stickers(id TEXT PRIMARY KEY,pack_id TEXT NOT NULL REFERENCES sticker_packs(id),emoji TEXT NOT NULL,media_id TEXT NOT NULL DEFAULT '',file_id TEXT NOT NULL DEFAULT '',sort_order INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS stickers(id TEXT PRIMARY KEY,pack_id TEXT NOT NULL REFERENCES sticker_packs(id),emoji TEXT NOT NULL,media_id TEXT NOT NULL DEFAULT '',file_id TEXT NOT NULL DEFAULT '',sort_order INTEGER NOT NULL DEFAULT 0,format TEXT NOT NULL DEFAULT '');
 CREATE TABLE IF NOT EXISTS sticker_favorites(user_id TEXT NOT NULL REFERENCES users(id),sticker_id TEXT NOT NULL REFERENCES stickers(id),created TEXT NOT NULL,PRIMARY KEY(user_id,sticker_id));
 CREATE INDEX IF NOT EXISTS stickers_pack ON stickers(pack_id,sort_order);
 PRAGMA user_version=6;
@@ -142,4 +179,10 @@ CREATE TABLE IF NOT EXISTS chat_invites(code TEXT PRIMARY KEY,chat_id TEXT NOT N
 CREATE INDEX IF NOT EXISTS chat_invites_chat ON chat_invites(chat_id,revoked,created);
 CREATE TABLE IF NOT EXISTS chat_wallpapers(user_id TEXT NOT NULL REFERENCES users(id),chat_id TEXT NOT NULL,document TEXT NOT NULL,PRIMARY KEY(user_id,chat_id));
 PRAGMA user_version=10;
+`
+
+const p8Schema = `
+CREATE TABLE IF NOT EXISTS scheduled_messages(id TEXT PRIMARY KEY,chat_id TEXT NOT NULL,sender TEXT NOT NULL,client_id TEXT NOT NULL,kind TEXT NOT NULL,text TEXT NOT NULL DEFAULT '',media_id TEXT NOT NULL DEFAULT '',reply_to TEXT NOT NULL DEFAULT '',extra_json TEXT NOT NULL DEFAULT '',ttl INTEGER NOT NULL DEFAULT 0,send_at INTEGER NOT NULL DEFAULT 0,when_online INTEGER NOT NULL DEFAULT 0,payload_hash TEXT NOT NULL DEFAULT '',created TEXT NOT NULL,UNIQUE(sender,client_id));
+CREATE INDEX IF NOT EXISTS scheduled_due ON scheduled_messages(send_at,when_online);
+PRAGMA user_version=11;
 `

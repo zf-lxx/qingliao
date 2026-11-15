@@ -98,19 +98,28 @@ type Message struct {
 	Created       string          `json:"created_at"`
 	Edited        string          `json:"edited_at,omitempty"`
 	Deleted       bool            `json:"deleted"`
+	Extra         json.RawMessage `json:"extra,omitempty"`
+	TTL           int             `json:"ttl,omitempty"`
+	SendAt        int64           `json:"send_at,omitempty"`
+	WhenOnline    bool            `json:"when_online,omitempty"`
+	Scheduled     bool            `json:"scheduled,omitempty"`
 }
 type Send struct {
-	Entities      []Entity     `json:"entities,omitempty"`
-	LinkPreviewID string       `json:"link_preview_id,omitempty"`
-	ReplyMarkup   *ReplyMarkup `json:"reply_markup,omitempty"`
-	ViaBotID      string       `json:"via_bot_id,omitempty"`
-	ClientID      string       `json:"client_msg_id"`
-	Kind          string       `json:"kind"`
-	Text          string       `json:"text"`
-	MediaID       string       `json:"media_id"`
-	AlbumID       string       `json:"album_id,omitempty"`
-	ReplyTo       string       `json:"reply_to"`
-	StickerID     string       `json:"sticker_id,omitempty"`
+	Entities      []Entity        `json:"entities,omitempty"`
+	LinkPreviewID string          `json:"link_preview_id,omitempty"`
+	ReplyMarkup   *ReplyMarkup    `json:"reply_markup,omitempty"`
+	ViaBotID      string          `json:"via_bot_id,omitempty"`
+	ClientID      string          `json:"client_msg_id"`
+	Kind          string          `json:"kind"`
+	Text          string          `json:"text"`
+	MediaID       string          `json:"media_id"`
+	AlbumID       string          `json:"album_id,omitempty"`
+	ReplyTo       string          `json:"reply_to"`
+	StickerID     string          `json:"sticker_id,omitempty"`
+	Extra         json.RawMessage `json:"extra,omitempty"`
+	TTL           int             `json:"ttl,omitempty"`
+	SendAt        int64           `json:"send_at,omitempty"`
+	WhenOnline    bool            `json:"when_online,omitempty"`
 }
 type Event struct {
 	V      int             `json:"v"`

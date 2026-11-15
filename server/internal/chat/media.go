@@ -182,7 +182,7 @@ func (a *App) storeMedia(ctx context.Context, r io.Reader, opts mediaStoreOpts) 
 	if strings.HasPrefix(mime, "text/") {
 		mime = "application/octet-stream"
 	}
-	if opts.Require != "" && !strings.HasPrefix(mime, opts.Require) {
+	if opts.Require != "" && !mediaMatches(opts.Require, mime) {
 		return out, errUnsupportedMedia
 	}
 	mid := id()

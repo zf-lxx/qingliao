@@ -92,6 +92,7 @@ func TestInvitesWallpapersSenderAndPollOption(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
+	req(t, f.s, "PATCH", "/v1/conversations/"+gid, f.at, map[string]any{"permissions": map[string]any{"can_invite_users": false}}, 200)
 	req(t, f.s, "POST", "/v1/conversations/"+gid+"/invites", f.bt, map[string]any{"name": "no"}, 403)
 	created := req(t, f.s, "POST", "/v1/conversations/"+gid+"/invites", f.at, map[string]any{"name": "door", "member_limit": 5}, 201)
 	code := created["code"].(string)

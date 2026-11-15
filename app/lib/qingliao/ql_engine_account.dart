@@ -388,13 +388,15 @@ extension _QlAccount on QlTdEngine {
     final format = (sticker['format'] as Map?)?['@type']?.toString() ?? '';
     return format.isEmpty ||
         format == 'stickerFormatWebp' ||
-        format == 'stickerFormatPng';
+        format == 'stickerFormatPng' ||
+        format == 'stickerFormatTgs' ||
+        format == 'stickerFormatWebm';
   }
 
   Future<Map<String, dynamic>> _createNewStickerSet(Map<String, dynamic> r) async {
     final typ = (r['sticker_type'] as Map?)?['@type']?.toString() ?? 'stickerTypeRegular';
-    if (typ != 'stickerTypeRegular') {
-      return _error(400, '目前仅支持普通 PNG 表情包');
+    if (typ != 'stickerTypeRegular' && typ != 'stickerTypeCustomEmoji') {
+      return _error(400, '目前仅支持普通贴纸和自定义 emoji');
     }
     final title = (r['title']?.toString() ?? '').trim();
     if (title.isEmpty) return _error(400, '请填写表情包名称');
@@ -402,10 +404,10 @@ extension _QlAccount on QlTdEngine {
     if (stickers.isEmpty) return _error(400, '请至少添加一张贴纸');
     for (final raw in stickers) {
       if (raw is! Map || !_stickerFormatAllowed(raw)) {
-        return _error(400, '目前仅支持 PNG / WebP 贴纸，不支持动画格式');
+        return _error(400, '目前仅支持 PNG、WebP、TGS 和 WebM 贴纸');
       }
     }
-    final created = await _apiOrThrow.post('/sticker-packs', {'title': title, 'is_emoji': false});
+    final created = await _apiOrThrow.post('/sticker-packs', {'title': title, 'is_emoji': typ == 'stickerTypeCustomEmoji'});
     final packId = created['id']?.toString() ?? '';
     if (packId.isEmpty) return _error(500, '创建表情包失败');
     for (final raw in stickers) {
@@ -420,7 +422,7 @@ extension _QlAccount on QlTdEngine {
     final sticker = r['sticker'];
     if (name.isEmpty || sticker is! Map) return _error(400, '贴纸参数无效');
     if (!_stickerFormatAllowed(sticker)) {
-      return _error(400, '目前仅支持 PNG / WebP 贴纸，不支持动画格式');
+      return _error(400, '目前仅支持 PNG、WebP、TGS 和 WebM 贴纸');
     }
     final packId = await _packIdByName(name);
     if (packId == null) return _error(404, '找不到这个表情包');

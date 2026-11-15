@@ -510,6 +510,15 @@ extension on QlTdEngine {
           if (data.containsKey('slow_mode_seconds')) {
             updated.slowMode = QlTdEngine._int(data['slow_mode_seconds']) ?? updated.slowMode;
           }
+          if (data.containsKey('auto_delete_seconds')) {
+            updated.autoDelete = QlTdEngine._int(data['auto_delete_seconds']) ?? updated.autoDelete;
+          }
+          if (data.containsKey('history_for_new')) {
+            updated.historyForNew = data['history_for_new'] == true;
+          }
+          if (data.containsKey('upgraded')) {
+            updated.upgraded = data['upgraded'] == true;
+          }
           if (data['permissions'] is Map) {
             updated.permissions = Map<String, dynamic>.from(data['permissions'] as Map);
           }
@@ -642,6 +651,9 @@ extension on QlTdEngine {
         _completePending(pending, m);
         return;
       }
+    }
+    if (sender != _myId && seq > 0) {
+      unawaited(_apiOrThrow.post('/conversations/${c.id}/delivered', {'seq': seq}).catchError((_) => <String, dynamic>{}));
     }
     if (c.messages.containsKey(seq)) return;
     if (!_users.containsKey(sender)) await _ensureUser(sender);

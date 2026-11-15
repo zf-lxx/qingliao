@@ -68,6 +68,7 @@ const _uploadMimes = <String, String>{
   'm4v': 'video/mp4',
   'mov': 'video/quicktime',
   'webm': 'video/webm',
+  'tgs': 'application/x-tgsticker',
   'mkv': 'video/x-matroska',
   '3gp': 'video/3gpp',
   'avi': 'video/x-msvideo',

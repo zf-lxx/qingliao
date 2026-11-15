@@ -24,8 +24,17 @@ func (a *App) pin(w http.ResponseWriter, r *http.Request, p Principal) {
 		if e = tx.QueryRow("SELECT kind FROM chats WHERE id=?", cid).Scan(&kind); e != nil {
 			return e
 		}
-		if kind != "direct" && role != "owner" && role != "admin" {
+		if kind == "channel" && role != "owner" && role != "admin" {
 			return ErrForbidden
+		}
+		if kind == "group" && role != "owner" && role != "admin" {
+			ok, err := memberCan(tx, cid, role, "can_pin_messages")
+			if err != nil {
+				return err
+			}
+			if !ok {
+				return ErrForbidden
+			}
 		}
 		var n int
 		if e = tx.QueryRow("SELECT count(*) FROM messages WHERE id=? AND chat_id=? AND seq>? AND deleted=0", b.MessageID, cid, joined).Scan(&n); e != nil {

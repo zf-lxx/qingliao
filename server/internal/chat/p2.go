@@ -246,11 +246,15 @@ func (a *App) ForwardMessage(p Principal, mid, dest, clientID string) (Message, 
 		if e = tx.QueryRow("UPDATE chats SET last_seq=last_seq+1,last_activity=? WHERE id=? RETURNING last_seq", time.Now().UnixMicro(), dest).Scan(&seq); e != nil {
 			return e
 		}
-		out = Message{ID: id(), ChatID: dest, Seq: seq, Sender: p.UserID, ClientID: clientID, Kind: src.Kind, Text: src.Text, MediaID: src.MediaID, ReplyTo: "", Created: now(), Entities: src.Entities, Media: src.Media, ForwardOrigin: raw}
+		out = Message{ID: id(), ChatID: dest, Seq: seq, Sender: p.UserID, ClientID: clientID, Kind: src.Kind, Text: src.Text, MediaID: src.MediaID, ReplyTo: "", Created: now(), Entities: src.Entities, Media: src.Media, ForwardOrigin: raw, Extra: src.Extra}
 		if out.Entities == nil {
 			out.Entities = []Entity{}
 		}
-		_, e = tx.Exec("INSERT INTO messages(id,chat_id,seq,sender,client_id,kind,text,media_id,reply_to,payload_hash,created,entities_json,preview_json,reply_markup_json,via_bot_id,forward_origin_json,media_meta_json,album_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", out.ID, dest, seq, p.UserID, clientID, out.Kind, out.Text, out.MediaID, "", digest, out.Created, jsonText(out.Entities, "[]"), "", "", "", string(raw), jsonText(out.Media, ""), "")
+		extra := ""
+		if len(src.Extra) > 0 {
+			extra = string(src.Extra)
+		}
+		_, e = tx.Exec("INSERT INTO messages(id,chat_id,seq,sender,client_id,kind,text,media_id,reply_to,payload_hash,created,entities_json,preview_json,reply_markup_json,via_bot_id,forward_origin_json,media_meta_json,album_id,extra_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", out.ID, dest, seq, p.UserID, clientID, out.Kind, out.Text, out.MediaID, "", digest, out.Created, jsonText(out.Entities, "[]"), "", "", "", string(raw), jsonText(out.Media, ""), "", extra)
 		if e != nil {
 			return e
 		}

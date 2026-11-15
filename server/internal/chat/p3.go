@@ -6,10 +6,10 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -365,11 +365,11 @@ func (a *App) attachPolls(messages []Message, viewer string) {
 // MARK: Checklists
 
 type checklistSpec struct {
-	Title        string   `json:"title"`
-	Tasks        []string `json:"tasks"`
-	OthersAdd    bool     `json:"others_can_add"`
-	OthersMark   bool     `json:"others_can_mark"`
-	ClientID     string   `json:"client_msg_id"`
+	Title      string   `json:"title"`
+	Tasks      []string `json:"tasks"`
+	OthersAdd  bool     `json:"others_can_add"`
+	OthersMark bool     `json:"others_can_mark"`
+	ClientID   string   `json:"client_msg_id"`
 }
 
 func (a *App) createChecklist(w http.ResponseWriter, r *http.Request, p Principal) {
@@ -527,10 +527,10 @@ func (a *App) markChecklistTasks(w http.ResponseWriter, r *http.Request, p Princ
 
 func (a *App) editChecklist(w http.ResponseWriter, r *http.Request, p Principal) {
 	var b struct {
-		Title      string         `json:"title"`
+		Title      string           `json:"title"`
 		Tasks      []map[string]any `json:"tasks"`
-		OthersAdd  *bool          `json:"others_can_add"`
-		OthersMark *bool          `json:"others_can_mark"`
+		OthersAdd  *bool            `json:"others_can_add"`
+		OthersMark *bool            `json:"others_can_mark"`
 	}
 	if !decode(w, r, &b) {
 		return
@@ -944,7 +944,7 @@ func (a *App) getStickerPack(w http.ResponseWriter, r *http.Request, p Principal
 		fail(w, ErrForbidden)
 		return
 	}
-	rows, e := a.DB.Query("SELECT id,emoji,media_id,file_id,sort_order FROM stickers WHERE pack_id=? ORDER BY sort_order,id", pid)
+	rows, e := a.DB.Query("SELECT id,emoji,media_id,file_id,sort_order,IFNULL(format,'') FROM stickers WHERE pack_id=? ORDER BY sort_order,id", pid)
 	if e != nil {
 		fail(w, e)
 		return
@@ -952,13 +952,13 @@ func (a *App) getStickerPack(w http.ResponseWriter, r *http.Request, p Principal
 	defer rows.Close()
 	items := []map[string]any{}
 	for rows.Next() {
-		var id, em, mid, fid string
+		var id, em, mid, fid, format string
 		var sort int
-		if e = rows.Scan(&id, &em, &mid, &fid, &sort); e != nil {
+		if e = rows.Scan(&id, &em, &mid, &fid, &sort, &format); e != nil {
 			fail(w, e)
 			return
 		}
-		items = append(items, map[string]any{"id": id, "emoji": em, "media_id": mid, "file_id": fid, "sort_order": sort})
+		items = append(items, map[string]any{"id": id, "emoji": em, "media_id": mid, "file_id": fid, "sort_order": sort, "format": format})
 	}
 	respond(w, 200, map[string]any{"id": pid, "owner": owner, "title": title, "is_emoji": emoji == 1, "stickers": items})
 }
@@ -1004,21 +1004,20 @@ func (a *App) addSticker(w http.ResponseWriter, r *http.Request, p Principal) {
 		return
 	}
 	var n int
-	var mime string
-	if e := a.DB.QueryRow("SELECT count(*), COALESCE(max(mime),'') FROM media WHERE id=? AND owner=?", b.MediaID, p.UserID).Scan(&n, &mime); e != nil || n != 1 {
+	var mime, name string
+	if e := a.DB.QueryRow("SELECT count(*), COALESCE(max(mime),''), COALESCE(max(file_name),'') FROM media WHERE id=? AND owner=?", b.MediaID, p.UserID).Scan(&n, &mime, &name); e != nil || n != 1 {
 		fail(w, ErrInvalid)
 		return
 	}
-	switch mime {
-	case "image/png", "image/webp", "image/jpeg":
-	default:
+	format := stickerFormatOf(mime, name)
+	if format == "" {
 		fail(w, ErrInvalid)
 		return
 	}
 	sid := id()
 	var sort int
 	a.DB.QueryRow("SELECT COALESCE(max(sort_order)+1,0) FROM stickers WHERE pack_id=?", pid).Scan(&sort)
-	if _, e := a.DB.Exec("INSERT INTO stickers(id,pack_id,emoji,media_id,file_id,sort_order) VALUES(?,?,?,?,?,?)", sid, pid, b.Emoji, b.MediaID, "", sort); e != nil {
+	if _, e := a.DB.Exec("INSERT INTO stickers(id,pack_id,emoji,media_id,file_id,sort_order,format) VALUES(?,?,?,?,?,?,?)", sid, pid, b.Emoji, b.MediaID, "", sort, format); e != nil {
 		fail(w, e)
 		return
 	}
@@ -1043,7 +1042,7 @@ func (a *App) searchStickers(w http.ResponseWriter, r *http.Request, p Principal
 		return
 	}
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	rows, e := a.DB.Query("SELECT s.id,s.emoji,s.media_id,s.file_id,s.pack_id FROM stickers s JOIN sticker_packs p ON p.id=s.pack_id WHERE (p.owner='' OR p.owner=?) AND (?='' OR s.emoji LIKE ?) ORDER BY s.pack_id,s.sort_order LIMIT 100", p.UserID, q, q+"%")
+	rows, e := a.DB.Query("SELECT s.id,s.emoji,s.media_id,s.file_id,s.pack_id,IFNULL(s.format,'') FROM stickers s JOIN sticker_packs p ON p.id=s.pack_id WHERE (p.owner='' OR p.owner=?) AND (?='' OR s.emoji LIKE ?) ORDER BY s.pack_id,s.sort_order LIMIT 100", p.UserID, q, q+"%")
 	if e != nil {
 		fail(w, e)
 		return
@@ -1051,18 +1050,18 @@ func (a *App) searchStickers(w http.ResponseWriter, r *http.Request, p Principal
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
-		var id, em, mid, fid, pack string
-		if e = rows.Scan(&id, &em, &mid, &fid, &pack); e != nil {
+		var id, em, mid, fid, pack, format string
+		if e = rows.Scan(&id, &em, &mid, &fid, &pack, &format); e != nil {
 			fail(w, e)
 			return
 		}
-		out = append(out, map[string]any{"id": id, "emoji": em, "media_id": mid, "file_id": fid, "pack_id": pack})
+		out = append(out, map[string]any{"id": id, "emoji": em, "media_id": mid, "file_id": fid, "pack_id": pack, "format": format})
 	}
 	respond(w, 200, map[string]any{"stickers": out})
 }
 
 func (a *App) listFavoriteStickers(w http.ResponseWriter, r *http.Request, p Principal) {
-	rows, e := a.DB.Query("SELECT s.id,s.emoji,s.media_id,s.file_id,s.pack_id FROM sticker_favorites f JOIN stickers s ON s.id=f.sticker_id WHERE f.user_id=? ORDER BY f.created", p.UserID)
+	rows, e := a.DB.Query("SELECT s.id,s.emoji,s.media_id,s.file_id,s.pack_id,IFNULL(s.format,'') FROM sticker_favorites f JOIN stickers s ON s.id=f.sticker_id WHERE f.user_id=? ORDER BY f.created", p.UserID)
 	if e != nil {
 		fail(w, e)
 		return
@@ -1070,12 +1069,12 @@ func (a *App) listFavoriteStickers(w http.ResponseWriter, r *http.Request, p Pri
 	defer rows.Close()
 	out := []map[string]any{}
 	for rows.Next() {
-		var id, em, mid, fid, pack string
-		if e = rows.Scan(&id, &em, &mid, &fid, &pack); e != nil {
+		var id, em, mid, fid, pack, format string
+		if e = rows.Scan(&id, &em, &mid, &fid, &pack, &format); e != nil {
 			fail(w, e)
 			return
 		}
-		out = append(out, map[string]any{"id": id, "emoji": em, "media_id": mid, "file_id": fid, "pack_id": pack})
+		out = append(out, map[string]any{"id": id, "emoji": em, "media_id": mid, "file_id": fid, "pack_id": pack, "format": format})
 	}
 	respond(w, 200, map[string]any{"stickers": out})
 }
@@ -1120,7 +1119,7 @@ func parseMuteUntil(v any) int64 {
 	}
 }
 
-// deleteStickerPack removes a pack the caller owns. Default packs (owner '')
+// deleteStickerPack removes a pack the caller owns. Default packs (owner ”)
 // belong to the deployment and cannot be deleted by a user.
 func (a *App) deleteStickerPack(w http.ResponseWriter, r *http.Request, p Principal) {
 	pid := r.PathValue("id")

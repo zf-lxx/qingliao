@@ -1,5 +1,32 @@
 part of 'ql_engine.dart';
 
+class _Draft {
+  _Draft({
+    required this.kind,
+    required this.text,
+    this.entities = const [],
+    this.path,
+    required this.content,
+    this.extra,
+  });
+
+  final String kind;
+  final String text;
+  final List<Map<String, dynamic>> entities;
+  final String? path;
+  final Map<String, dynamic> content;
+  final Map<String, dynamic>? extra;
+}
+
+class _SendOpts {
+  const _SendOpts({this.extra, this.ttl = 0, this.sendAt = 0, this.whenOnline = false});
+
+  final Map<String, dynamic>? extra;
+  final int ttl;
+  final int sendAt;
+  final bool whenOnline;
+}
+
 extension on QlTdEngine {
   // MARK: Chat list
 
@@ -381,7 +408,7 @@ extension on QlTdEngine {
 
   _Conv? _groupByBasicId(int basicId) {
     for (final c in _convs.values) {
-      if (c.isGroup && qlGroupInt(c.id) == basicId) return c;
+      if (c.kind == 'group' && !c.upgraded && qlGroupInt(c.id) == basicId) return c;
     }
     return null;
   }
@@ -751,7 +778,7 @@ extension on QlTdEngine {
       'can_be_edited': editable,
       'can_be_forwarded': !pending,
       'can_be_paid': false,
-      'can_be_pinned': !pending && (!c.isGroup || admin),
+      'can_be_pinned': !pending && (admin || !c.isGroup || c.permissions?['can_pin_messages'] != false),
       'can_be_replied': !pending,
       'can_be_replied_in_another_chat': false,
       'can_be_saved': true,
@@ -766,10 +793,10 @@ extension on QlTdEngine {
       'can_get_media_timestamp_links': false,
       'can_get_message_thread': false,
       'can_get_poll_vote_statistics': false,
-      'can_get_read_date': false,
+      'can_get_read_date': outgoing && !pending,
       'can_get_statistics': false,
       'can_get_video_advertisements': false,
-      'can_get_viewers': false,
+      'can_get_viewers': outgoing && !pending && c.isGroup,
       'can_mark_tasks_as_done': false,
       'can_recognize_speech': false,
       'can_report_chat': true,
@@ -799,9 +826,8 @@ extension on QlTdEngine {
     }
   }
 
-  /// TDLib input content -> (backend send fields, local media path, local
-  /// TDLib content for the pending bubble).
-  ({String kind, String text, List<Map<String, dynamic>> entities, String? path, Map<String, dynamic> content})? _draftContent(Map<String, dynamic> input) {
+  /// TDLib input content -> backend send fields and a local pending bubble.
+  _Draft? _draftContent(Map<String, dynamic> input) {
     Map<String, dynamic>? captionOf(String key) =>
         input[key] is Map ? Map<String, dynamic>.from(input[key] as Map) : null;
     switch (input['@type']) {
@@ -809,7 +835,7 @@ extension on QlTdEngine {
         final text = captionOf('text');
         final plain = text?['text']?.toString() ?? '';
         if (plain.trim().isEmpty) return null;
-        return (
+        return _Draft(
           kind: 'text',
           text: plain,
           entities: _backendEntities(text),
@@ -836,7 +862,7 @@ extension on QlTdEngine {
           }
         }
         final local = _localFile(path)..kind = 'image';
-        return (
+        return _Draft(
           kind: 'image',
           text: plain,
           entities: _backendEntities(caption),
@@ -871,7 +897,7 @@ extension on QlTdEngine {
         final plain = caption?['text']?.toString() ?? '';
         final local = _localFile(path);
         final name = path.split(Platform.pathSeparator).last;
-        return (
+        return _Draft(
           kind: 'file',
           text: plain,
           entities: _backendEntities(caption),
@@ -910,7 +936,7 @@ extension on QlTdEngine {
         final name = title.isEmpty
             ? fallbackName
             : (performer.isEmpty ? title : '$performer - $title');
-        return (
+        return _Draft(
           kind: 'file',
           text: plain,
           entities: _backendEntities(caption),
@@ -935,7 +961,7 @@ extension on QlTdEngine {
         final caption = captionOf('caption');
         final plain = caption?['text']?.toString() ?? '';
         final local = _localFile(path)..kind = 'voice';
-        return (
+        return _Draft(
           kind: 'voice',
           text: plain,
           entities: _backendEntities(caption),
@@ -961,7 +987,7 @@ extension on QlTdEngine {
         final plain = caption?['text']?.toString() ?? '';
         final local = _localFile(path)..kind = 'video';
         final name = path.split(Platform.pathSeparator).last;
-        return (
+        return _Draft(
           kind: 'video',
           text: plain,
           entities: _backendEntities(caption),
@@ -982,6 +1008,115 @@ extension on QlTdEngine {
               'video': _tdFile(local),
             },
             'alternative_videos': const <Object>[],
+            'caption': _formatted(plain, _tdEntities(plain, null)),
+            'show_caption_above_media': false,
+            'has_spoiler': false,
+            'is_secret': false,
+          },
+        );
+      case 'inputMessageLocation':
+      case 'inputMessageVenue':
+        final venue = input['@type'] == 'inputMessageVenue';
+        final src = venue
+            ? (input['venue'] is Map ? Map<String, dynamic>.from(input['venue'] as Map) : const <String, dynamic>{})
+            : (input['location'] is Map ? Map<String, dynamic>.from(input['location'] as Map) : const <String, dynamic>{});
+        final loc = venue && src['location'] is Map ? Map<String, dynamic>.from(src['location'] as Map) : src;
+        final lat = (loc['latitude'] as num?)?.toDouble();
+        final lon = (loc['longitude'] as num?)?.toDouble();
+        if (lat == null || lon == null) return null;
+        final title = src['title']?.toString() ?? '';
+        final address = src['address']?.toString() ?? '';
+        final extra = <String, dynamic>{'latitude': lat, 'longitude': lon, if (title.isNotEmpty) 'title': title, if (address.isNotEmpty) 'address': address};
+        final location = {'@type': 'location', 'latitude': lat, 'longitude': lon, 'horizontal_accuracy': 0};
+        return _Draft(
+          kind: 'location',
+          text: title,
+          extra: extra,
+          content: title.isEmpty
+              ? {'@type': 'messageLocation', 'location': location, 'live_period': 0, 'expires_in': 0, 'heading': 0, 'proximity_alert_radius': 0}
+              : {
+                  '@type': 'messageVenue',
+                  'venue': {'@type': 'venue', 'location': location, 'title': title, 'address': address, 'provider': '', 'id': '', 'type': ''},
+                },
+        );
+      case 'inputMessageContact':
+        final contact = input['contact'] is Map ? Map<String, dynamic>.from(input['contact'] as Map) : const <String, dynamic>{};
+        final phone = contact['phone_number']?.toString() ?? '';
+        final first = contact['first_name']?.toString() ?? '';
+        if (phone.trim().isEmpty || first.trim().isEmpty) return null;
+        final extra = <String, dynamic>{
+          'phone_number': phone,
+          'first_name': first,
+          'last_name': contact['last_name']?.toString() ?? '',
+          'vcard': contact['vcard']?.toString() ?? '',
+          'user_id': contact['user_id'] ?? 0,
+        };
+        return _Draft(
+          kind: 'contact',
+          text: first,
+          extra: extra,
+          content: {'@type': 'messageContact', 'contact': {'@type': 'contact', ...extra}},
+        );
+      case 'inputMessageDice':
+        final emoji = input['emoji']?.toString() ?? '';
+        if (emoji.isEmpty) return null;
+        return _Draft(
+          kind: 'dice',
+          text: emoji,
+          extra: {'emoji': emoji},
+          content: {'@type': 'messageDice', 'emoji': emoji, 'value': 0, 'success_animation_frame_number': 0},
+        );
+      case 'inputMessageVideoNote':
+        final note = input['video_note'] is Map ? Map<String, dynamic>.from(input['video_note'] as Map) : const <String, dynamic>{};
+        final path = _inputFilePath(note['video_note'] ?? note);
+        if (path == null) return null;
+        final local = _localFile(path)..kind = 'video';
+        return _Draft(
+          kind: 'video_note',
+          text: '',
+          path: path,
+          content: {
+            '@type': 'messageVideoNote',
+            'video_note': {
+              '@type': 'videoNote',
+              'duration': QlTdEngine._int(note['duration']) ?? 0,
+              'length': QlTdEngine._int(note['length']) ?? 0,
+              'thumbnail': null,
+              'minithumbnail': null,
+              'video': _tdFile(local),
+              'speech_recognition_result': null,
+            },
+            'is_viewed': false,
+            'is_secret': false,
+          },
+        );
+      case 'inputMessageAnimation':
+        final anim = input['animation'] is Map ? Map<String, dynamic>.from(input['animation'] as Map) : const <String, dynamic>{};
+        final path = _inputFilePath(anim['animation'] ?? anim);
+        if (path == null) return null;
+        final caption = captionOf('caption');
+        final plain = caption?['text']?.toString() ?? '';
+        final local = _localFile(path)..kind = 'image';
+        final name = path.split(Platform.pathSeparator).last;
+        return _Draft(
+          kind: 'animation',
+          text: plain,
+          entities: _backendEntities(caption),
+          path: path,
+          content: {
+            '@type': 'messageAnimation',
+            'animation': {
+              '@type': 'animation',
+              'duration': QlTdEngine._int(anim['duration']) ?? 0,
+              'width': QlTdEngine._int(anim['width']) ?? 0,
+              'height': QlTdEngine._int(anim['height']) ?? 0,
+              'file_name': name.isEmpty ? 'animation.gif' : name,
+              'mime_type': uploadMimeForPath(path).isEmpty ? 'image/gif' : uploadMimeForPath(path),
+              'has_stickers': false,
+              'minithumbnail': null,
+              'thumbnail': null,
+              'animation': _tdFile(local),
+            },
             'caption': _formatted(plain, _tdEntities(plain, null)),
             'show_caption_above_media': false,
             'has_spoiler': false,
@@ -1010,7 +1145,7 @@ extension on QlTdEngine {
     }
     final draft = _draftContent(Map<String, dynamic>.from(input));
     if (draft == null) {
-      if (const {'inputMessageText', 'inputMessagePhoto', 'inputMessageDocument', 'inputMessageVoiceNote', 'inputMessageVideo', 'inputMessageAudio'}.contains(type)) {
+      if (const {'inputMessageText', 'inputMessagePhoto', 'inputMessageDocument', 'inputMessageVoiceNote', 'inputMessageVideo', 'inputMessageAudio', 'inputMessageLocation', 'inputMessageVenue', 'inputMessageContact', 'inputMessageDice', 'inputMessageVideoNote', 'inputMessageAnimation'}.contains(type)) {
         return _error(400, 'MESSAGE_EMPTY');
       }
       return _unsupported('sendMessage($type)');
@@ -1088,8 +1223,43 @@ extension on QlTdEngine {
         _position(c..lastActivityMicros = DateTime.now().microsecondsSinceEpoch),
       ],
     });
-    unawaited(_deliver(pending, draft.kind, draft.text, draft.entities, draft.path, replyTo, albumId));
+    final opts = _sendOpts(r, Map<String, dynamic>.from(input), draft.extra);
+    if (opts.whenOnline) {
+      message['scheduling_state'] = {'@type': 'messageSchedulingStateSendWhenOnline'};
+    } else if (opts.sendAt > 0) {
+      message['scheduling_state'] = {'@type': 'messageSchedulingStateSendAtDate', 'send_date': opts.sendAt, 'repeat_period': 0};
+    }
+    if (opts.ttl == -1) {
+      message['self_destruct_type'] = {'@type': 'messageSelfDestructTypeImmediately'};
+    } else if (opts.ttl > 0) {
+      message['self_destruct_type'] = {'@type': 'messageSelfDestructTypeTimer', 'self_destruct_time': opts.ttl};
+    }
+    unawaited(_deliver(pending, draft.kind, draft.text, draft.entities, draft.path, replyTo, albumId, opts));
     return message;
+  }
+
+  _SendOpts _sendOpts(Map<String, dynamic> request, Map<String, dynamic> input, Map<String, dynamic>? extra) {
+    var ttl = 0;
+    final destruct = input['self_destruct_type'];
+    if (destruct is Map) {
+      if (destruct['@type'] == 'messageSelfDestructTypeImmediately') ttl = -1;
+      if (destruct['@type'] == 'messageSelfDestructTypeTimer') {
+        ttl = QlTdEngine._int(destruct['self_destruct_time']) ?? 0;
+      }
+    }
+    var sendAt = 0;
+    var whenOnline = false;
+    final options = request['options'];
+    if (options is Map) {
+      final state = options['scheduling_state'];
+      if (state is Map) {
+        if (state['@type'] == 'messageSchedulingStateSendWhenOnline') whenOnline = true;
+        if (state['@type'] == 'messageSchedulingStateSendAtDate') {
+          sendAt = QlTdEngine._int(state['send_date']) ?? 0;
+        }
+      }
+    }
+    return _SendOpts(extra: extra, ttl: ttl, sendAt: sendAt, whenOnline: whenOnline);
   }
 
   Future<void> _deliver(
@@ -1100,6 +1270,7 @@ extension on QlTdEngine {
     String? path,
     String replyTo, [
     String albumId = '',
+    _SendOpts? opts,
   ]) async {
     try {
       var c = p.conv;
@@ -1152,6 +1323,10 @@ extension on QlTdEngine {
         if (albumId.isNotEmpty) 'album_id': albumId,
         if (entities.isNotEmpty) 'entities': entities,
         if (previewId.isNotEmpty) 'link_preview_id': previewId,
+        if (opts?.extra != null) 'extra': opts!.extra,
+        if ((opts?.ttl ?? 0) != 0) 'ttl': opts!.ttl,
+        if ((opts?.sendAt ?? 0) > 0) 'send_at': opts!.sendAt,
+        if (opts?.whenOnline == true) 'when_online': true,
       });
       _completePending(p, sent);
     } catch (e) {
@@ -1171,7 +1346,18 @@ extension on QlTdEngine {
           'retry_after': 0.0,
         },
       };
-      p.message['@ql_retry'] = {'kind': kind, 'text': text, 'entities': entities, 'path': path, 'reply_to': replyTo, 'album_id': albumId};
+      p.message['@ql_retry'] = {
+        'kind': kind,
+        'text': text,
+        'entities': entities,
+        'path': path,
+        'reply_to': replyTo,
+        'album_id': albumId,
+        'ttl': opts?.ttl ?? 0,
+        'send_at': opts?.sendAt ?? 0,
+        'when_online': opts?.whenOnline == true,
+        'extra': opts?.extra,
+      };
       _emit({
         '@type': 'updateMessageSendFailed',
         'message': p.message,
@@ -1189,6 +1375,14 @@ extension on QlTdEngine {
     final c = _convs[raw['conversation_id']?.toString() ?? ''] ?? p.conv;
     final td = _tdMessage(c, raw);
     if (td == null) return;
+    if (raw['scheduled'] == true) {
+      c.hasScheduled = true;
+      _emit({'@type': 'updateMessageSendSucceeded', 'message': td, 'old_message_id': p.tempId});
+      if (c.announced) {
+        _emit({'@type': 'updateChatHasScheduledMessages', 'chat_id': c.chatId, 'has_scheduled_messages': true});
+      }
+      return;
+    }
     _cacheMessage(c, td, raw);
     _emit({'@type': 'updateMessageSendSucceeded', 'message': td, 'old_message_id': p.tempId});
     _advanceLast(c, td, incoming: false);
@@ -1216,6 +1410,12 @@ extension on QlTdEngine {
         retry['path'] as String?,
         retry['reply_to'] as String,
         retry['album_id'] as String? ?? '',
+        _SendOpts(
+          extra: retry['extra'] is Map ? Map<String, dynamic>.from(retry['extra'] as Map) : null,
+          ttl: QlTdEngine._int(retry['ttl']) ?? 0,
+          sendAt: QlTdEngine._int(retry['send_at']) ?? 0,
+          whenOnline: retry['when_online'] == true,
+        ),
       ));
       out.add(p.message);
     }
