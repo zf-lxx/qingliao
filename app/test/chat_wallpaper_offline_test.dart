@@ -150,6 +150,73 @@ void main() {
     });
   });
 
+  group('a saved background is still there after the chat is reopened', () {
+    ChatWallpaperController reopenable({
+      required List<Map<String, dynamic>> queries,
+    }) {
+      return ChatWallpaperController(
+        preferences: () async => SharedPreferences.getInstance(),
+        supportDirectory: () async => support,
+        activeSlot: () => 0,
+        hasActiveClient: () => true,
+        query: (request) async {
+          queries.add(Map<String, dynamic>.from(request));
+          switch (request['@type']) {
+            case 'setChatBackground':
+            case 'setDefaultBackground':
+              throw unsupported('setChatBackground');
+            case 'getChat':
+              return <String, dynamic>{
+                '@type': 'chat',
+                'id': request['chat_id'],
+              };
+            case 'getCurrentState':
+              return <String, dynamic>{
+                '@type': 'updates',
+                'updates': <Map<String, dynamic>>[],
+              };
+            default:
+              return <String, dynamic>{'@type': 'ok'};
+          }
+        },
+        subscribe: () => const Stream<Map<String, dynamic>>.empty(),
+        listenForUpdates: false,
+      );
+    }
+
+    test('getChat with no server background does not wipe the local choice',
+        () async {
+      final first = reopenable(queries: <Map<String, dynamic>>[]);
+      await first.applyWallpaper(
+        42,
+        const ChatWallpaper.preset('sky'),
+        onlyForSelf: false,
+      );
+      await first.load(42);
+      expect(first.wallpaperFor(42)?.presetId, 'sky');
+
+      final second = reopenable(queries: <Map<String, dynamic>>[]);
+      await second.load(42);
+      expect(
+        second.wallpaperFor(42)?.presetId,
+        'sky',
+        reason: 'relaunch must read the preference back',
+      );
+    });
+
+    test('a default background survives a new controller', () async {
+      final first = reopenable(queries: <Map<String, dynamic>>[]);
+      await first.applyDefaultWallpaper(
+        const ChatWallpaper.preset('ocean'),
+        dark: true,
+      );
+
+      final second = reopenable(queries: <Map<String, dynamic>>[]);
+      await second.loadDefaultWallpaper(dark: true);
+      expect(second.defaultWallpaper(dark: true)?.presetId, 'ocean');
+    });
+  });
+
   group('chat themes stay unsupported and say so', () {
     test('applyTheme reports a domain error, not QL_UNSUPPORTED', () async {
       final queries = <Map<String, dynamic>>[];

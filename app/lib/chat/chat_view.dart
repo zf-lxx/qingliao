@@ -2684,6 +2684,12 @@ class _ChatViewState extends State<ChatView> {
     if (wasImeVisible != isImeVisible && mounted) {
       setState(() {});
     }
+    // Opening a chat (especially the first one after a cold start) can report
+    // a keyboard inset for a frame before the field is focused. The composer
+    // ignores that inset, and following it here would scroll the transcript
+    // up — the "抬一下" on entry. Only track the bottom once the user is
+    // actually in the field.
+    if (!_composerHasFocus) return;
     if ((wasNearBottom || opening) &&
         !_autoScrollPolicy.preservesViewport &&
         _scrollTargetId == null) {

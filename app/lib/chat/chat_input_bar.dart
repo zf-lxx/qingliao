@@ -812,6 +812,20 @@ class _ChatInputBarState extends State<ChatInputBar>
   bool _syncingControllerFromVm = false;
   bool _initialFocusRequestConsumed = false;
   bool _keyboardSendScheduled = false;
+
+  /// Last measured touch-field height. The first measurement is the field
+  /// appearing, not the user wrapping another line; reporting it makes the
+  /// transcript jump on entry.
+  double? _lastReportedInputHeight;
+
+  /// Set once the field has actually taken the IME. Until then a viewInsets
+  /// value left over from the route transition must not grow the bar.
+  bool _keyboardInsetEngaged = false;
+
+  /// Gesture-bar height seen for this process. The first frame of a newly
+  /// pushed route sometimes reports 0 and only then the real inset, which
+  /// grows the composer and lifts the transcript.
+  static double _stableGestureInset = 0;
   AiReplyProvider? _activeAiReplyProvider;
   List<AiReplyProgressPhase> _aiReplyProgressPhases = const [];
   bool _aiReplyProgressExpanded = false;
@@ -982,8 +996,25 @@ class _ChatInputBarState extends State<ChatInputBar>
   void _onInputFieldResized({required bool desktop}) {
     if (desktop || widget.onInputHeightChanged == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) widget.onInputHeightChanged?.call();
+      if (!mounted) return;
+      final box = _composerFieldKey.currentContext?.findRenderObject();
+      if (box is! RenderBox || !box.hasSize) return;
+      final height = box.size.height;
+      final previous = _lastReportedInputHeight;
+      _lastReportedInputHeight = height;
+      // First layout, or a width-only change, is not the field growing.
+      if (previous == null || (height - previous).abs() < 0.5) return;
+      widget.onInputHeightChanged?.call();
     });
+  }
+
+  double _gestureInset(BuildContext context) {
+    final view = View.of(context);
+    final fromView = view.viewPadding.bottom / view.devicePixelRatio;
+    final fromMedia = MediaQuery.viewPaddingOf(context).bottom;
+    final reported = fromView > fromMedia ? fromView : fromMedia;
+    if (reported > _stableGestureInset) _stableGestureInset = reported;
+    return _stableGestureInset > 0 ? _stableGestureInset : reported;
   }
 
   void _handleBotPlatformUpdate(Map<String, dynamic> update) {
@@ -3931,14 +3962,21 @@ class _ChatInputBarState extends State<ChatInputBar>
         !_hasText &&
         _pendingClipboardAttachments.isEmpty &&
         _voiceDraft == null;
-    final bottomSafeArea = MediaQuery.paddingOf(context).bottom;
+    final bottomSafeArea = _gestureInset(context);
     // The chat Scaffold does not resize for the keyboard (that would shift the
     // whole page, and on a cold first open it could do so before the transcript
     // had measured itself). The composer therefore owns the bottom inset: it
     // takes whichever is larger, the system gesture area or the keyboard.
+    // A route push can report a leftover keyboard inset for a frame before the
+    // field is focused. Applying it grows this bar and lifts the transcript.
+    final rawKeyboard = MediaQuery.viewInsetsOf(context).bottom;
+    if (_focus.hasFocus && rawKeyboard > 0) _keyboardInsetEngaged = true;
+    if (!_focus.hasFocus && rawKeyboard <= bottomSafeArea) {
+      _keyboardInsetEngaged = false;
+    }
     final bottomInset = composerBottomInset(
       safeArea: bottomSafeArea,
-      keyboard: MediaQuery.viewInsetsOf(context).bottom,
+      keyboard: (_focus.hasFocus || _keyboardInsetEngaged) ? rawKeyboard : 0,
     );
     final mediaPanelVisible =
         _panel == _Panel.emoji || _panel == _Panel.sticker;

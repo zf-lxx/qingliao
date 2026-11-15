@@ -675,6 +675,41 @@ class ChatWallpaperController extends ChangeNotifier {
       'mithka.globalChatTheme.v1.${_globalId(dark)}';
   String _savedBackgroundsPreferenceKey() =>
       'mithka.savedChatWallpapers.v1.${_activeSlot()}';
+  String _defaultPreferenceKey(bool dark) =>
+      'mithka.defaultChatWallpaper.v1.${_globalId(dark)}';
+
+  /// 轻聊 answers setChatBackground / setDefaultBackground with QL_UNSUPPORTED.
+  /// Once that has happened, a chat object with no server background must not
+  /// wipe the on-device choice — that is the only copy.
+  static const _wallpaperBackendUnsupportedKey =
+      'mithka.chatWallpaper.backendUnsupported.v1';
+  bool _wallpaperBackendUnsupported = false;
+  Future<void>? _wallpaperBackendFlagLoad;
+
+  Future<void> _ensureWallpaperBackendFlag() {
+    return _wallpaperBackendFlagLoad ??= _readWallpaperBackendFlag();
+  }
+
+  Future<void> _readWallpaperBackendFlag() async {
+    try {
+      _wallpaperBackendUnsupported =
+          (await _preferences()).getBool(_wallpaperBackendUnsupportedKey) ??
+          false;
+    } catch (_) {
+      _wallpaperBackendUnsupported = false;
+    }
+  }
+
+  Future<void> _markWallpaperBackendUnsupported() async {
+    if (_wallpaperBackendUnsupported) return;
+    _wallpaperBackendUnsupported = true;
+    try {
+      await (await _preferences()).setBool(
+        _wallpaperBackendUnsupportedKey,
+        true,
+      );
+    } catch (_) {}
+  }
 
   static String _stockGlobalThemeId(GlobalChatThemeStock stock) =>
       'stock:${stock.name}';
@@ -1146,6 +1181,7 @@ class ChatWallpaperController extends ChangeNotifier {
   Future<void> load(int chatId) async {
     final id = _id(chatId);
     _ingestEmojiThemes(_latestEmojiChatThemes());
+    await _ensureWallpaperBackendFlag();
     if (!_loadedLocal.contains(id)) {
       _loadedLocal.add(id);
       await _loadLocal(chatId);
@@ -1332,6 +1368,10 @@ class ChatWallpaperController extends ChangeNotifier {
   }
 
   Future<void> _readDefaultWallpapers({bool? dark}) async {
+    await _ensureWallpaperBackendFlag();
+    if (_wallpaperBackendUnsupported) {
+      await _hydrateDefaultWallpapers(dark);
+    }
     if (!_hasActiveClient()) return;
     try {
       final state = await _query({'@type': 'getCurrentState'});
@@ -1376,8 +1416,12 @@ class ChatWallpaperController extends ChangeNotifier {
       } on Object catch (error) {
         // 轻聊 keeps no server-side default background; see applyWallpaper.
         if (!_isUnsupportedMethod(error)) rethrow;
+        await _markWallpaperBackendUnsupported();
       }
       _defaultBackgrounds[_globalId(dark)] = null;
+      if (_wallpaperBackendUnsupported) {
+        await _persistDefaultWallpaper(dark, null);
+      }
     } else {
       if (wallpaper.kind == ChatWallpaperKind.theme) {
         throw UnsupportedError('Chat themes cannot be global wallpapers');
@@ -1395,9 +1439,12 @@ class ChatWallpaperController extends ChangeNotifier {
             wallpaper;
       } on Object catch (error) {
         // 轻聊 stores the default background on-device only. Keep the chosen
-        // value so the appearance screen and the chat list agree right away.
+        // value so the appearance screen and the chat list agree right away,
+        // and write it to preferences so a relaunch still has it.
         if (!_isUnsupportedMethod(error)) rethrow;
+        await _markWallpaperBackendUnsupported();
         _defaultBackgrounds[_globalId(dark)] = wallpaper;
+        await _persistDefaultWallpaper(dark, wallpaper);
       }
       await _rememberWallpaper(
         _defaultBackgrounds[_globalId(dark)] ?? wallpaper,
@@ -1515,6 +1562,7 @@ class ChatWallpaperController extends ChangeNotifier {
 
   Future<void> refresh(int chatId) async {
     if (!_hasActiveClient()) return;
+    await _ensureWallpaperBackendFlag();
     final chat = await _query({'@type': 'getChat', 'chat_id': chatId});
     _ingestChat(chat);
   }
@@ -1571,6 +1619,7 @@ class ChatWallpaperController extends ChangeNotifier {
       // instead of surfacing a save failure. Any other error is a real
       // failure and must keep propagating.
       if (!_isUnsupportedMethod(error)) rethrow;
+      await _markWallpaperBackendUnsupported();
       await _applyLocally(chatId, wallpaper);
       return;
     }
@@ -1736,10 +1785,16 @@ class ChatWallpaperController extends ChangeNotifier {
       case 'updateChatBackground':
         final chatId = update.int64('chat_id');
         if (chatId == null) return;
-        _serverBackgrounds[_id(chatId)] = _parseChatBackground(
-          update.obj('background'),
-        );
-        if (update.obj('background') == null) unawaited(_discardLocal(chatId));
+        final parsed = _parseChatBackground(update.obj('background'));
+        _serverBackgrounds[_id(chatId)] = parsed;
+        // A null background from 轻聊 means the server has no wallpaper
+        // store, not that the user cleared one. Only a real server wallpaper
+        // replaces the on-device copy.
+        if (parsed != null) {
+          unawaited(_discardLocal(chatId));
+        } else if (!_wallpaperBackendUnsupported) {
+          unawaited(_discardLocal(chatId));
+        }
         notifyListeners();
       case 'updateChatTheme':
         final chatId = update.int64('chat_id');
@@ -1785,16 +1840,47 @@ class ChatWallpaperController extends ChangeNotifier {
     _ingestCurrentGiftTheme(theme);
     _themeNames[id] = _chatThemeName(theme);
     _themeKinds[id] = _chatThemeKind(theme);
-    // Once TDLib has returned the chat, its server-backed appearance is the
-    // source of truth. Keeping the old preference would resurrect a stale
-    // local wallpaper after it was reset from another Telegram client.
-    if (_localValues[id] != null) unawaited(_discardLocal(chatId));
+    // A real server wallpaper wins, so a wallpaper cleared from another
+    // client does not come back from an old preference. 轻聊 never stores
+    // one: the local preference is the source of truth and must survive
+    // getChat.
+    if (_localValues[id] != null &&
+        (background != null || !_wallpaperBackendUnsupported)) {
+      unawaited(_discardLocal(chatId));
+    }
     notifyListeners();
+  }
+
+  Future<void> _hydrateDefaultWallpapers(bool? dark) async {
+    for (final mode in dark == null ? const [false, true] : [dark]) {
+      final id = _globalId(mode);
+      if (_defaultBackgrounds.containsKey(id)) continue;
+      try {
+        final encoded = (await _preferences()).getString(
+          _defaultPreferenceKey(mode),
+        );
+        if (encoded == null || encoded.isEmpty) continue;
+        _defaultBackgrounds[id] = ChatWallpaper.fromJson(jsonDecode(encoded));
+      } catch (_) {
+        _defaultBackgrounds[id] = null;
+      }
+    }
+  }
+
+  Future<void> _persistDefaultWallpaper(bool dark, ChatWallpaper? wallpaper) async {
+    final prefs = await _preferences();
+    final key = _defaultPreferenceKey(dark);
+    if (wallpaper == null) {
+      await prefs.remove(key);
+      return;
+    }
+    await prefs.setString(key, jsonEncode(wallpaper.toJson()));
   }
 
   void _ingestDefaultBackground(Map<String, dynamic> update) {
     final dark = update.boolean('for_dark_theme') ?? false;
     final background = _parseBackground(update.obj('background'), dimming: 0);
+    if (background == null && _wallpaperBackendUnsupported) return;
     _defaultBackgrounds[_globalId(dark)] = background;
     if (background != null) unawaited(_rememberWallpaper(background));
   }
