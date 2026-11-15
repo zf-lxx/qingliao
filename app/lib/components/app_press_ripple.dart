@@ -62,6 +62,23 @@ class _AppPressRippleState extends State<AppPressRipple>
       AppMotion.deliberate,
     );
     _opacityController.duration = AppMotion.duration(context, AppMotion.quick);
+    // Tapping a row pushes the chat before this listener can see pointer-up.
+    // The circle then stays at whatever radius it had reached, and because the
+    // chat route is opaque the stain only becomes visible on the way back.
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent && _origin != null) {
+      _dismissImmediately();
+    }
+  }
+
+  void _dismissImmediately() {
+    _pointer = null;
+    _downPosition = null;
+    _cancelled = true;
+    _generation++;
+    _opacityController.value = 0;
+    _expansionController.stop();
+    _origin = null;
   }
 
   @override
