@@ -897,16 +897,20 @@ extension on QlTdEngine {
   // MARK: Sending
 
   String? _inputFilePath(Object? input) {
-    if (input is! Map) return null;
-    switch (input['@type']) {
+    // The composer wraps a local file in inputDocument / inputPhoto / etc.
+    // Walking only the outer map used to miss the path and return MESSAGE_EMPTY.
+    final file = nestedInputFile(input) ??
+        (input is Map ? Map<String, dynamic>.from(input) : null);
+    if (file == null) return null;
+    switch (file['@type']) {
       case 'inputFileLocal':
-        final path = input['path']?.toString() ?? '';
+        final path = file['path']?.toString() ?? '';
         return path.isEmpty ? null : path;
       case 'inputFileId':
-        final f = _files[QlTdEngine._int(input['id']) ?? 0];
+        final f = _files[QlTdEngine._int(file['id']) ?? 0];
         return (f == null || f.localPath.isEmpty) ? null : f.localPath;
       default:
-        return null;
+        return localPathOfInputFile(file);
     }
   }
 

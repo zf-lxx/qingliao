@@ -88,15 +88,28 @@ void main() {
 
     test('a brief zero after a real inset keeps the last value', () {
       expect(StableSystemInsets.holdBottom(34), 34);
-      expect(StableSystemInsets.holdBottom(0), 34);
-      expect(StableSystemInsets.holdBottom(0), 34);
-      expect(StableSystemInsets.holdBottom(0), 34);
+      for (var i = 0; i < kTransientZeroInsetFrames; i++) {
+        expect(
+          StableSystemInsets.holdBottom(0),
+          34,
+          reason: 'zero frame ${i + 1} of $kTransientZeroInsetFrames',
+        );
+      }
       expect(
         StableSystemInsets.holdBottom(0),
         0,
         reason:
             'a lasting zero (no gesture bar, or landscape) must be accepted',
       );
+    });
+
+    test('zeros during a route transition never clear the cache', () {
+      expect(StableSystemInsets.holdBottom(34), 34);
+      for (var i = 0; i < kTransientZeroInsetFrames + 8; i++) {
+        expect(StableSystemInsets.holdBottom(0, ignoreTransientZero: true), 34);
+      }
+      // After the transition, a short burst of zeros is still held.
+      expect(StableSystemInsets.holdBottom(0), 34);
     });
 
     test('the first positive inset is used immediately', () {

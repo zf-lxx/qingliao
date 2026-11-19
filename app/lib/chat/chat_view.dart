@@ -78,6 +78,7 @@ import '../theme/date_text.dart';
 import '../theme/telegram_cloud_theme.dart';
 import '../theme/theme_controller.dart';
 import 'ai_chat_translation_service.dart';
+import 'message_extent.dart';
 import 'apple_pcc_unread_summary_provider.dart';
 import 'auto_translate_policy.dart';
 import 'blocked_message_runs.dart';
@@ -4319,37 +4320,11 @@ class _ChatViewState extends State<ChatView> {
   }
 
   double _estimatedMessageExtent(ChatMessage message) {
-    if (message.animatedSticker != null || message.videoSticker != null) {
-      return 180;
-    }
-    if (message.image != null || message.video != null) {
-      final h = message.imageHeight ?? 180;
-      final w = message.imageWidth ?? 180;
-      final scaled = w <= 0 ? 180.0 : _messageMediaMaxWidth() * h / w;
-      return scaled.clamp(120.0, 310.0) + 16;
-    }
-    if (message.document != null ||
-        message.music != null ||
-        message.voice != null ||
-        message.location != null ||
-        message.isCall) {
-      return 78;
-    }
-    if (message.diceEmoji != null || message.stickerFileId != null) {
-      return 94;
-    }
-    final text = message.text.trim();
-    final width = MediaQuery.sizeOf(context).width;
-    final charsPerLine = math.max(10, (width * 0.52 / 15).floor());
-    final lines = text.isEmpty
-        ? 1
-        : (text.length / charsPerLine).ceil().clamp(1, 8);
-    final sender = _vm.isGroup && !message.isOutgoing ? 18.0 : 0.0;
-    final reply = message.replyToMessageId != null ? 42.0 : 0.0;
-    final buttons = message.buttonRows.isNotEmpty
-        ? message.buttonRows.length * 38.0
-        : 0.0;
-    return 30 + sender + reply + lines * 22.0 + buttons;
+    return estimatedTranscriptMessageExtent(
+      message: message,
+      viewportWidth: MediaQuery.sizeOf(context).width,
+      isGroup: _vm.isGroup,
+    );
   }
 
   void _scrollToBottom() {

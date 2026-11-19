@@ -51,6 +51,7 @@ import 'animated_sticker_view.dart';
 import 'bot_button_presentation.dart';
 import 'chat_appearance_preview.dart';
 import 'custom_emoji.dart';
+import 'message_extent.dart';
 import 'desktop_message_quote_source.dart';
 import 'desktop_message_text_selection.dart';
 import 'file_detail_view.dart';
@@ -2440,10 +2441,12 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
     );
     Widget body = parts.length == 1
         ? parts.first
-        : Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: parts,
+        : IntrinsicWidth(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              mainAxisSize: MainAxisSize.min,
+              children: parts,
+            ),
           );
     if (stamp.isNotEmpty) {
       final stampMeta = (outgoing || message.isEdited)
@@ -3934,10 +3937,6 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
     final link = _messageLinkColor(outgoing);
     final previewLine = _messagePreviewLineColor(outgoing);
     const accentWidth = 3.0;
-    final media = _linkPreviewMedia(
-      preview,
-      math.max(1.0, maxWidth - accentWidth),
-    );
     Widget mobileSelectionDisabled(Widget child) =>
         widget.bubble.mobileTextSelectionAreaKey == null
         ? child
@@ -4002,13 +4001,17 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
             outgoing ? _outgoingBubbleColor : _incomingBubbleColor,
           )
         : translucentBackground;
+    final media = _linkPreviewMedia(
+      preview,
+      math.max(1.0, maxWidth - accentWidth),
+      placeholderColor: cardBackground,
+    );
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: preview.url.isEmpty ? null : () => openLink(context, preview.url),
       child: Container(
         key: ValueKey('messageLinkPreviewCard-${message.id}'),
-        width: maxWidth,
         decoration: BoxDecoration(
           color: cardBackground,
           borderRadius: BorderRadius.circular(AppRadius.md),
@@ -4045,17 +4048,23 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
     );
   }
 
-  Widget? _linkPreviewMedia(MessageLinkPreview preview, double maxWidth) {
+  Widget? _linkPreviewMedia(
+    MessageLinkPreview preview,
+    double maxWidth, {
+    Color? placeholderColor,
+  }) {
     final media = preview.image;
     if (media == null) return null;
     final large =
         preview.showLargeMedia || preview.type == 'linkPreviewTypePhoto';
     final width = large ? maxWidth : math.min(maxWidth, 210.0);
-    final size = _fitSize(
+    final size = fitContainedSize(
       width: preview.imageWidth,
       height: preview.imageHeight,
       maxWidth: width,
-      maxHeight: large ? 180 : 120,
+      maxHeight: large
+          ? kLinkPreviewLargeMediaMaxHeight
+          : kLinkPreviewSmallMediaMaxHeight,
       fallback: Size(width, large ? 140 : 96),
     );
     return SizedBox(
@@ -4070,6 +4079,7 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
             cornerRadius: 0,
             cacheWidth: _cachePx(size.width),
             cacheHeight: _cachePx(size.height),
+            placeholderColor: placeholderColor,
           ),
           if (preview.video != null)
             Center(
@@ -4538,7 +4548,6 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
       onTap: openOriginal,
       child: Container(
         key: const ValueKey('messageReplyQuote'),
-        width: double.infinity,
         padding: const EdgeInsets.fromLTRB(12, 8, 6, 9),
         decoration: BoxDecoration(
           color: _replyQuoteBackground(outgoing),
@@ -5452,6 +5461,13 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
   int _cachePx(double logical) =>
       (logical * MediaQuery.devicePixelRatioOf(context)).ceil();
 
+  Color _mediaPlaceholderColor(bool outgoing) {
+    if (_showsMessageBubbleSurface) {
+      return outgoing ? _outgoingBubbleColor : _incomingBubbleColor;
+    }
+    return _colors.chatBackground;
+  }
+
   Widget _imageContent(TdFileRef image, bool outgoing) {
     final geometry = _imagePreviewGeometry();
     final imageSize = geometry.contentSize;
@@ -5467,7 +5483,13 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
         width: frameSize.width,
         height: frameSize.height,
         child: usesBlurredFrame
-            ? _blurredImageFrame(image, imageSize, frameSize, mediaBorderRadius)
+            ? _blurredImageFrame(
+                image,
+                imageSize,
+                frameSize,
+                mediaBorderRadius,
+                placeholderColor: _mediaPlaceholderColor(outgoing),
+              )
             : ClipRRect(
                 key: ValueKey('messageMediaClip-${message.id}'),
                 borderRadius: mediaBorderRadius,
@@ -5478,6 +5500,7 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
                   cacheWidth: _cachePx(imageSize.width),
                   cacheHeight: _cachePx(imageSize.height),
                   showProgress: true,
+                  placeholderColor: _mediaPlaceholderColor(outgoing),
                 ),
               ),
       ),
@@ -5552,8 +5575,9 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
     TdFileRef image,
     Size imageSize,
     Size frameSize,
-    BorderRadius borderRadius,
-  ) {
+    BorderRadius borderRadius, {
+    Color? placeholderColor,
+  }) {
     final blurredSource = image.thumbnail ?? image;
     final blurredCacheWidth = math.min(_cachePx(frameSize.width), _cachePx(96));
     final blurredCacheHeight = math.min(
@@ -5578,6 +5602,7 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
                   cornerRadius: 0,
                   cacheWidth: blurredCacheWidth,
                   cacheHeight: blurredCacheHeight,
+                  placeholderColor: placeholderColor,
                 ),
               ),
             ),
@@ -5594,6 +5619,7 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
                 cacheWidth: _cachePx(imageSize.width),
                 cacheHeight: _cachePx(imageSize.height),
                 showProgress: true,
+                placeholderColor: placeholderColor,
               ),
             ),
           ),
@@ -6014,20 +6040,13 @@ class _MessageBubbleState extends State<_ScopedMessageBubble>
     required double maxWidth,
     required double maxHeight,
     required Size fallback,
-  }) {
-    final w = width, h = height;
-    if (w == null || h == null || w <= 0 || h <= 0) {
-      return fallback;
-    }
-    final aspect = w / h;
-    var dw = maxWidth;
-    var dh = dw / aspect;
-    if (dh > maxHeight) {
-      dh = maxHeight;
-      dw = dh * aspect;
-    }
-    return Size(dw, dh);
-  }
+  }) => fitContainedSize(
+    width: width,
+    height: height,
+    maxWidth: maxWidth,
+    maxHeight: maxHeight,
+    fallback: fallback,
+  );
 
   Size _stickerSize() {
     const maxSide = 120.0;

@@ -92,6 +92,7 @@ import 'media_library_saver.dart';
 import 'media_send_preview_view.dart';
 import 'message_send_options.dart';
 import 'outgoing_attachment.dart';
+import 'picked_local_file.dart';
 import 'poll_composer_view.dart';
 import 'rich_message_bot_relay.dart';
 import 'rich_message_source.dart';
@@ -8667,26 +8668,80 @@ class _ChatInputBarState extends State<ChatInputBar>
     return mounted && await RichMessageRelayConfig.isConfigured();
   }
 
+  PickedLocalFile _pickedLocalFile(PlatformFile file) => PickedLocalFile(
+    path: file.path,
+    name: file.name,
+    bytes: file.bytes,
+    readBytes: () async {
+      try {
+        return await file.xFile.readAsBytes();
+      } on Object {
+        return null;
+      }
+    },
+    readStream: file.readStream,
+  );
+
+  Future<Directory> _attachmentCacheDir() async {
+    final root = await getTemporaryDirectory();
+    return Directory('${root.path}/ql-attachments');
+  }
+
+  Future<List<OutgoingAttachment>> _attachmentsFromPickedFiles(
+    List<PlatformFile> files, {
+    required OutgoingAttachmentKind kind,
+  }) async {
+    final directory = await _attachmentCacheDir();
+    final attachments = <OutgoingAttachment>[];
+    for (final file in files.take(10)) {
+      final path = await materializePickedLocalPath(
+        _pickedLocalFile(file),
+        directory: directory,
+      );
+      if (path == null) continue;
+      attachments.add(
+        OutgoingAttachment(path: path, kind: kind, fileName: file.name),
+      );
+    }
+    return attachments;
+  }
+
   /// 文件: pick an arbitrary document and send it.
   Future<void> _pickFile() async {
+    List<PlatformFile>? picked;
     try {
-      final result = await FilePicker.platform.pickFiles(allowMultiple: true);
-      final attachments = result?.files
-          .map((file) => file.path)
-          .whereType<String>()
-          .take(10)
-          .map(
-            (path) => OutgoingAttachment(
-              path: path,
-              kind: OutgoingAttachmentKind.document,
-            ),
-          )
-          .toList();
-      if (attachments == null || attachments.isEmpty) return;
+      final result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        withReadStream: true,
+      );
+      if (result == null) return;
+      picked = result.files;
+    } catch (_) {
+      if (mounted) {
+        _pickFailed(AppStrings.t(AppStringKeys.topicPostContentFile));
+      }
+      return;
+    }
+    if (!mounted) return;
+    final attachments = await _attachmentsFromPickedFiles(
+      picked,
+      kind: OutgoingAttachmentKind.document,
+    );
+    if (!mounted) return;
+    if (attachments.isEmpty) {
+      _pickFailed(AppStrings.t(AppStringKeys.topicPostContentFile));
+      return;
+    }
+    try {
       await widget.vm.sendAttachments(attachments);
       widget.onMessageSent();
-    } catch (_) {
-      _pickFailed(AppStrings.t(AppStringKeys.topicPostContentFile));
+    } on TdError {
+      // sendAttachments already presented the real reason (e.g. MESSAGE_EMPTY).
+    } catch (error, stackTrace) {
+      debugPrint('Failed to send file: $error\n$stackTrace');
+      if (mounted) {
+        _pickFailed(AppStrings.t(AppStringKeys.topicPostContentFile));
+      }
     }
   }
 
@@ -8797,22 +8852,23 @@ class _ChatInputBarState extends State<ChatInputBar>
       final result =
           preferred ?? await FilePicker.platform.pickFiles(allowMultiple: true);
       if (result == null) return;
-      final attachments = result.files
-          .map((file) => file.path)
-          .whereType<String>()
-          .take(10)
-          .map(
-            (path) => OutgoingAttachment(
-              path: path,
-              kind: OutgoingAttachmentKind.audio,
-            ),
-          )
-          .toList();
-      if (attachments.isEmpty) return;
+      final attachments = await _attachmentsFromPickedFiles(
+        result.files,
+        kind: OutgoingAttachmentKind.audio,
+      );
+      if (!mounted) return;
+      if (attachments.isEmpty) {
+        _pickFailed(AppStrings.t(AppStringKeys.composerAudio));
+        return;
+      }
       await widget.vm.sendAttachments(attachments);
       widget.onMessageSent();
+    } on TdError {
+      // sendAttachments already presented the real reason.
     } catch (_) {
-      _pickFailed(AppStrings.t(AppStringKeys.composerAudio));
+      if (mounted) {
+        _pickFailed(AppStrings.t(AppStringKeys.composerAudio));
+      }
     }
   }
 

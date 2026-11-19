@@ -538,7 +538,8 @@ class _PhotoAvatarState extends State<PhotoAvatar> with WidgetsBindingObserver {
       // Keep the last frame when the id is only being remapped and the
       // replacement path is not ready yet, so returning to the list does
       // not flash a monogram.
-      final keepWarm = previousPhotoId != null && ref.photoId == previousPhotoId;
+      final keepWarm =
+          previousPhotoId != null && ref.photoId == previousPhotoId;
       if (!keepWarm) {
         setState(() => _file = null);
       }
@@ -722,6 +723,7 @@ class TDImage extends StatefulWidget {
     this.cacheHeight,
     this.showProgress = false,
     this.accountSlot,
+    this.placeholderColor,
   });
   final TdFileRef? photo;
   final double cornerRadius;
@@ -730,6 +732,10 @@ class TDImage extends StatefulWidget {
   final int? cacheHeight;
   final bool showProgress;
   final int? accountSlot;
+
+  /// Fill shown before the file resolves. Message bubbles pass their own
+  /// surface colour so an unloaded preview is not a black hole on dark themes.
+  final Color? placeholderColor;
 
   @override
   State<TDImage> createState() => _TDImageState();
@@ -1044,8 +1050,11 @@ class _TDImageState extends State<TDImage> {
     if (miniThumb != null) {
       return Image.memory(miniThumb, fit: widget.fit, gaplessPlayback: true);
     }
-    return ColoredBox(color: context.colors.groupedBackground);
+    return ColoredBox(color: _placeholderColor(context));
   }
+
+  Color _placeholderColor(BuildContext context) =>
+      widget.placeholderColor ?? context.colors.groupedBackground;
 
   Future<void> _reresolveMissingFile(
     File missing,
@@ -1141,7 +1150,7 @@ class _TDImageState extends State<TDImage> {
         gaplessPlayback: true,
       );
     } else {
-      child = Container(color: context.colors.groupedBackground);
+      child = Container(color: _placeholderColor(context));
     }
     final showRetry = widget.showProgress && _file == null && _downloadStalled;
     final showLoadingProgress =

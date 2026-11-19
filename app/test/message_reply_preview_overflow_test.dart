@@ -107,4 +107,56 @@ void main() {
     final preview = await pumpReplyPreview(tester, const []);
     expect(preview.overflow, TextOverflow.fade);
   });
+
+  testWidgets(
+    'a short outgoing reply stays close to its text, not the lane max width',
+    (tester) async {
+      final preferences = await SharedPreferences.getInstance();
+      final theme = ThemeController(preferences);
+      addTearDown(theme.dispose);
+      final message =
+          ChatMessage(
+              id: 2,
+              isOutgoing: true,
+              text: '巴巴爸爸',
+              date: 1,
+              contentType: 'messageText',
+              replyToMessageId: 1,
+              replyToDate: 1,
+            )
+            ..replyToSender = 'admin'
+            ..replyToPreview = '红红火火';
+      await tester.pumpWidget(
+        ChangeNotifierProvider<ThemeController>.value(
+          value: theme,
+          child: MaterialApp(
+            home: Scaffold(
+              body: Center(
+                child: SizedBox(
+                  width: 400,
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: MessageBubble(
+                      message: message,
+                      peerTitle: '测试用户',
+                      isGroup: false,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+      final quote = tester.getSize(
+        find.byKey(const ValueKey('messageReplyQuote')),
+      );
+      expect(
+        quote.width,
+        lessThan(300),
+        reason: 'width: infinity used to stretch every reply to the lane max',
+      );
+    },
+  );
 }
