@@ -68,6 +68,7 @@ import 'liquid_glass_bottom_bar.dart' show LiquidGlassBottomBar;
 import 'native_glass_surface.dart';
 import 'native_tab_bar.dart';
 import 'primary_chat_launcher.dart';
+import 'stable_system_insets.dart';
 import 'top_corner_cluster.dart';
 import 'unread_badge_model.dart';
 
@@ -2308,6 +2309,9 @@ const double kHomeIndicatorClearance = 14;
 /// must clear, plus 1pt of breathing room. Other platforms retain the full
 /// reported safe area: Android's navigation buttons can occupy that space.
 double homeIndicatorBarClearance(BuildContext context) {
+  // Warm the process-wide inset cache while the tab shell is on screen, so
+  // the first chat page already knows the gesture-bar height.
+  StableSystemInsets.observeFrom(context);
   final reported = MediaQuery.paddingOf(context).bottom;
   if (reported <= 0) return 0;
   if (kIsWeb || defaultTargetPlatform != TargetPlatform.iOS) return reported;

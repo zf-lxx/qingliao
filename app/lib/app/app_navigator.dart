@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 
+import '../components/app_press_ripple.dart';
 import '../components/full_page_back_swipe.dart';
 import '../render/ql_curves.dart';
 import '../theme/app_motion.dart';
@@ -17,6 +18,9 @@ class ChatShellCover {
   static int _covers = 0;
 
   static void acquire() {
+    // Dismiss before enabling the snapshot: a mid-expansion row ripple
+    // would otherwise be frozen into the texture shown on the way back.
+    AppPressRipple.dismissAll();
     _covers += 1;
     chatShellSnapshotController.allowSnapshotting = true;
   }
@@ -24,6 +28,8 @@ class ChatShellCover {
   static void release() {
     if (_covers == 0) return;
     _covers -= 1;
+    // A stale origin must not reappear when the live list is uncovered.
+    AppPressRipple.dismissAll();
     if (_covers == 0) {
       // Wait one frame so the live list can drop selection and apply the
       // unread/preview mutation before the frozen texture is released.

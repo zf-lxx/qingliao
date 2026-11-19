@@ -31,6 +31,7 @@ import 'package:record/record.dart' as desktop_record;
 
 import '../app/desktop_utility_window.dart';
 import '../app/diagnostic_breadcrumbs.dart';
+import '../app/stable_system_insets.dart';
 import '../components/app_dialog.dart';
 import '../components/app_icons.dart';
 import '../components/app_interactive_surface.dart';
@@ -821,11 +822,6 @@ class _ChatInputBarState extends State<ChatInputBar>
   /// Set once the field has actually taken the IME. Until then a viewInsets
   /// value left over from the route transition must not grow the bar.
   bool _keyboardInsetEngaged = false;
-
-  /// Gesture-bar height seen for this process. The first frame of a newly
-  /// pushed route sometimes reports 0 and only then the real inset, which
-  /// grows the composer and lifts the transcript.
-  static double _stableGestureInset = 0;
   AiReplyProvider? _activeAiReplyProvider;
   List<AiReplyProgressPhase> _aiReplyProgressPhases = const [];
   bool _aiReplyProgressExpanded = false;
@@ -1009,12 +1005,9 @@ class _ChatInputBarState extends State<ChatInputBar>
   }
 
   double _gestureInset(BuildContext context) {
-    final view = View.of(context);
-    final fromView = view.viewPadding.bottom / view.devicePixelRatio;
-    final fromMedia = MediaQuery.viewPaddingOf(context).bottom;
-    final reported = fromView > fromMedia ? fromView : fromMedia;
-    if (reported > _stableGestureInset) _stableGestureInset = reported;
-    return _stableGestureInset > 0 ? _stableGestureInset : reported;
+    // A newly pushed route can report 0 for a frame, then the real gesture
+    // bar; following that would grow this bar and lift the transcript.
+    return StableSystemInsets.bottomOf(context);
   }
 
   void _handleBotPlatformUpdate(Map<String, dynamic> update) {
@@ -4003,75 +3996,75 @@ class _ChatInputBarState extends State<ChatInputBar>
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                if (editingMessage != null)
-                  _editBanner(editingMessage)
-                else
-                  _animatedReplyBanner(vm.replyTo),
-                if (editingMessage == null)
-                  if (_inlineBotResults != null)
-                    _inlineBotResultMenu()
-                  else if (_botCommandCandidates.isNotEmpty)
-                    _botCommandMenu()
-                  else if (_mentionSuggestionsVisible)
-                    _mentionMenu()
-                  else if (_quickReplyContextVisible &&
-                      _quickReplies.isNotEmpty)
-                    _quickReplyContextMenu(),
-                if (editingMessage == null &&
-                    _pendingClipboardAttachments.isNotEmpty)
-                  _clipboardAttachmentStrip(desktop: desktopComposer),
-                if (!desktopComposer)
-                  _voiceDraftSlot(visible: editingMessage == null),
-                if (desktopComposer) ...[
+                  if (editingMessage != null)
+                    _editBanner(editingMessage)
+                  else
+                    _animatedReplyBanner(vm.replyTo),
                   if (editingMessage == null)
-                    _desktopIconStrip(
-                      aiSettings: aiSettings,
-                      replyKeyboard: replyKeyboard,
-                    ),
-                  if (!(editingMessage == null && _panel == _Panel.voice))
+                    if (_inlineBotResults != null)
+                      _inlineBotResultMenu()
+                    else if (_botCommandCandidates.isNotEmpty)
+                      _botCommandMenu()
+                    else if (_mentionSuggestionsVisible)
+                      _mentionMenu()
+                    else if (_quickReplyContextVisible &&
+                        _quickReplies.isNotEmpty)
+                      _quickReplyContextMenu(),
+                  if (editingMessage == null &&
+                      _pendingClipboardAttachments.isNotEmpty)
+                    _clipboardAttachmentStrip(desktop: desktopComposer),
+                  if (!desktopComposer)
+                    _voiceDraftSlot(visible: editingMessage == null),
+                  if (desktopComposer) ...[
+                    if (editingMessage == null)
+                      _desktopIconStrip(
+                        aiSettings: aiSettings,
+                        replyKeyboard: replyKeyboard,
+                      ),
+                    if (!(editingMessage == null && _panel == _Panel.voice))
+                      _inputRow(
+                        replyKeyboard,
+                        aiSettings: aiSettings,
+                        desktop: true,
+                      ),
+                    if (replyKeyboardPanelVisible)
+                      _replyKeyboardPanel(replyKeyboard),
+                  ] else if (simpleComposer) ...[
+                    // One row replaces the input row and the icon strip.
                     _inputRow(
                       replyKeyboard,
                       aiSettings: aiSettings,
-                      desktop: true,
+                      simple: true,
                     ),
-                  if (replyKeyboardPanelVisible)
-                    _replyKeyboardPanel(replyKeyboard),
-                ] else if (simpleComposer) ...[
-                  // One row replaces the input row and the icon strip.
-                  _inputRow(
-                    replyKeyboard,
-                    aiSettings: aiSettings,
-                    simple: true,
-                  ),
-                  if (replyKeyboardPanelVisible)
-                    _replyKeyboardPanel(replyKeyboard),
-                ] else ...[
-                  _inputRow(replyKeyboard, aiSettings: aiSettings),
-                  if (replyKeyboardPanelVisible)
-                    _replyKeyboardPanel(replyKeyboard)
-                  else if (editingMessage == null)
-                    _iconStrip(),
+                    if (replyKeyboardPanelVisible)
+                      _replyKeyboardPanel(replyKeyboard),
+                  ] else ...[
+                    _inputRow(replyKeyboard, aiSettings: aiSettings),
+                    if (replyKeyboardPanelVisible)
+                      _replyKeyboardPanel(replyKeyboard)
+                    else if (editingMessage == null)
+                      _iconStrip(),
+                  ],
+                  if (editingMessage == null &&
+                      !desktopComposer &&
+                      _panel == _Panel.function)
+                    simpleComposer ? _simpleMorePanel() : _functionPanel(),
+                  if (editingMessage == null &&
+                      !desktopComposer &&
+                      (_panel == _Panel.emoji || _panel == _Panel.sticker))
+                    _mediaPanel(),
+                  if (editingMessage == null && _panel == _Panel.voice)
+                    _voicePanel(),
+                  // Reserve the keyboard or the gesture area beneath the last
+                  // row. When the IME is open this keeps the field above it; the
+                  // panels themselves already close on focus.
+                  if (composerReservesBottomInset(
+                    bottomInset: bottomInset,
+                    panelSurfaceVisible: panelSurfaceVisible,
+                  ))
+                    SizedBox(height: bottomInset),
                 ],
-                if (editingMessage == null &&
-                    !desktopComposer &&
-                    _panel == _Panel.function)
-                  simpleComposer ? _simpleMorePanel() : _functionPanel(),
-                if (editingMessage == null &&
-                    !desktopComposer &&
-                    (_panel == _Panel.emoji || _panel == _Panel.sticker))
-                  _mediaPanel(),
-                if (editingMessage == null && _panel == _Panel.voice)
-                  _voicePanel(),
-                // Reserve the keyboard or the gesture area beneath the last
-                // row. When the IME is open this keeps the field above it; the
-                // panels themselves already close on focus.
-                if (composerReservesBottomInset(
-                  bottomInset: bottomInset,
-                  panelSurfaceVisible: panelSurfaceVisible,
-                ))
-                  SizedBox(height: bottomInset),
-              ],
-            ),
+              ),
             ),
           ),
           if (desktopComposer)

@@ -1,0 +1,110 @@
+//
+//  stable_system_insets.dart
+//
+//  A newly pushed route sometimes reports a 0 safe-area inset for a frame or
+//  two, then the real status-bar or gesture-bar height arrives. If a header or
+//  the composer follows that 0, the transcript is squeezed and looks like it
+//  lifts once above the composer. Remember the last real inset and ignore a
+//  brief zero; a value that stays 0 (landscape, no gesture bar) is accepted
+//  after a few frames so rotation is not stuck on the old padding.
+//
+
+import 'package:flutter/widgets.dart';
+
+/// How many consecutive zero readings may be ignored before the inset is
+/// allowed to fall back to 0.
+const int kTransientZeroInsetFrames = 3;
+
+/// Process-wide last-known system view paddings, with a short hold against
+/// transient zeros on a newly pushed route.
+class StableSystemInsets {
+  StableSystemInsets._();
+
+  static double _top = 0;
+  static double _bottom = 0;
+  static int _zeroTopFrames = 0;
+  static int _zeroBottomFrames = 0;
+
+  /// Last positive top inset, or 0 if none has been seen.
+  static double get lastTop => _top;
+
+  /// Last positive bottom inset, or 0 if none has been seen.
+  static double get lastBottom => _bottom;
+
+  /// Record paddings from the current view so a later route does not start
+  /// from zero. The tab shell should call this while it is on screen.
+  static void observeFrom(BuildContext context) {
+    holdTop(measureTop(context));
+    holdBottom(measureBottom(context));
+  }
+
+  /// Top view padding, holding through a brief zero.
+  static double topOf(BuildContext context) => holdTop(measureTop(context));
+
+  /// Bottom view padding, holding through a brief zero.
+  static double bottomOf(BuildContext context) =>
+      holdBottom(measureBottom(context));
+
+  /// Prefer the FlutterView's view padding when MediaQuery has not caught up.
+  static double measureTop(BuildContext context) {
+    final view = View.of(context);
+    final fromView = view.viewPadding.top / view.devicePixelRatio;
+    final fromMedia = MediaQuery.viewPaddingOf(context).top;
+    return _greaterFinite(fromView, fromMedia);
+  }
+
+  /// Prefer the FlutterView's view padding when MediaQuery has not caught up.
+  static double measureBottom(BuildContext context) {
+    final view = View.of(context);
+    final fromView = view.viewPadding.bottom / view.devicePixelRatio;
+    final fromMedia = MediaQuery.viewPaddingOf(context).bottom;
+    return _greaterFinite(fromView, fromMedia);
+  }
+
+  /// Keep [reported] unless it is a short-lived zero after a real inset.
+  static double holdTop(double reported) => _hold(reported, isTop: true);
+
+  /// Keep [reported] unless it is a short-lived zero after a real inset.
+  static double holdBottom(double reported) => _hold(reported, isTop: false);
+
+  static double _hold(double reported, {required bool isTop}) {
+    final value = reported.isFinite && reported > 0 ? reported : 0.0;
+    if (value > 0) {
+      if (isTop) {
+        _top = value;
+        _zeroTopFrames = 0;
+      } else {
+        _bottom = value;
+        _zeroBottomFrames = 0;
+      }
+      return value;
+    }
+    final last = isTop ? _top : _bottom;
+    if (last <= 0) return 0;
+    final frames = isTop ? ++_zeroTopFrames : ++_zeroBottomFrames;
+    if (frames <= kTransientZeroInsetFrames) return last;
+    if (isTop) {
+      _top = 0;
+    } else {
+      _bottom = 0;
+    }
+    return 0;
+  }
+
+  static double _greaterFinite(double a, double b) {
+    final aOk = a.isFinite && a > 0;
+    final bOk = b.isFinite && b > 0;
+    if (aOk && bOk) return a > b ? a : b;
+    if (aOk) return a;
+    if (bOk) return b;
+    return 0;
+  }
+
+  @visibleForTesting
+  static void debugReset() {
+    _top = 0;
+    _bottom = 0;
+    _zeroTopFrames = 0;
+    _zeroBottomFrames = 0;
+  }
+}
